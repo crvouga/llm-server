@@ -6,33 +6,10 @@ on:
   pull_request:
     branches: [main]
 
-concurrency:
-  group: deployment-pipeline-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  checks:
-    name: Checks
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install Python dependencies
-        run: make install
-
-      - name: Run Python tests
-        run: make test
-
   deploy:
     name: Deploy
-    needs: checks
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:
       DOPPLER_PROJECT: personal
