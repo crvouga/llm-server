@@ -98,22 +98,51 @@ ensure_fly_certificate() {
   echo "Ensuring Fly.io certificate for ${HOSTNAME}..."
   if fly certs list -a "$APP_NAME" 2>/dev/null | grep -Fq "$HOSTNAME"; then
     echo "Certificate already configured for ${HOSTNAME}."
-    return
+    # Don't return here - we need to verify it's fully provisioned
+  else
+    fly certs add "$HOSTNAME" -a "$APP_NAME"
+    echo "Certificate request submitted for ${HOSTNAME}."
   fi
+  
+  # Always run verification to ensure the certificate is ready
+  verify_certificate || true
+}
 
-  fly certs add "$HOSTNAME" -a "$APP_NAME"
-  echo "Certificate request submitted for ${HOSTNAME}."
+verify_certificate() {
+  local attempts=24
+  local delay=5
+
+  echo "Verifying SSL certificate for ${HOSTNAME}..."
+  for ((i = 1; i <= attempts; i++)); do
+    if fly certs verify "$HOSTNAME" -a "$APP_NAME" 2>&1 | grep -q "Certificate verified"; then
+      echo "SSL certificate verified for ${HOSTNAME}."
+      return 0
+    fi
+
+    # Also check if cert is 'verified' in the list output
+    if fly certs list -a "$APP_NAME" 2>/dev/null | grep -Fq "$HOSTNAME.*verified"; then
+      echo "SSL certificate verified for ${HOSTNAME}."
+      return 0
+    fi
+
+    echo "Attempt ${i}/${attempts}: certificate not ready yet, retrying in ${delay}s..."
+    sleep "$delay"
+  done
+
+  echo "Warning: SSL certificate not verified after waiting."
+  echo "Proceeding anyway - certificate may still be provisioning..."
+  return 1
 }
 
 verify_endpoint() {
-  local attempts=24
+  local attempts=36
   local delay=5
 
   echo "Verifying https://${HOSTNAME}/health/liveliness ..."
   for ((i = 1; i <= attempts; i++)); do
     if curl -fsS "https://${HOSTNAME}/health/liveliness" >/dev/null 2>&1; then
       echo "https://${HOSTNAME} is healthy."
-      return
+      return 0
     fi
 
     echo "Attempt ${i}/${attempts}: endpoint not ready yet, retrying in ${delay}s..."

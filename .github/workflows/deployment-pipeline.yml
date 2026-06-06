@@ -58,12 +58,18 @@ jobs:
       - name: Verify litellm.chrisvouga.dev
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 24); do
-            if curl -fsS "https://litellm.chrisvouga.dev/health/liveliness" >/dev/null; then
+          for attempt in $(seq 1 36); do
+            if curl -fsS "https://litellm.chrisvouga.dev/health/liveliness" >/dev/null 2>&1; then
               echo "https://litellm.chrisvouga.dev is healthy."
               exit 0
             fi
-            echo "Attempt ${attempt}/24: endpoint not healthy yet, retrying in 5s..."
+            
+            # Check if the error is SSL-related (Error code 525)
+            if curl -svS "https://litellm.chrisvouga.dev/health/liveliness" 2>&1 | grep -q "SSL handshake failed\|Error code 525"; then
+              echo "Attempt ${attempt}/36: SSL handshake still failing, certificate may be provisioning..."
+            else
+              echo "Attempt ${attempt}/36: endpoint not healthy yet (non-SSL error), retrying in 5s..."
+            fi
             sleep 5
           done
           echo "https://litellm.chrisvouga.dev did not become healthy during verification."
