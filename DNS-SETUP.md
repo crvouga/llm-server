@@ -33,7 +33,9 @@ Required Doppler secrets:
 | Name | litellm |
 | Content | `litellm-chrisvouga.fly.dev` |
 | TTL | Auto |
-| Proxy status | Proxied |
+| Proxy status | DNS only (grey cloud) |
+
+> Must be **DNS only**. If proxied (orange cloud), Cloudflare can't complete the SSL handshake to the Fly origin (Fly never issues a cert for a proxied hostname) and you get **Error 525**. DNS-only also avoids Cloudflare's request timeout truncating long LLM streaming responses.
 
 5. Request a Fly.io certificate:
 

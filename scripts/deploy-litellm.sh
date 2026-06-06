@@ -54,18 +54,25 @@ ensure_dns_record() {
     local record_id
     record_id="$(echo "$existing" | jq -r '.id')"
 
-    if [ "$current_target" = "$FLY_HOSTNAME" ]; then
-      echo "DNS record for ${HOSTNAME} already points to ${FLY_HOSTNAME}."
+    local current_proxied
+    current_proxied="$(echo "$existing" | jq -r '.proxied')"
+    if [ "$current_target" = "$FLY_HOSTNAME" ] && [ "$current_proxied" = "false" ]; then
+      echo "DNS record for ${HOSTNAME} already points to ${FLY_HOSTNAME} (DNS-only)."
       return
     fi
 
-    echo "Updating DNS record for ${HOSTNAME}: ${current_target} -> ${FLY_HOSTNAME}..."
+    # Must be DNS-only (grey cloud). When proxied, Cloudflare terminates TLS and
+    # opens its own SSL connection to the Fly origin, but Fly cannot validate/issue
+    # a cert for a proxied hostname -> "Not verified" cert -> SSL handshake failed
+    # (Cloudflare Error 525). DNS-only lets Fly serve TLS directly and also avoids
+    # Cloudflare's request timeout, which would truncate long LLM streaming responses.
+    echo "Updating DNS record for ${HOSTNAME}: ${current_target} -> ${FLY_HOSTNAME} (DNS-only)..."
     local response
     response="$(cf_api PATCH "/zones/${zone_id}/dns_records/${record_id}" "$(jq -nc \
       --arg type "CNAME" \
       --arg name "$DNS_RECORD_NAME" \
       --arg content "$FLY_HOSTNAME" \
-      '{type: $type, name: $name, content: $content, ttl: 1, proxied: true}')")"
+      '{type: $type, name: $name, content: $content, ttl: 1, proxied: false}')")"
 
     if ! echo "$response" | jq -e '.success == true' >/dev/null; then
       echo "Failed to update DNS record:"
@@ -77,13 +84,13 @@ ensure_dns_record() {
     return
   fi
 
-  echo "Creating DNS CNAME record for ${HOSTNAME} -> ${FLY_HOSTNAME}..."
+  echo "Creating DNS CNAME record for ${HOSTNAME} -> ${FLY_HOSTNAME} (DNS-only)..."
   local response
   response="$(cf_api POST "/zones/${zone_id}/dns_records" "$(jq -nc \
     --arg type "CNAME" \
     --arg name "$DNS_RECORD_NAME" \
     --arg content "$FLY_HOSTNAME" \
-    '{type: $type, name: $name, content: $content, ttl: 1, proxied: true}')")"
+    '{type: $type, name: $name, content: $content, ttl: 1, proxied: false}')")"
 
   if ! echo "$response" | jq -e '.success == true' >/dev/null; then
     echo "Failed to create DNS record:"
@@ -188,6 +195,17 @@ ensure_litellm_schema_url() {
   fi
 }
 
+# LiteLLM runs `prisma migrate deploy` on boot, which acquires a session-level
+# Postgres advisory lock. Neon's pooled (PgBouncer) endpoint does not hold that
+# lock reliably across the migration, so migrations hang and time out -> the app
+# never becomes healthy (503). Always use Neon's direct (non-pooled) endpoint by
+# stripping the "-pooler" suffix from the host.
+ensure_direct_neon_url() {
+  local url="$1"
+  echo "${url/-pooler./.}"
+}
+
+DATABASE_URL="$(ensure_direct_neon_url "$DATABASE_URL")"
 DATABASE_URL="$(ensure_litellm_schema_url "$DATABASE_URL")"
 
 if [ -z "${OPENAI_API_KEY:-}" ]; then
