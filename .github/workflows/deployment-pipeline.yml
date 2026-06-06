@@ -60,7 +60,7 @@ jobs:
       - name: Install Doppler CLI
         uses: dopplerhq/cli-action@v3
         with:
-          doppler-token: ${{ secrets.DOPPLER_SERVICE_TOKEN }}
+          token: ${{ secrets.DOPPLER_SERVICE_TOKEN }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -69,12 +69,5 @@ jobs:
           cache: npm
           cache-dependency-path: llm-usage-tracker/package-lock.json
 
-      - name: Install Doppler CLI
-        uses: dopplerhq/cli-action@v3
-        with:
-          token: ${{ secrets.DOPPLER_SERVICE_TOKEN }}
-
       - name: Deploy Cloudflare Worker
-        run: |
-          doppler secrets fetch --make-dotenv
-          make deploy-worker
+        run: doppler run -- ./scripts/deploy-worker.sh

@@ -138,21 +138,6 @@ test: install
 check-worker:
 	@cd "$(WORKER_DIR)" && npm ci && npm run check
 
-deploy-worker:
-	@set -euo pipefail; \
-	cd "$(WORKER_DIR)"; \
-	npm ci; \
-	if [ -z "$${DATABASE_URL:-}" ]; then \
-		echo "DATABASE_URL is required (set via Doppler or env)."; \
-		exit 1; \
-	fi; \
-	if [ -z "$${CLOUDFLARE_API_TOKEN:-}" ]; then \
-		echo "CLOUDFLARE_API_TOKEN is required (set via Doppler or env)."; \
-		exit 1; \
-	fi; \
-	printf '%s' "$$DATABASE_URL" | npx wrangler secret put DATABASE_URL; \
-	npm run db:migrate; \
-	npm run deploy
 
 doppler-seed-github-secrets:
 	@set -euo pipefail; \
