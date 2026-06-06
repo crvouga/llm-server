@@ -14,9 +14,13 @@ STATE ?= state/local-llm-env-state.json
 CLOUDFLARED_SERVICE ?= local-llm-cloudflared.service
 SERVICES := $(CLOUDFLARED_SERVICE)
 
+REMOTE_ACCESS_MD ?= REMOTE-ACCESS.md
+REMOTE_USER ?= $(shell awk -F'|' '/^\|/ && index($$2, "Login user") { gsub(/^[ \t`]+|[ \t`]+$$/, "", $$3); print $$3; exit }' "$(REMOTE_ACCESS_MD)" 2>/dev/null)
+REMOTE_HOST ?= $(shell awk -F'|' '/^\|/ && index($$2, "Tailscale DNS name") { gsub(/^[ \t`]+|[ \t`]+$$/, "", $$3); print $$3; exit }' "$(REMOTE_ACCESS_MD)" 2>/dev/null)
+
 .PHONY: help venv install setup doctor ensure-system-deps plan apply apply-auto status destroy destroy-auto \
 	start stop restart logs logs-cloudflared \
-	service-status shell clean-venv
+	service-status shell clean-venv ssh-target target-tmux
 
 help:
 	@echo "Targets:"
@@ -36,9 +40,12 @@ help:
 	@echo "  make logs           -> tail logs for all services"
 	@echo "  make shell          -> open shell with venv activated"
 	@echo "  make clean-venv     -> remove local virtual environment"
+	@echo "  make ssh-target     -> SSH into the Linux target (via Tailscale)"
+	@echo "  make target-tmux    -> SSH into target with tmux session 'work'"
 	@echo ""
 	@echo "Overrides:"
 	@echo "  SPEC=<path> STATE=<path> make plan"
+	@echo "  REMOTE_USER=<user> REMOTE_HOST=<host> make ssh-target"
 
 venv:
 	@test -d "$(VENV)" || python3 -m venv "$(VENV)"
@@ -160,4 +167,18 @@ shell: install
 clean-venv:
 	@rm -rf "$(VENV)"
 	@echo "Removed $(VENV)"
+
+ssh-target:
+	@test -n "$(REMOTE_USER)" && test -n "$(REMOTE_HOST)" || { \
+		echo "Missing REMOTE_USER/REMOTE_HOST. Set them or update $(REMOTE_ACCESS_MD)."; \
+		exit 1; \
+	}
+	@ssh "$(REMOTE_USER)@$(REMOTE_HOST)"
+
+target-tmux:
+	@test -n "$(REMOTE_USER)" && test -n "$(REMOTE_HOST)" || { \
+		echo "Missing REMOTE_USER/REMOTE_HOST. Set them or update $(REMOTE_ACCESS_MD)."; \
+		exit 1; \
+	}
+	@ssh -t "$(REMOTE_USER)@$(REMOTE_HOST)" 'tmux new -A -s work'
 
