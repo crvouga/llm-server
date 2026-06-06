@@ -69,5 +69,11 @@ jobs:
           cache: npm
           cache-dependency-path: llm-usage-tracker/package-lock.json
 
+      - name: Setup Doppler
+        uses: dopplerhq/cli-action@v3
+        with:
+          doppler-token: ${{ secrets.DOPPLER_SERVICE_TOKEN }}
+          command: setup
+
       - name: Deploy Cloudflare Worker
         run: make deploy-worker
