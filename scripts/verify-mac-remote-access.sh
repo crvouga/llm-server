@@ -10,13 +10,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/remote-access-common.sh
 source "${SCRIPT_DIR}/lib/remote-access-common.sh"
 
+CHECK_NOMACHINE=false
 CHECK_DESKTOP=false
 for arg in "$@"; do
   case "${arg}" in
+    --nomachine) CHECK_NOMACHINE=true ;;
     --desktop) CHECK_DESKTOP=true ;;
     -h|--help)
-      echo "Usage: $0 [--desktop]"
-      echo "  --desktop  also verify xrdp port 3389 on the target"
+      echo "Usage: $0 [--nomachine] [--desktop]"
+      echo "  --nomachine  verify NoMachine port 4000 on the target"
+      echo "  --desktop    verify legacy xrdp port 3389 on the target"
       exit 0
       ;;
     *)
@@ -90,6 +93,11 @@ check_rdp_port() {
   nc -z -G 5 "${TARGET_FQDN}" 3389 >/dev/null 2>&1
 }
 
+check_nomachine_port() {
+  [[ -n "${TARGET_FQDN:-}" ]]
+  nc -z -G 5 "${TARGET_FQDN}" 4000 >/dev/null 2>&1
+}
+
 main() {
   echo "Verifying Mac -> target remote access"
   echo
@@ -102,6 +110,9 @@ main() {
     echo
     check "ICMP to target" check_ping
     check "SSH to target" check_ssh
+    if [[ "${CHECK_NOMACHINE}" == "true" ]]; then
+      check "NoMachine port 4000" check_nomachine_port
+    fi
     if [[ "${CHECK_DESKTOP}" == "true" ]]; then
       check "xrdp port 3389" check_rdp_port
     fi

@@ -112,9 +112,12 @@ main() {
 
   cat <<EOF
 
-Remote desktop is ready.
+Remote desktop is ready (legacy xrdp + XFCE).
 
-From your Mac:
+Prefer NoMachine for a faster, native Ubuntu desktop experience:
+  sudo ./scripts/setup-target-nomachine.sh
+
+From your Mac (xrdp):
   1) Pull the updated REMOTE-ACCESS.md from this repo.
   2) Run: ./scripts/setup-mac-remote-desktop.sh
   3) Connect Microsoft Remote Desktop to: $(remote_access_tailscale_fqdn || echo '<tailscale-hostname>')

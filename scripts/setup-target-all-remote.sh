@@ -16,8 +16,8 @@ echo "== Step 1/2: SSH + Tailscale =="
 "${SCRIPT_DIR}/setup-target-headless-remote.sh"
 
 echo
-echo "== Step 2/2: Remote desktop (xrdp + XFCE) =="
-"${SCRIPT_DIR}/setup-target-remote-desktop.sh"
+echo "== Step 2/2: Remote desktop (NoMachine) =="
+"${SCRIPT_DIR}/setup-target-nomachine.sh" "$@"
 
 echo
 echo "Target setup complete. Commit REMOTE-ACCESS.md, then on your Mac run:"

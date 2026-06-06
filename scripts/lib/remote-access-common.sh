@@ -40,14 +40,42 @@ remote_access_tailscale_fqdn() {
   echo "${ts_host%.}"
 }
 
-remote_access_desktop_enabled() {
+remote_access_nomachine_enabled() {
+  [[ -x /usr/NX/bin/nxserver ]] \
+    || dpkg -s nomachine >/dev/null 2>&1 \
+    || [[ -x /etc/NX/nxserver ]]
+}
+
+remote_access_xrdp_enabled() {
   command -v systemctl >/dev/null 2>&1 \
     && systemctl is-enabled xrdp >/dev/null 2>&1
 }
 
+remote_access_desktop_method() {
+  if remote_access_nomachine_enabled; then
+    echo "nomachine"
+  elif remote_access_xrdp_enabled; then
+    echo "xrdp"
+  else
+    echo "none"
+  fi
+}
+
+remote_access_desktop_enabled() {
+  [[ "$(remote_access_desktop_method)" != "none" ]]
+}
+
+remote_access_desktop_summary() {
+  case "$(remote_access_desktop_method)" in
+    nomachine) echo "NoMachine on port 4000 (Tailscale only)" ;;
+    xrdp) echo "xrdp on port 3389 (legacy; prefer NoMachine)" ;;
+    *) echo "not configured (run \`setup-target-nomachine.sh\`)" ;;
+  esac
+}
+
 remote_access_write_md() {
   local repo_root output_file invoking_user login_user host ts_ip ts_fqdn now os_pretty kernel
-  local target_ip target_fqdn desktop_enabled
+  local target_ip target_fqdn desktop_method desktop_summary
 
   repo_root="$(remote_access_repo_root)"
   output_file="$(remote_access_output_file)"
@@ -61,10 +89,8 @@ remote_access_write_md() {
   target_fqdn="${ts_fqdn:-<tailscale-hostname>}"
   os_pretty="$(. /etc/os-release 2>/dev/null && echo "${PRETTY_NAME:-unknown}")"
   kernel="$(uname -sr)"
-  desktop_enabled="false"
-  if remote_access_desktop_enabled; then
-    desktop_enabled="true"
-  fi
+  desktop_method="$(remote_access_desktop_method)"
+  desktop_summary="$(remote_access_desktop_summary)"
 
   cat >"${output_file}" <<EOF
 # Remote Access (AI Agent Handoff)
@@ -86,17 +112,26 @@ SSH access over Tailscale. To continue:
 4. Read \`README.md\` and \`Makefile\` in that repo for available tasks.
 EOF
 
-  if [[ "${desktop_enabled}" == "true" ]]; then
-    cat >>"${output_file}" <<EOF
-5. For keyboard/mouse GUI control, connect with Microsoft Remote Desktop to
-   \`${target_fqdn}\` (port 3389) as user \`${login_user}\`.
+  case "${desktop_method}" in
+    nomachine)
+      cat >>"${output_file}" <<EOF
+5. For keyboard/mouse GUI control, open **NoMachine** on the Mac and connect to
+   \`${target_fqdn}\` (port 4000) as user \`${login_user}\`.
 EOF
-  else
-    cat >>"${output_file}" <<EOF
-5. For keyboard/mouse GUI control, run \`sudo ./scripts/setup-target-remote-desktop.sh\`
-   on the target, then \`./scripts/setup-mac-remote-desktop.sh\` on the Mac.
+      ;;
+    xrdp)
+      cat >>"${output_file}" <<EOF
+5. For keyboard/mouse GUI control, prefer NoMachine (\`setup-target-nomachine.sh\`).
+   Legacy xrdp is available on \`${target_fqdn}:3389\`.
 EOF
-  fi
+      ;;
+    *)
+      cat >>"${output_file}" <<EOF
+5. For keyboard/mouse GUI control, run \`sudo ./scripts/setup-target-nomachine.sh\`
+   on the target, then \`./scripts/setup-mac-nomachine.sh\` on the Mac.
+EOF
+      ;;
+  esac
 
   cat >>"${output_file}" <<EOF
 
@@ -104,7 +139,7 @@ EOF
 
 A headless ("no keyboard / mouse / monitor") Linux box accessed remotely. It is
 intended to be controlled over SSH from a Mac Studio, with optional GUI access
-via xrdp over Tailscale.
+via NoMachine over Tailscale.
 
 ## Connection facts
 
@@ -118,13 +153,7 @@ via xrdp over Tailscale.
 | Kernel | \`${kernel}\` |
 | Repo path on target | \`${repo_root}\` |
 | SSH access | Tailscale + OpenSSH (\`tailscale up --ssh\`) |
-| Remote desktop | $(
-    if [[ "${desktop_enabled}" == "true" ]]; then
-      echo "xrdp on port 3389 (Tailscale only)"
-    else
-      echo "not configured (run \`setup-target-remote-desktop.sh\`)"
-    fi
-  ) |
+| Remote desktop | ${desktop_summary} |
 
 ## One-time setup on the Mac (controller)
 
@@ -135,10 +164,10 @@ SSH + Tailscale:
 open -a Tailscale   # sign in to the SAME Tailscale account as the target
 \`\`\`
 
-Remote desktop client (keyboard/mouse GUI):
+Remote desktop client (keyboard/mouse GUI via NoMachine):
 
 \`\`\`bash
-./scripts/setup-mac-remote-desktop.sh
+./scripts/setup-mac-nomachine.sh
 \`\`\`
 
 ## Connect from the Mac (SSH)
@@ -165,38 +194,54 @@ alias llm-target='ssh ${login_user}@${target_fqdn}'
 
 EOF
 
-  if [[ "${desktop_enabled}" == "true" ]]; then
-    cat >>"${output_file}" <<EOF
-1. Install the Mac client (once): \`./scripts/setup-mac-remote-desktop.sh\`
-2. Open **Microsoft Remote Desktop** (or **Windows App**).
-3. Add a PC:
-   - PC name: \`${target_fqdn}\`
-   - User account: \`${login_user}\` (use your Linux login password)
-4. Connect. Traffic stays on the Tailscale network (port 3389).
+  case "${desktop_method}" in
+    nomachine)
+      cat >>"${output_file}" <<EOF
+1. Install the Mac client (once): \`./scripts/setup-mac-nomachine.sh\`
+2. Open **NoMachine** (\`open -a NoMachine\`).
+3. Connect to:
+   - Host: \`${target_fqdn}\`
+   - Port: \`4000\` (default)
+   - User: \`${login_user}\` (Linux login password)
+4. You should see the machine's real Ubuntu desktop session.
 
-Verify the desktop service from the Mac:
+Verify from the Mac:
 
 \`\`\`bash
-./scripts/verify-mac-remote-access.sh --desktop
+./scripts/verify-mac-remote-access.sh --nomachine
 \`\`\`
 EOF
-  else
-    cat >>"${output_file}" <<EOF
+      ;;
+    xrdp)
+      cat >>"${output_file}" <<EOF
+Legacy xrdp is configured. Prefer migrating to NoMachine:
+
+\`\`\`bash
+sudo ./scripts/setup-target-nomachine.sh
+./scripts/setup-mac-nomachine.sh
+\`\`\`
+
+Current xrdp connection (Microsoft Remote Desktop): \`${target_fqdn}:3389\`
+EOF
+      ;;
+    *)
+      cat >>"${output_file}" <<EOF
 Remote desktop is not configured yet. On the **target** (over SSH):
 
 \`\`\`bash
-sudo ./scripts/setup-target-remote-desktop.sh
+sudo ./scripts/setup-target-nomachine.sh
 \`\`\`
 
 Then on the **Mac**:
 
 \`\`\`bash
-./scripts/setup-mac-remote-desktop.sh
+./scripts/setup-mac-nomachine.sh
 \`\`\`
 
 Re-pull \`REMOTE-ACCESS.md\` after target setup for updated connection values.
 EOF
-  fi
+      ;;
+  esac
 
   cat >>"${output_file}" <<EOF
 
@@ -233,8 +278,8 @@ Re-run on the target to refresh values after IP/hostname changes:
 
 \`\`\`bash
 sudo ./scripts/setup-target-headless-remote.sh
-# or, if only refreshing docs after desktop setup:
-sudo ./scripts/setup-target-remote-desktop.sh --write-doc-only
+# or, if only refreshing docs after NoMachine setup:
+sudo ./scripts/setup-target-nomachine.sh --write-doc-only
 \`\`\`
 EOF
 

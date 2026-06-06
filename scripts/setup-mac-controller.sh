@@ -81,7 +81,7 @@ EOF
   cat <<EOF
 
 4) For keyboard/mouse GUI control, also run:
-     ./scripts/setup-mac-remote-desktop.sh
+     ./scripts/setup-mac-nomachine.sh
 EOF
 }
 

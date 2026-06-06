@@ -93,14 +93,14 @@ main() {
   cat <<EOF
 
 Next steps:
-1) Optional: enable keyboard/mouse GUI access:
-     sudo ./scripts/setup-target-remote-desktop.sh
+1) Optional: enable keyboard/mouse GUI access (NoMachine):
+     sudo ./scripts/setup-target-nomachine.sh
 2) Commit the generated instructions to git:
      git add REMOTE-ACCESS.md && git commit -m "Add remote access instructions"
      git push
 3) On your Mac, pull the repo and run:
      ./scripts/setup-mac-controller.sh
-     ./scripts/setup-mac-remote-desktop.sh   # if using GUI
+     ./scripts/setup-mac-nomachine.sh
 4) Verify from the Mac:
      ./scripts/verify-mac-remote-access.sh
 EOF
