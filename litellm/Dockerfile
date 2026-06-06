@@ -7,4 +7,4 @@ COPY lm-studio.key* /app/
 
 EXPOSE 4000
 
-CMD ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "1"]
+CMD ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "1", "--skip_default_auth"]
