@@ -5,6 +5,14 @@ primary_region = "sjc"
 [build]
   dockerfile = "Dockerfile"
 
+[[deploy]]
+  strategy = "rolling"
+  max_unavailable = 1
+  min_ready_seconds = 30
+  health_check_timeout = 60
+  restart_delay_timeout = 30
+  max_refresh_retries = 10
+
 [env]
   PORT = "4000"
 
