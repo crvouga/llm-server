@@ -73,7 +73,39 @@ detect_deb_arch() {
 
 nomachine_deb_url() {
   local deb_arch="$1"
-  echo "https://download.nomachine.com/download/${NOMACHINE_SERIES}/Linux/nomachine_${NOMACHINE_VERSION}_${deb_arch}.deb"
+  case "${deb_arch}" in
+    amd64)
+      echo "https://download.nomachine.com/download/${NOMACHINE_SERIES}/Linux/nomachine_${NOMACHINE_VERSION}_${deb_arch}.deb"
+      ;;
+    arm64)
+      # ARM64 packages live under Arm/, not Linux/ (Linux/arm64 URL returns HTML).
+      echo "https://download.nomachine.com/download/${NOMACHINE_SERIES}/Arm/nomachine_${NOMACHINE_VERSION}_${deb_arch}.deb"
+      ;;
+    armhf)
+      echo "https://www.nomachine.com/free/arm/v7/deb"
+      ;;
+  esac
+}
+
+validate_deb_package() {
+  local deb_file="$1"
+  if [[ ! -s "${deb_file}" ]]; then
+    echo "Download failed: ${deb_file} is empty." >&2
+    return 1
+  fi
+  if need_cmd file; then
+    file -b "${deb_file}" | rg -q 'Debian binary package' || {
+      echo "Download failed: ${deb_file} is not a Debian package (got HTML or an error page)." >&2
+      echo "Try setting NOMACHINE_VERSION / NOMACHINE_SERIES or install from https://www.nomachine.com/download" >&2
+      return 1
+    }
+  else
+    [[ "$(head -c 8 "${deb_file}")" == "!<arch>"* ]] || {
+      echo "Download failed: ${deb_file} is not a Debian package." >&2
+      return 1
+    }
+  fi
+  return 0
 }
 
 maybe_install_ubuntu_desktop() {
@@ -94,7 +126,7 @@ install_nomachine() {
   local deb_arch deb_url tmp_deb
   if nomachine_installed; then
     echo "NoMachine already installed."
-    return
+    return 0
   fi
 
   if ! need_cmd apt-get; then
@@ -106,12 +138,33 @@ install_nomachine() {
   deb_arch="$(detect_deb_arch)"
   deb_url="$(nomachine_deb_url "${deb_arch}")"
   tmp_deb="$(mktemp /tmp/nomachine.XXXXXX.deb)"
+  trap 'rm -f "${tmp_deb}"' RETURN
 
   echo "Downloading NoMachine ${NOMACHINE_VERSION} (${deb_arch})..."
-  curl -fsSL "${deb_url}" -o "${tmp_deb}"
+  echo "  URL: ${deb_url}"
+  if ! curl -fsSL "${deb_url}" -o "${tmp_deb}"; then
+    echo "Failed to download NoMachine package." >&2
+    exit 1
+  fi
+  if ! validate_deb_package "${tmp_deb}"; then
+    exit 1
+  fi
+
   echo "Installing NoMachine..."
-  dpkg -i "${tmp_deb}" || apt-get install -f -y
-  rm -f "${tmp_deb}"
+  if ! dpkg -i "${tmp_deb}"; then
+    apt-get install -f -y
+    dpkg -i "${tmp_deb}" || {
+      echo "NoMachine installation failed." >&2
+      exit 1
+    }
+  fi
+
+  if ! nomachine_installed; then
+    echo "NoMachine installation did not complete successfully." >&2
+    exit 1
+  fi
+
+  echo "NoMachine installed successfully."
 }
 
 configure_firewall() {
@@ -130,6 +183,11 @@ configure_firewall() {
 }
 
 enable_nomachine() {
+  if ! nomachine_installed; then
+    echo "NoMachine is not installed; skipping service enable." >&2
+    return 1
+  fi
+
   if systemctl list-unit-files | rg -q '^nxserver\.service'; then
     systemctl enable --now nxserver
   elif [[ -x /etc/NX/nxserver ]]; then
@@ -158,7 +216,7 @@ main() {
   maybe_install_ubuntu_desktop
   install_nomachine
   echo "Enabling NoMachine..."
-  enable_nomachine
+  enable_nomachine || exit 1
   echo "Configuring firewall (Tailscale interface only)..."
   configure_firewall
   show_status
