@@ -1,7 +1,7 @@
 # Declarative Local LLM Environment
 
 `local-llm-env` is a Terraform-like reconciler for a local LLM stack:
-- LM Studio and llama.cpp runtime provisioning
+- LM Studio runtime provisioning
 - model installation from an explicit manifest
 - systemd user services for persistent local serving
 - Cloudflare Tunnel + DNS route declaration
@@ -79,18 +79,16 @@ local-llm-env destroy --spec spec/local-llm-env.yaml --state state/local-llm-env
 ## Idempotency and Cleanup
 
 - Re-running `apply` after successful reconciliation should produce no meaningful actions.
-- `models.prune_unmanaged: true` removes unmanaged local model files in the configured model directory.
 - `safety.cleanup_mode` controls destroy behavior:
   - `managed_only`: remove managed service/tunnel resources only.
-  - `full_destroy`: also remove managed model files/directories from recorded state.
+  - `full_destroy`: remove all managed resources from recorded state.
 
 ## Verification Checklist
 
 After `apply`, validate:
 - `systemctl --user status local-llm-lmstudio.service`
-- `systemctl --user status local-llm-llamacpp.service`
 - `systemctl --user status local-llm-cloudflared.service`
-- local endpoints respond (`http://127.0.0.1:1234`, `http://127.0.0.1:8080`)
+- local endpoint responds (`http://127.0.0.1:1234`)
 - tunnel DNS hostnames route to expected local services
 - second `plan` shows no-op or only informational drift
 

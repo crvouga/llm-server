@@ -114,28 +114,5 @@ TimeoutStartSec={health_timeout}
 WantedBy=default.target
 """
 
-    llama_server = servers.get("llamacpp", {})
-    if llama_server.get("enabled", True):
-        llama_bin = host.get("llamacpp", {}).get("binary_path", "~/.local/bin/llama-server")
-        model_path = llama_server.get("model_path")
-        if not model_path:
-            default_id = model_by_backend.get("llamacpp", "model")
-            model_path = f"{spec['models'].get('download_dir', '~/.local/share/local-llm-models')}/{default_id}.gguf"
-        extra_args = " ".join(llama_server.get("extra_args", []))
-        units["local-llm-llamacpp.service"] = f"""[Unit]
-Description=Local LLM llama.cpp server
-After=network.target
-
-[Service]
-Type=simple
-ExecStart={llama_bin} --model {model_path} --host {llama_server.get("host", "127.0.0.1")} --port {llama_server.get("port", 8080)} {extra_args}
-Restart={restart_policy}
-RestartSec=3
-TimeoutStartSec={health_timeout}
-
-[Install]
-WantedBy=default.target
-"""
-
     return units
 

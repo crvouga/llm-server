@@ -77,7 +77,7 @@ def validate_models_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(models, list):
         raise SpecValidationError("`models` must be a list")
 
-    allowed_backends = {"lmstudio", "llamacpp"}
+    allowed_backends = {"lmstudio"}
     for idx, model in enumerate(models):
         if not isinstance(model, dict):
             raise SpecValidationError(f"models[{idx}] must be a mapping")

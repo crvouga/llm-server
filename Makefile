@@ -12,12 +12,11 @@ SPEC ?= spec/local-llm-env.yaml
 STATE ?= state/local-llm-env-state.json
 
 LMSTUDIO_SERVICE ?= local-llm-lmstudio.service
-LLAMACPP_SERVICE ?= local-llm-llamacpp.service
 CLOUDFLARED_SERVICE ?= local-llm-cloudflared.service
-SERVICES := $(LMSTUDIO_SERVICE) $(LLAMACPP_SERVICE) $(CLOUDFLARED_SERVICE)
+SERVICES := $(LMSTUDIO_SERVICE) $(CLOUDFLARED_SERVICE)
 
 .PHONY: help venv install setup doctor ensure-system-deps plan apply apply-auto status destroy destroy-auto \
-	start stop restart logs logs-lmstudio logs-llamacpp logs-cloudflared \
+	start stop restart logs logs-lmstudio logs-cloudflared \
 	service-status shell clean-venv
 
 help:
@@ -102,12 +101,6 @@ doctor:
 		command -v "$$cmd" >/dev/null || { echo "Missing: $$cmd"; exit 1; }; \
 		echo "  - $$cmd: OK"; \
 	done
-	@if command -v huggingface-cli >/dev/null || [ -x "$(VENV)/bin/huggingface-cli" ]; then \
-		echo "  - huggingface-cli: OK"; \
-	else \
-		echo "Missing: huggingface-cli (run make install)"; \
-		exit 1; \
-	fi
 	@echo "Doctor checks completed."
 
 setup: ensure-system-deps install doctor
@@ -157,13 +150,10 @@ service-status:
 	done
 
 logs:
-	@journalctl --user -f -u "$(LMSTUDIO_SERVICE)" -u "$(LLAMACPP_SERVICE)" -u "$(CLOUDFLARED_SERVICE)"
+	@journalctl --user -f -u "$(LMSTUDIO_SERVICE)" -u "$(CLOUDFLARED_SERVICE)"
 
 logs-lmstudio:
 	@journalctl --user -f -u "$(LMSTUDIO_SERVICE)"
-
-logs-llamacpp:
-	@journalctl --user -f -u "$(LLAMACPP_SERVICE)"
 
 logs-cloudflared:
 	@journalctl --user -f -u "$(CLOUDFLARED_SERVICE)"

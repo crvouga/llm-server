@@ -25,16 +25,11 @@ def test_validate_models_manifest_valid():
         "models": [
             {
                 "id": "m1",
-                "backend": "llamacpp",
-                "source": {"type": "huggingface", "repo": "x/y", "filename": "z.gguf"},
-            },
-            {
-                "id": "m2",
                 "backend": "lmstudio",
                 "source": {"type": "lmstudio", "catalog_id": "foo/bar"},
             },
         ]
     }
     validated = validate_models_manifest(manifest)
-    assert len(validated["models"]) == 2
+    assert len(validated["models"]) == 1
 

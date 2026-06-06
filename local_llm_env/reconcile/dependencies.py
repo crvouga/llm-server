@@ -42,22 +42,6 @@ def plan_dependencies(spec: dict[str, Any]) -> ReconcileResult:
     result.observed["lmstudio_binary"] = str(lmstudio_path)
     result.managed_resources.append({"type": "binary", "name": "lmstudio", "path": str(lmstudio_path)})
 
-    llamacpp_cfg = host.get("llamacpp", {})
-    llama_path = Path(llamacpp_cfg.get("binary_path", "~/.local/bin/llama-server")).expanduser()
-    if not llama_path.exists():
-        result.actions.append(
-            Action(
-                id="install-llama-server",
-                component=component,
-                description="Install llama.cpp server binary",
-                operation="run_command",
-                payload={"command": install_llamacpp_command(llamacpp_cfg)},
-            )
-        )
-    result.observed["llama_server_binary"] = str(llama_path)
-    result.managed_resources.append(
-        {"type": "binary", "name": "llama-server", "path": str(llama_path)}
-    )
     return result
 
 
@@ -89,19 +73,4 @@ def install_lmstudio_command(config: dict[str, Any]) -> str:
         )
     return "echo 'Unsupported LM Studio install method' && exit 1"
 
-
-def install_llamacpp_command(config: dict[str, Any]) -> str:
-    install_method = config.get("install_method", "github_release")
-    path = config.get("binary_path", "~/.local/bin/llama-server")
-    if install_method == "github_release":
-        url = config.get(
-            "binary_url",
-            "https://github.com/ggerganov/llama.cpp/releases/latest/download/llama-server",
-        )
-        return (
-            "mkdir -p ~/.local/bin && "
-            f"curl -L \"{url}\" -o \"{path}\" && "
-            f"chmod +x \"{path}\""
-        )
-    return "echo 'Unsupported llama.cpp install method' && exit 1"
 

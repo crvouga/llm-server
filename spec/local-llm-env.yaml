@@ -4,16 +4,11 @@ host:
     - curl
     - rg
     - cloudflared
-    - huggingface-cli
     - doppler
   lmstudio:
     install_method: appimage
     appimage_url: https://installers.lmstudio.ai/linux/x64/latest/LM-Studio.AppImage
     binary_path: ~/.local/bin/lmstudio
-  llamacpp:
-    install_method: github_release
-    binary_url: https://github.com/ggerganov/llama.cpp/releases/latest/download/llama-server
-    binary_path: ~/.local/bin/llama-server
 
 secrets:
   provider: doppler
@@ -27,8 +22,6 @@ secrets:
 
 models:
   manifest_path: spec/models.yaml
-  download_dir: ~/.local/share/local-llm-models
-  prune_unmanaged: true
 
 servers:
   lmstudio:
@@ -36,16 +29,6 @@ servers:
     host: 127.0.0.1
     port: 1234
     model_id: qwen3-8b-instruct
-  llamacpp:
-    enabled: true
-    host: 127.0.0.1
-    port: 8080
-    model_path: ~/.local/share/local-llm-models/qwen3-8b-instruct-q4_k_m.gguf
-    extra_args:
-      - --ctx-size
-      - "8192"
-      - --n-gpu-layers
-      - "99"
 
 services:
   use_systemd_user: true
@@ -64,8 +47,6 @@ exposure:
     routes:
       - hostname: llm-api.local.example.com
         service: http://127.0.0.1:1234
-      - hostname: llm-raw.local.example.com
-        service: http://127.0.0.1:8080
 
 safety:
   dry_run_default: true

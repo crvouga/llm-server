@@ -5,12 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "local-llm-env"
 version = "0.1.0"
-description = "Declarative, idempotent reconciler for local LLM runtimes and Cloudflare Tunnel exposure."
+description = "Declarative, idempotent reconciler for LM Studio and Cloudflare Tunnel exposure."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "PyYAML>=6.0.1",
-  "huggingface_hub>=0.30.0",
 ]
 
 [project.optional-dependencies]
