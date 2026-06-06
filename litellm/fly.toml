@@ -5,15 +5,14 @@ primary_region = "sjc"
 [build]
   dockerfile = "Dockerfile"
 
-[[deploy]]
+[deploy]
   strategy = "rolling"
   max_unavailable = 1
-  min_ready_seconds = 30
-  # litellm-database runs `prisma migrate deploy` on boot; give it headroom so the
-  # rolling health check doesn't time out (and roll back to a stale config) mid-migration.
-  health_check_timeout = 120
-  restart_delay_timeout = 30
-  max_refresh_retries = 10
+  # LiteLLM runs `prisma migrate deploy` on boot, so a cold machine can take well over
+  # a minute to start + pass `/health/liveliness`. Extend the deploy wait past the
+  # default 5m so the rolling update doesn't cancel mid-boot and roll back to a stale
+  # config. `wait_timeout` is the only fly.toml key that controls this.
+  wait_timeout = "10m"
 
 [env]
   PORT = "4000"
@@ -33,8 +32,9 @@ primary_region = "sjc"
   [[http_service.checks]]
     interval = "15s"
     timeout = "10s"
-    # Boot + prisma migrate can take >60s on a cold machine; don't fail the probe early.
-    grace_period = "120s"
+    # Fly caps the HTTP-check grace period at 60s; the longer boot + prisma migrate
+    # window is covered by [deploy] wait_timeout, not here.
+    grace_period = "60s"
     method = "GET"
     # MUST be an unauthenticated endpoint. `/health` requires the master key and returns
     # 401 to the probe -> never healthy -> rolling update times out. `/health/liveliness`
