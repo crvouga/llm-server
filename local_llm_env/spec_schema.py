@@ -28,8 +28,6 @@ def load_yaml_file(path: Path) -> dict[str, Any]:
 def validate_main_spec(spec: dict[str, Any]) -> dict[str, Any]:
     host = _required(spec, "host", "spec")
     secrets = _required(spec, "secrets", "spec")
-    models = _required(spec, "models", "spec")
-    servers = _required(spec, "servers", "spec")
     services = _required(spec, "services", "spec")
     exposure = _required(spec, "exposure", "spec")
     safety = _required(spec, "safety", "spec")
@@ -37,8 +35,6 @@ def validate_main_spec(spec: dict[str, Any]) -> dict[str, Any]:
     for name, value in {
         "host": host,
         "secrets": secrets,
-        "models": models,
-        "servers": servers,
         "services": services,
         "exposure": exposure,
         "safety": safety,
@@ -57,11 +53,6 @@ def validate_main_spec(spec: dict[str, Any]) -> dict[str, Any]:
     ):
         raise SpecValidationError("`secrets.required_keys` must be a list[str]")
 
-    _required(models, "manifest_path", "models")
-    for flag in ("prune_unmanaged",):
-        if flag in models and not isinstance(models[flag], bool):
-            raise SpecValidationError(f"`models.{flag}` must be boolean")
-
     if "cloudflare" not in exposure or not isinstance(exposure["cloudflare"], dict):
         raise SpecValidationError("`exposure.cloudflare` must be defined")
 
@@ -70,27 +61,4 @@ def validate_main_spec(spec: dict[str, Any]) -> dict[str, Any]:
         raise SpecValidationError("`safety.cleanup_mode` must be managed_only/full_destroy")
 
     return spec
-
-
-def validate_models_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
-    models = _required(manifest, "models", "models manifest")
-    if not isinstance(models, list):
-        raise SpecValidationError("`models` must be a list")
-
-    allowed_backends = {"lmstudio"}
-    for idx, model in enumerate(models):
-        if not isinstance(model, dict):
-            raise SpecValidationError(f"models[{idx}] must be a mapping")
-        _required(model, "id", f"models[{idx}]")
-        backend = _required(model, "backend", f"models[{idx}]")
-        if backend not in allowed_backends:
-            raise SpecValidationError(
-                f"models[{idx}].backend must be one of {sorted(allowed_backends)}"
-            )
-        source = _required(model, "source", f"models[{idx}]")
-        if not isinstance(source, dict):
-            raise SpecValidationError(f"models[{idx}].source must be a mapping")
-        _required(source, "type", f"models[{idx}].source")
-
-    return manifest
 

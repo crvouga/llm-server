@@ -41,7 +41,7 @@ def main() -> None:
         print(json.dumps(state, indent=2, sort_keys=True))
         return
 
-    spec, manifest = load_and_validate_specs(spec_path)
+    spec = load_and_validate_specs(spec_path)
     current_state = load_state(state_path)
 
     if args.command == "destroy":
@@ -55,7 +55,8 @@ def main() -> None:
             print("Destroy complete.")
         return
 
-    plan, _secrets = build_plan(spec, manifest)
+    rotate_tunnel = args.command == "apply"
+    plan, _secrets = build_plan(spec, rotate_tunnel=rotate_tunnel)
     print_plan(plan)
     drift = diff_state(current_state, plan)
     print(json.dumps(drift, indent=2, sort_keys=True))

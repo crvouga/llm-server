@@ -8,7 +8,7 @@ host:
   lmstudio:
     install_method: appimage
     appimage_url: https://installers.lmstudio.ai/linux/x64/latest/LM-Studio.AppImage
-    binary_path: ~/.local/bin/lmstudio
+    binary_path: ~/.lmstudio/bin/lms
 
 secrets:
   provider: doppler
@@ -17,16 +17,6 @@ secrets:
   required_keys:
     - CLOUDFLARE_API_TOKEN
     - CLOUDFLARE_ACCOUNT_ID
-
-models:
-  manifest_path: spec/models.yaml
-
-servers:
-  lmstudio:
-    enabled: true
-    host: 127.0.0.1
-    port: 1234
-    model_id: qwen3-8b-instruct
 
 services:
   use_systemd_user: true
@@ -43,7 +33,7 @@ exposure:
     config_path: ~/.cloudflared/local-llm.yml
     service_name: local-llm-cloudflared.service
     routes:
-      - hostname: llm-api.local.example.com
+      - hostname: openai.chrisvouga.dev
         service: http://127.0.0.1:1234
 
 safety:

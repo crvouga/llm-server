@@ -1,7 +1,0 @@
-models:
-  - id: qwen3-8b-instruct
-    backend: lmstudio
-    source:
-      type: lmstudio
-      catalog_id: qwen/qwen3-8b
-

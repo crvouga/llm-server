@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import base64
 import json
-import subprocess
+import secrets as pysecrets
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -9,7 +13,7 @@ from ..doppler import doppler_prefix
 from ..types import Action, ReconcileResult
 
 
-def plan_cloudflare(spec: dict[str, Any], secrets: dict[str, str]) -> ReconcileResult:
+def plan_cloudflare(spec: dict[str, Any], secrets: dict[str, str], rotate_tunnel: bool = False) -> ReconcileResult:
     component = "cloudflare"
     result = ReconcileResult(component=component)
     cf = spec["exposure"]["cloudflare"]
@@ -20,31 +24,60 @@ def plan_cloudflare(spec: dict[str, Any], secrets: dict[str, str]) -> ReconcileR
     project = spec["secrets"]["project"]
     config = spec["secrets"]["config"]
     prefix = doppler_prefix(project, config)
+    account_id = secrets.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
+    api_token = secrets.get("CLOUDFLARE_API_TOKEN", "").strip()
+    if not account_id or not api_token:
+        raise RuntimeError("Missing `CLOUDFLARE_ACCOUNT_ID` or `CLOUDFLARE_API_TOKEN` in Doppler secrets")
 
-    known_tunnel_id = get_existing_tunnel_id(prefix, tunnel_name)
-    tunnel_id = known_tunnel_id or secrets.get(cf["tunnel_id_secret_key"], "")
+    try:
+        existing = list_tunnels(account_id, api_token, tunnel_name)
+    except RuntimeError as error:
+        if rotate_tunnel:
+            raise RuntimeError(
+                "Cloudflare tunnel lifecycle management requires API token scopes for tunnels "
+                f"(read/edit). Original error: {error}"
+            ) from error
+        existing = []
+        result.observed["cloudflare_api_unavailable"] = str(error)
+    removed_tunnels: list[str] = []
+    if rotate_tunnel:
+        for tunnel in existing:
+            delete_tunnel(account_id, api_token, tunnel["id"])
+            removed_tunnels.append(tunnel["id"])
+        tunnel_id, credentials_json = create_tunnel(account_id, api_token, tunnel_name)
+        result.observed["tunnel_rotated"] = True
+    else:
+        tunnel_id = existing[0]["id"] if existing else ""
+        credentials_json = ""
+        result.observed["tunnel_rotated"] = False
 
     if not tunnel_id:
+        if rotate_tunnel:
+            raise RuntimeError(
+                f"Failed to create Cloudflare tunnel `{tunnel_name}` during apply planning."
+            )
+        tunnel_id = "<created-on-apply>"
+        result.observed["pending_tunnel_creation"] = True
+
+    credentials_path = Path(f"~/.cloudflared/{tunnel_id}.json").expanduser()
+    current_credentials = credentials_path.read_text() if credentials_path.exists() else None
+    if credentials_json and current_credentials != credentials_json:
         result.actions.append(
             Action(
-                id="create-cloudflare-tunnel",
+                id="write-cloudflared-credentials",
                 component=component,
-                description=f"Create Cloudflare tunnel `{tunnel_name}`",
-                operation="run_command",
-                payload={"command": f"{prefix}cloudflared tunnel create {tunnel_name}"},
+                description=f"Write cloudflared credentials `{credentials_path}`",
+                operation="write_file",
+                payload={"path": str(credentials_path), "content": credentials_json},
             )
         )
-    else:
-        result.observed["tunnel_id"] = tunnel_id
+    result.managed_resources.append(
+        {"type": "cloudflared_credentials", "path": str(credentials_path), "tunnel_id": tunnel_id}
+    )
 
     config_path = Path(cf.get("config_path", f"~/.cloudflared/{tunnel_name}.yml")).expanduser()
     ingress = cf.get("routes", [])
-    tunnel_id_secret_key = cf.get("tunnel_id_secret_key", "CF_TUNNEL_ID")
-    rendered = render_tunnel_config(
-        tunnel_name,
-        tunnel_id or f"${{{tunnel_id_secret_key}}}",
-        ingress,
-    )
+    rendered = render_tunnel_config(tunnel_name, tunnel_id, ingress)
     current = config_path.read_text() if config_path.exists() else None
     if current != rendered:
         result.actions.append(
@@ -69,13 +102,13 @@ def plan_cloudflare(spec: dict[str, Any], secrets: dict[str, str]) -> ReconcileR
                 payload={
                     "command": (
                         f"{prefix}cloudflared tunnel route dns "
-                        f"{tunnel_id or tunnel_name} {hostname}"
+                        f"{tunnel_id} {hostname}"
                     )
                 },
             )
         )
         result.managed_resources.append(
-            {"type": "cloudflare_dns_route", "hostname": hostname, "tunnel": tunnel_id or tunnel_name}
+            {"type": "cloudflare_dns_route", "hostname": hostname, "tunnel": tunnel_id}
         )
 
     unit_name = cf.get("service_name", "local-llm-cloudflared.service")
@@ -103,6 +136,10 @@ def plan_cloudflare(spec: dict[str, Any], secrets: dict[str, str]) -> ReconcileR
         )
     )
     result.managed_resources.append({"type": "systemd_unit", "name": unit_name, "path": str(unit_path)})
+    result.managed_resources.append({"type": "cloudflare_tunnel", "name": tunnel_name, "id": tunnel_id})
+    result.observed["tunnel_id"] = tunnel_id
+    if removed_tunnels:
+        result.observed["removed_tunnel_ids"] = removed_tunnels
     return result
 
 
@@ -140,35 +177,38 @@ def plan_cloudflare_destroy(spec: dict[str, Any], state: dict[str, Any]) -> Reco
                     destructive=True,
                 )
             )
-        if resource.get("type") == "cloudflared_config":
+        if resource.get("type") in {"cloudflared_config", "cloudflared_credentials"}:
             result.actions.append(
                 Action(
                     id=f"delete-cloudflared-config-{Path(resource['path']).name}",
                     component=component,
-                    description=f"Delete cloudflared config `{resource['path']}`",
+                    description=f"Delete cloudflared file `{resource['path']}`",
                     operation="delete_file",
                     payload={"path": resource["path"]},
                     destructive=True,
                 )
             )
+        if resource.get("type") == "cloudflare_tunnel":
+            tunnel_id = resource.get("id")
+            if tunnel_id:
+                result.actions.append(
+                    Action(
+                        id=f"delete-tunnel-{tunnel_id}",
+                        component=component,
+                        description=f"Delete Cloudflare tunnel `{tunnel_id}`",
+                        operation="run_command",
+                        payload={
+                            "command": (
+                                f"{prefix}curl -fsS -X DELETE "
+                                "-H 'Authorization: Bearer $CLOUDFLARE_API_TOKEN' "
+                                "-H 'Content-Type: application/json' "
+                                f"'https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/cfd_tunnel/{tunnel_id}' || true"
+                            )
+                        },
+                        destructive=True,
+                    )
+                )
     return result
-
-
-def get_existing_tunnel_id(command_prefix: str, tunnel_name: str) -> str | None:
-    command = f"{command_prefix}cloudflared tunnel list --output json"
-    process = subprocess.run(command, shell=True, text=True, capture_output=True)
-    if process.returncode != 0:
-        return None
-    try:
-        payload = json.loads(process.stdout)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(payload, list):
-        return None
-    for item in payload:
-        if item.get("name") == tunnel_name:
-            return item.get("id")
-    return None
 
 
 def render_tunnel_config(tunnel_name: str, tunnel_id: str, ingress: list[dict[str, str]]) -> str:
@@ -200,4 +240,71 @@ RestartSec=5
 [Install]
 WantedBy=default.target
 """
+
+
+def _cf_request(
+    account_id: str,
+    api_token: str,
+    method: str,
+    path: str,
+    body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}{path}"
+    data = None if body is None else json.dumps(body).encode("utf-8")
+    request = urllib.request.Request(
+        url=url,
+        method=method,
+        data=data,
+        headers={
+            "Authorization": f"Bearer {api_token}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        details = error.read().decode("utf-8", errors="ignore")
+        raise RuntimeError(f"Cloudflare API {method} {path} failed: {details}") from error
+    except urllib.error.URLError as error:
+        raise RuntimeError(f"Cloudflare API {method} {path} failed: {error}") from error
+
+    if not payload.get("success"):
+        raise RuntimeError(f"Cloudflare API {method} {path} failed: {payload.get('errors')}")
+    return payload
+
+
+def list_tunnels(account_id: str, api_token: str, tunnel_name: str) -> list[dict[str, str]]:
+    payload = _cf_request(account_id, api_token, "GET", "/cfd_tunnel?is_deleted=false")
+    tunnels: list[dict[str, str]] = []
+    for item in payload.get("result", []):
+        tunnel_id = item.get("id")
+        if item.get("name") == tunnel_name and tunnel_id:
+            tunnels.append({"id": tunnel_id, "name": tunnel_name})
+    return tunnels
+
+
+def delete_tunnel(account_id: str, api_token: str, tunnel_id: str) -> None:
+    encoded_id = urllib.parse.quote(tunnel_id)
+    _cf_request(account_id, api_token, "DELETE", f"/cfd_tunnel/{encoded_id}")
+
+
+def create_tunnel(account_id: str, api_token: str, tunnel_name: str) -> tuple[str, str]:
+    tunnel_secret = base64.b64encode(pysecrets.token_bytes(32)).decode("ascii")
+    payload = _cf_request(
+        account_id,
+        api_token,
+        "POST",
+        "/cfd_tunnel",
+        body={"name": tunnel_name, "tunnel_secret": tunnel_secret},
+    )
+    tunnel_id = payload.get("result", {}).get("id", "")
+    if not tunnel_id:
+        raise RuntimeError("Cloudflare API did not return tunnel id")
+    credentials = {
+        "AccountTag": account_id,
+        "TunnelSecret": tunnel_secret,
+        "TunnelID": tunnel_id,
+    }
+    return tunnel_id, json.dumps(credentials, indent=2, sort_keys=True) + "\n"
 

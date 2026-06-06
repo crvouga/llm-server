@@ -9,8 +9,8 @@ from typing import Any
 from .types import Action, ReconcilePlan
 
 
-def compute_spec_hash(spec: dict[str, Any], models_manifest: dict[str, Any]) -> str:
-    payload = {"spec": spec, "models_manifest": models_manifest}
+def compute_spec_hash(spec: dict[str, Any]) -> str:
+    payload = {"spec": spec}
     encoded = json.dumps(payload, sort_keys=True).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 

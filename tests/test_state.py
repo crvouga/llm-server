@@ -3,9 +3,8 @@ from local_llm_env.types import ReconcilePlan
 
 
 def test_spec_hash_changes_when_spec_changes():
-    manifest = {"models": [{"id": "a"}]}
-    hash_a = compute_spec_hash({"x": 1}, manifest)
-    hash_b = compute_spec_hash({"x": 2}, manifest)
+    hash_a = compute_spec_hash({"x": 1})
+    hash_b = compute_spec_hash({"x": 2})
     assert hash_a != hash_b
 
 

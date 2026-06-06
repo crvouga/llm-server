@@ -11,12 +11,11 @@ LLM_ENV := $(VENV)/bin/local-llm-env
 SPEC ?= spec/local-llm-env.yaml
 STATE ?= state/local-llm-env-state.json
 
-LMSTUDIO_SERVICE ?= local-llm-lmstudio.service
 CLOUDFLARED_SERVICE ?= local-llm-cloudflared.service
-SERVICES := $(LMSTUDIO_SERVICE) $(CLOUDFLARED_SERVICE)
+SERVICES := $(CLOUDFLARED_SERVICE)
 
 .PHONY: help venv install setup doctor ensure-system-deps plan apply apply-auto status destroy destroy-auto \
-	start stop restart logs logs-lmstudio logs-cloudflared \
+	start stop restart logs logs-cloudflared \
 	service-status shell clean-venv
 
 help:
@@ -150,10 +149,7 @@ service-status:
 	done
 
 logs:
-	@journalctl --user -f -u "$(LMSTUDIO_SERVICE)" -u "$(CLOUDFLARED_SERVICE)"
-
-logs-lmstudio:
-	@journalctl --user -f -u "$(LMSTUDIO_SERVICE)"
+	@journalctl --user -f -u "$(CLOUDFLARED_SERVICE)"
 
 logs-cloudflared:
 	@journalctl --user -f -u "$(CLOUDFLARED_SERVICE)"

@@ -1,11 +1,10 @@
 # Declarative Local LLM Environment
 
-`local-llm-env` is a Terraform-like reconciler for a local LLM stack:
-- LM Studio runtime provisioning
-- model installation from an explicit manifest
-- systemd user services for persistent local serving
-- Cloudflare Tunnel + DNS route declaration
-- Doppler-managed secrets for all credentials
+`local-llm-env` is a Terraform-like reconciler for exposing a local LM Studio API:
+- host dependency installation (including LM Studio binary helper)
+- Cloudflare Tunnel config + DNS route declaration
+- systemd user service for `cloudflared`
+- Doppler-managed secrets for credentials
 
 The workflow is idempotent:
 - `plan` computes drift and actions
@@ -23,7 +22,6 @@ The workflow is idempotent:
 ## Project Layout
 
 - `spec/local-llm-env.yaml`: primary desired-state declaration
-- `spec/models.yaml`: explicit model inventory (all managed models)
 - `local_llm_env/`: CLI, schema validation, reconcilers, state/diff logic
 - `state/local-llm-env-state.json`: last applied managed state
 - `systemd/*.service`: template reference units
@@ -33,12 +31,12 @@ The workflow is idempotent:
 1. Login and configure Doppler locally:
    - `doppler login`
    - `doppler setup --project local-llm --config dev`
-2. Ensure required keys exist in Doppler `dev` config:
-   - `CF_API_TOKEN`
-   - `CF_ACCOUNT_ID`
-   - `CF_ZONE_ID`
-   - `CF_TUNNEL_ID`
-   - `CF_TUNNEL_CREDENTIALS_JSON` (if used in your tunnel flow)
+2. Ensure required keys in `spec/local-llm-env.yaml` exist in your Doppler config.
+   The default spec expects:
+   - `CLOUDFLARE_API_TOKEN`
+   - `CLOUDFLARE_ACCOUNT_ID`
+   - `CLOUDFLARE_TUNNEL_ID`
+   - `CF_TUNNEL_CREDENTIALS_JSON`
 
 ## Install CLI
 
@@ -86,7 +84,6 @@ local-llm-env destroy --spec spec/local-llm-env.yaml --state state/local-llm-env
 ## Verification Checklist
 
 After `apply`, validate:
-- `systemctl --user status local-llm-lmstudio.service`
 - `systemctl --user status local-llm-cloudflared.service`
 - local endpoint responds (`http://127.0.0.1:1234`)
 - tunnel DNS hostnames route to expected local services
@@ -94,7 +91,7 @@ After `apply`, validate:
 
 ## Notes
 
-- LM Studio CLI behavior can vary by release; adjust model install command if your `lms` command differs.
+- LM Studio model downloads, model selection, and server lifecycle are intentionally user-managed in LM Studio.
 - Cloudflare route creation can require a pre-existing tunnel and account token scopes.
 - The reconciler only deletes resources marked as managed by spec/state rules.
 
