@@ -287,3 +287,59 @@ push:
 gh:
 	@git remote get-url origin | sed 's/.*github.com[:\/]//' | sed 's/\.git$$//' | xargs -I {} open "https://github.com/{}"
 
+setup-tunnel:
+	@set -euo pipefail; \
+	command -v cloudflared >/dev/null || { echo "cloudflared not found. Run: make ensure-system-deps"; exit 1; }; \
+	echo "=== Setting up Cloudflare tunnel for LM Studio ==="; \
+	TUNNEL_NAME=lm-studio; \
+	HOSTNAME=lm-studio.chrisvouga.dev; \
+	CONFIG_PATH="$${HOME}/.cloudflared/$${TUNNEL_NAME}.yml"; \
+	CREDS_DIR="$${HOME}/.cloudflared"; \
+	PORT=1234; \
+	TUNNEL_ID=$$(resolve_tunnel_id() { \
+		id=$$(cloudflared tunnel list --output json 2>/dev/null | python3 -c "import sys,json;[print(t['id']) or '' for t in json.loads(sys.stdin.read()) if t.get('name')=='$$TUNNEL_NAME']" 2>/dev/null | head -1 || true); \
+		if [ -n "$$id" ]; then echo "$$id"; return; fi; \
+		for f in "$$CREDS_DIR"/*.json; do [ -f "$$f" ] || continue; id=$$(python3 -c "import json;print(json.load(open('$$f')).get('TunnelID',''))" 2>/dev/null || true); if [ -n "$$id" ]; then echo "$$id"; return; fi; done; \
+	}); \
+	if [ -z "$$TUNNEL_ID" ]; then \
+		echo "Creating tunnel '$${TUNNEL_NAME}'..."; \
+		cloudflared tunnel create "$$TUNNEL_ID" 2>/dev/null || true; \
+		TUNNEL_ID=$$(cloudflared tunnel list --output json 2>/dev/null | python3 -c "import sys,json;[print(t['id']) or '' for t in json.loads(sys.stdin.read()) if t.get('name')=='$$TUNNEL_NAME']" 2>/dev/null | head -1 || true); \
+		if [ -z "$$TUNNEL_ID" ]; then echo "Error: failed to create tunnel. Run: cloudflared tunnel login"; exit 1; fi; \
+		echo "Tunnel created: $${TUNNEL_ID}"; \
+	else \
+		echo "Tunnel '$${TUNNEL_NAME}' already exists: $${TUNNEL_ID}"; \
+	fi; \
+	echo "Routing DNS for $${HOSTNAME}..."; \
+	cloudflared tunnel route dns "$$TUNNEL_ID" "$$HOSTNAME" 2>/dev/null || true; \
+	mkdir -p "$$HOME/.cloudflared"; \
+	cat > "$$CONFIG_PATH" <<TUNNELCFG; \
+tunnel: $$TUNNEL_ID; \
+credentials-file: $$CREDS_DIR/$$TUNNEL_ID.json; \
+ingress:; \
+  - hostname: $$HOSTNAME; \
+    service: http://127.0.0.1:$$PORT; \
+  - service: http_status:404; \
+TUNNELCFG; \
+	echo "Config written to $$CONFIG_PATH"; \
+	UNIT_PATH="$${HOME}/.config/systemd/user/lm-studio-cloudflared.service"; \
+	mkdir -p "$${HOME}/.config/systemd/user"; \
+	CF_BIN=$$(which cloudflared); \
+	cat > "$$UNIT_PATH" <<UNITCFG; \
+[Unit]; \
+Description=Cloudflare tunnel for LM Studio; \
+After=network.target; \
+[Service]; \
+Type=simple; \
+ExecStart=$$CF_BIN tunnel --config $$CONFIG_PATH run; \
+Restart=always; \
+RestartSec=5; \
+[Install]; \
+WantedBy=default.target; \
+UNITCFG; \
+	echo "Unit written to $$UNIT_PATH"; \
+	echo "Starting service..."; \
+	systemctl --user daemon-reload; \
+	systemctl --user enable --now lm-studio-cloudflared.service; \
+	echo "Done. Tunnel is live at https://$$HOSTNAME";
+
