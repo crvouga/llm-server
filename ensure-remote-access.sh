@@ -13,6 +13,9 @@
 #   NOMACHINE_DEB_URL - Direct URL to the NoMachine .deb for THIS arch.
 #                       Get it from https://www.nomachine.com/download
 #   SSH_PASSWORD_AUTH - "yes" or "no" (default: leave existing config untouched).
+#   CLOUDFLARE_TUNNEL_TOKEN - Connector token for a remotely-managed named tunnel
+#                       (Zero Trust dashboard -> Networks -> Tunnels). If set and no
+#                       cloudflared service exists yet, the service is installed.
 
 set -euo pipefail
 
@@ -115,7 +118,50 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-# 4. Firewall (only touch ufw if it's active)
+# 4. Cloudflare Tunnel (cloudflared)
+# ----------------------------------------------------------------------------
+log "Ensuring Cloudflare Tunnel (cloudflared)..."
+if ! command -v cloudflared >/dev/null 2>&1; then
+  install -d -m 0755 /usr/share/keyrings
+  curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
+    -o /usr/share/keyrings/cloudflare-main.gpg
+  echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main" \
+    > /etc/apt/sources.list.d/cloudflared.list
+  apt-get update -y
+  DEBIAN_FRONTEND=noninteractive apt-get install -y cloudflared
+  ok "Installed cloudflared."
+else
+  ok "cloudflared already installed."
+fi
+
+# The systemd unit is created either by `cloudflared service install <TOKEN>`
+# (remotely-managed tunnel) or by a local /etc/cloudflared/config.yml.
+if systemctl list-unit-files | grep -q '^cloudflared\.service'; then
+  ok "cloudflared service already installed."
+elif [ -n "${CLOUDFLARE_TUNNEL_TOKEN:-}" ]; then
+  log "Installing cloudflared service from token..."
+  cloudflared service install "${CLOUDFLARE_TUNNEL_TOKEN}"
+  ok "Installed cloudflared service."
+elif [ -f /etc/cloudflared/config.yml ]; then
+  log "Found /etc/cloudflared/config.yml; installing service from it..."
+  cloudflared service install
+  ok "Installed cloudflared service from config.yml."
+else
+  warn "cloudflared installed but no tunnel configured."
+  warn "  -> Set CLOUDFLARE_TUNNEL_TOKEN=... (Zero Trust dashboard) and re-run,"
+  warn "     or place a config at /etc/cloudflared/config.yml first."
+fi
+
+if systemctl list-unit-files | grep -q '^cloudflared\.service'; then
+  systemctl enable cloudflared >/dev/null 2>&1 || true
+  systemctl start  cloudflared >/dev/null 2>&1 || true
+  systemctl is-active --quiet cloudflared \
+    && ok "cloudflared is active." \
+    || warn "cloudflared not active; check: journalctl -u cloudflared -n 50"
+fi
+
+# ----------------------------------------------------------------------------
+# 5. Firewall (only touch ufw if it's active)
 # ----------------------------------------------------------------------------
 if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
   log "ufw active; ensuring required ports allowed..."
@@ -128,12 +174,13 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-# 5. Summary
+# 6. Summary
 # ----------------------------------------------------------------------------
 echo
 log "==================== SUMMARY ===================="
 systemctl is-active --quiet "$SSH_UNIT"  && ok "SSH: active"        || warn "SSH: NOT active"
 systemctl is-active --quiet tailscaled   && ok "tailscaled: active" || warn "tailscaled: NOT active"
+systemctl is-active --quiet cloudflared  && ok "cloudflared: active" || warn "cloudflared: NOT active/configured"
 TS_IP="$(tailscale ip -4 2>/dev/null | head -n1 || true)"
 [ -n "$TS_IP" ] && ok "Tailscale IP: ${TS_IP}" || warn "No Tailscale IPv4 yet."
 [ -x /usr/NX/bin/nxserver ] && ok "NoMachine: installed" || warn "NoMachine: not installed"
