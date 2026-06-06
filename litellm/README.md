@@ -15,6 +15,7 @@ Self-hosted [LiteLLM](https://docs.litellm.ai/) proxy deployed to Fly.io at `htt
 |--------|---------|
 | `FLY_API_TOKEN` | Fly.io deploy auth |
 | `LITELLM_MASTER_KEY` | Bearer token for proxy clients (`Authorization: Bearer …`) |
+| `DATABASE_URL` | Neon PostgreSQL connection string (deploy adds `schema=litellm`) |
 | `OPENAI_API_KEY` | OpenAI provider routing |
 | `CLOUDFLARE_API_TOKEN` | DNS record management during deploy |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account for DNS API |

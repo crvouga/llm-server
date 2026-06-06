@@ -139,6 +139,28 @@ if [ -z "${LITELLM_MASTER_KEY:-}" ]; then
   exit 1
 fi
 
+if [ -z "${DATABASE_URL:-}" ]; then
+  echo "DATABASE_URL is required (set via Doppler or env)."
+  exit 1
+fi
+
+ensure_litellm_schema_url() {
+  local url="$1"
+
+  if [[ "$url" == *"schema="* ]]; then
+    echo "$url"
+    return
+  fi
+
+  if [[ "$url" == *"?"* ]]; then
+    echo "${url}&schema=litellm"
+  else
+    echo "${url}?schema=litellm"
+  fi
+}
+
+DATABASE_URL="$(ensure_litellm_schema_url "$DATABASE_URL")"
+
 if [ -z "${OPENAI_API_KEY:-}" ]; then
   echo "OPENAI_API_KEY is required (set via Doppler or env)."
   exit 1
@@ -168,6 +190,7 @@ fly secrets set \
   LITELLM_MASTER_KEY="$LITELLM_MASTER_KEY" \
   OPENAI_API_KEY="$OPENAI_API_KEY" \
   LM_STUDIO_API_KEY="$LM_STUDIO_API_KEY" \
+  DATABASE_URL="$DATABASE_URL" \
   -a "$APP_NAME"
 
 echo "Deploying LiteLLM to Fly.io..."

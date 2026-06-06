@@ -2,26 +2,6 @@
 # Provider API keys are injected via Doppler/Fly secrets (os.environ/*).
 
 model_list:
-  - model_name: gpt-4o
-    litellm_params:
-      model: openai/gpt-4o
-      api_key: os.environ/OPENAI_API_KEY
-
-  - model_name: gpt-4o-mini
-    litellm_params:
-      model: openai/gpt-4o-mini
-      api_key: os.environ/OPENAI_API_KEY
-
-  - model_name: gpt-4.1
-    litellm_params:
-      model: openai/gpt-4.1
-      api_key: os.environ/OPENAI_API_KEY
-
-  - model_name: gpt-4.1-mini
-    litellm_params:
-      model: openai/gpt-4.1-mini
-      api_key: os.environ/OPENAI_API_KEY
-
   - model_name: local-lm-studio
     litellm_params:
       model: openai/*
@@ -34,3 +14,7 @@ litellm_settings:
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
+  database_connection_pool_limit: 10
+  database_extra_connection_params:
+    pgbouncer: "true"
+    statement_cache_size: 0

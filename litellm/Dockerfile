@@ -1,4 +1,4 @@
-FROM docker.litellm.ai/berriai/litellm:main-stable
+FROM docker.litellm.ai/berriai/litellm-database:main-stable
 
 WORKDIR /app
 
