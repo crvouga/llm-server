@@ -22,7 +22,7 @@ COMMIT_MSG ?=
 
 .PHONY: help venv install setup doctor ensure-system-deps plan apply apply-auto status destroy destroy-auto \
 	start stop restart logs logs-cloudflared \
-	service-status shell clean-venv ssh-target target-tmux push
+	service-status shell clean-venv ssh-target target-tmux pull push
 
 help:
 	@echo "Targets:"
@@ -44,6 +44,7 @@ help:
 	@echo "  make clean-venv     -> remove local virtual environment"
 	@echo "  make ssh-target     -> SSH into the Linux target (via Tailscale)"
 	@echo "  make target-tmux    -> SSH into target with tmux session 'work'"
+	@echo "  make pull           -> git pull from upstream (auto-stash local changes)"
 	@echo "  make push           -> git add, commit (if needed), push to upstream"
 	@echo ""
 	@echo "Overrides:"
@@ -185,6 +186,32 @@ target-tmux:
 		exit 1; \
 	}
 	@ssh -t "$(REMOTE_USER)@$(REMOTE_HOST)" 'tmux new -A -s work'
+
+pull:
+	@set -euo pipefail; \
+	branch="$$(git branch --show-current)"; \
+	if [ -z "$$branch" ]; then \
+		echo "Not on a branch (detached HEAD)."; \
+		exit 1; \
+	fi; \
+	stashed=false; \
+	if ! git diff --quiet || ! git diff --cached --quiet || [ -n "$$(git ls-files --others --exclude-standard)" ]; then \
+		echo "Stashing local changes before pull..."; \
+		git stash push -u -m "make pull ($$(date -u +%Y-%m-%dT%H:%M:%SZ))"; \
+		stashed=true; \
+	fi; \
+	git pull --ff-only origin "$$branch"; \
+	if [ "$$stashed" = true ]; then \
+		echo "Restoring stashed changes..."; \
+		if git stash pop; then \
+			echo "Pull complete (stash restored)."; \
+		else \
+			echo "Pull complete, but stash pop had conflicts. Run: git stash list && git stash pop"; \
+			exit 1; \
+		fi; \
+	else \
+		echo "Pull complete."; \
+	fi
 
 push:
 	@set -euo pipefail; \
