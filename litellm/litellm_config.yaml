@@ -2,15 +2,30 @@
 # Provider API keys are injected via Doppler/Fly secrets (os.environ/*).
 
 model_list:
+  - model_name: "local-lm-studio"
+    litellm_params:
+      model: openai/*
+      api_base: https://lm-studio.chrisvouga.dev/v1
+      api_key: os.environ/LM_STUDIO_API_KEY
+      num_retries: 3
+      retry_min_timeout_ms: 500
+      retry_max_timeout_ms: 5000
+
+  # Default route for any model name (forwards to LM Studio)
   - model_name: "*"
     litellm_params:
       model: openai/*
       api_base: https://lm-studio.chrisvouga.dev/v1
-      api_key: os.environ/LITELLM_LM_STUDIO_API_KEY
+      api_key: os.environ/LM_STUDIO_API_KEY
+      num_retries: 3
+      retry_min_timeout_ms: 500
+      retry_max_timeout_ms: 5000
 
 litellm_settings:
   drop_params: true
   set_verbose: false
+  # Add headers to help debug routing
+  headers_to_exclude_from_logs: ["Authorization"]
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

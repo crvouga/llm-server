@@ -3,6 +3,7 @@ FROM docker.litellm.ai/berriai/litellm-database:main-stable
 WORKDIR /app
 
 COPY litellm_config.yaml /app/config.yaml
+COPY lm-studio.key* /app/
 
 EXPOSE 4000
 
