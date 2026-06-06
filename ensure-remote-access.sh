@@ -7,15 +7,21 @@
 # Usage:
 #   sudo ./ensure-remote-access.sh
 #
-# Optional environment variables:
-#   TS_AUTHKEY        - Tailscale auth key (tskey-...) for unattended re-auth.
+# Secrets are pulled from Doppler (not passed as plaintext env vars):
+#   TAILSCALE_AUTHKEY       - Tailscale auth key (tskey-...) for unattended re-auth.
+#   CLOUDFLARE_TUNNEL_TOKEN - Connector token for a remotely-managed named tunnel.
+#
+# Doppler access (provide ONE of these so the CLI can read the secrets):
+#   DOPPLER_TOKEN     - A Doppler service token scoped to the project/config.
+#   ...or a pre-configured `doppler setup` / `doppler login` on the host.
+#   DOPPLER_PROJECT   - Doppler project (optional; omit if the token is scoped).
+#   DOPPLER_CONFIG    - Doppler config, e.g. "dev" / "prd" (optional, same caveat).
+#
+# Optional environment variables (non-secret):
 #   TS_HOSTNAME       - Override the tailnet hostname (defaults to system hostname).
 #   NOMACHINE_DEB_URL - Direct URL to the NoMachine .deb for THIS arch.
 #                       Get it from https://www.nomachine.com/download
 #   SSH_PASSWORD_AUTH - "yes" or "no" (default: leave existing config untouched).
-#   CLOUDFLARE_TUNNEL_TOKEN - Connector token for a remotely-managed named tunnel
-#                       (Zero Trust dashboard -> Networks -> Tunnels). If set and no
-#                       cloudflared service exists yet, the service is installed.
 
 set -euo pipefail
 
@@ -29,6 +35,42 @@ command -v apt-get >/dev/null 2>&1 || die "This script targets Debian/Ubuntu (ap
 
 ARCH="$(dpkg --print-architecture)"
 log "Host: $(hostname)  Arch: ${ARCH}  Kernel: $(uname -r)"
+
+# ----------------------------------------------------------------------------
+# 0. Secrets via Doppler
+# ----------------------------------------------------------------------------
+log "Ensuring Doppler CLI and loading secrets..."
+if ! command -v doppler >/dev/null 2>&1; then
+  curl -fsSL https://cli.doppler.com/install.sh | sh
+  ok "Installed Doppler CLI."
+else
+  ok "Doppler CLI already installed."
+fi
+
+# Scope flags are added only when explicitly provided, so a service token
+# (DOPPLER_TOKEN) or an existing `doppler setup` can supply project/config.
+DOPPLER_ARGS=()
+[ -n "${DOPPLER_PROJECT:-}" ] && DOPPLER_ARGS+=(--project "${DOPPLER_PROJECT}")
+[ -n "${DOPPLER_CONFIG:-}"  ] && DOPPLER_ARGS+=(--config  "${DOPPLER_CONFIG}")
+
+doppler_secret() {
+  # Prints the secret value, or empty string if missing/unreadable.
+  doppler secrets get "$1" --plain ${DOPPLER_ARGS[@]+"${DOPPLER_ARGS[@]}"} 2>/dev/null || true
+}
+
+if doppler secrets ${DOPPLER_ARGS[@]+"${DOPPLER_ARGS[@]}"} >/dev/null 2>&1; then
+  ok "Doppler authenticated."
+else
+  warn "Doppler not authenticated/scoped. Set DOPPLER_TOKEN (and optionally"
+  warn "  DOPPLER_PROJECT/DOPPLER_CONFIG), or run 'doppler login && doppler setup'."
+fi
+
+TS_AUTHKEY="$(doppler_secret TAILSCALE_AUTHKEY)"
+CLOUDFLARE_TUNNEL_TOKEN="$(doppler_secret CLOUDFLARE_TUNNEL_TOKEN)"
+[ -n "${TS_AUTHKEY}" ] && ok "Loaded TAILSCALE_AUTHKEY from Doppler." \
+  || warn "TAILSCALE_AUTHKEY not found in Doppler."
+[ -n "${CLOUDFLARE_TUNNEL_TOKEN}" ] && ok "Loaded CLOUDFLARE_TUNNEL_TOKEN from Doppler." \
+  || warn "CLOUDFLARE_TUNNEL_TOKEN not found in Doppler."
 
 # ----------------------------------------------------------------------------
 # 1. OpenSSH server
