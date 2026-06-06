@@ -2,11 +2,11 @@
 # Provider API keys are injected via Doppler/Fly secrets (os.environ/*).
 
 model_list:
-  - model_name: local-lm-studio
+  - model_name: "*"
     litellm_params:
       model: openai/*
       api_base: https://lm-studio.chrisvouga.dev/v1
-      api_key: os.environ/LM_STUDIO_API_KEY
+      api_key: os.environ/LITELLM_LM_STUDIO_API_KEY
 
 litellm_settings:
   drop_params: true
