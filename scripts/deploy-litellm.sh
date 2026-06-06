@@ -242,7 +242,25 @@ fly secrets set \
 
 echo "Deploying LiteLLM to Fly.io..."
 cd litellm
-fly deploy --remote-only -a "$APP_NAME"
+# A rolling deploy updates the single machine in place. If a previous deploy left it
+# wedged on a stale/bad health-check config (e.g. an authenticated `/health` probe that
+# always 401s), the rolling update times out and Fly rolls the machine back to that same
+# bad config -- so every future rolling deploy fails identically. Break that loop: on
+# failure, destroy the machines and redeploy fresh so the current fly.toml (correct
+# unauthenticated `/health/liveliness` probe) is guaranteed to apply.
+if ! fly deploy --remote-only -a "$APP_NAME"; then
+  echo "Rolling deploy failed; recreating machines from current fly.toml..."
+  machine_ids="$(fly machines list -a "$APP_NAME" --json 2>/dev/null | jq -r '.[].id // empty')"
+  if [ -n "$machine_ids" ]; then
+    while IFS= read -r machine_id; do
+      [ -z "$machine_id" ] && continue
+      echo "Destroying wedged machine ${machine_id}..."
+      fly machine destroy "$machine_id" -a "$APP_NAME" --force || true
+    done <<< "$machine_ids"
+  fi
+  echo "Redeploying with fresh machines..."
+  fly deploy --remote-only -a "$APP_NAME"
+fi
 cd ..
 
 ZONE_ID="$(resolve_zone_id)"

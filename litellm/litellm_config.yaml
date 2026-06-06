@@ -29,6 +29,8 @@ litellm_settings:
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
+  # Stop flooding logs with "No api key passed in." 401s from infra health probes.
+  suppress_health_check_logs: true
   database_connection_pool_limit: 10
   database_extra_connection_params:
     pgbouncer: "true"

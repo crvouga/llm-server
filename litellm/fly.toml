@@ -9,7 +9,9 @@ primary_region = "sjc"
   strategy = "rolling"
   max_unavailable = 1
   min_ready_seconds = 30
-  health_check_timeout = 60
+  # litellm-database runs `prisma migrate deploy` on boot; give it headroom so the
+  # rolling health check doesn't time out (and roll back to a stale config) mid-migration.
+  health_check_timeout = 120
   restart_delay_timeout = 30
   max_refresh_retries = 10
 
@@ -30,9 +32,13 @@ primary_region = "sjc"
 
   [[http_service.checks]]
     interval = "15s"
-    timeout = "5s"
-    grace_period = "60s"
+    timeout = "10s"
+    # Boot + prisma migrate can take >60s on a cold machine; don't fail the probe early.
+    grace_period = "120s"
     method = "GET"
+    # MUST be an unauthenticated endpoint. `/health` requires the master key and returns
+    # 401 to the probe -> never healthy -> rolling update times out. `/health/liveliness`
+    # and `/health/readiness` are the only unauthenticated probes LiteLLM exposes.
     path = "/health/liveliness"
 
 [[vm]]
