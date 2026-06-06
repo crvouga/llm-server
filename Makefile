@@ -106,22 +106,22 @@ doctor:
 setup: ensure-system-deps install doctor
 
 plan: install
-	@"$(LLM_ENV)" plan --spec "$(SPEC)" --state "$(STATE)"
+	@"$(LLM_ENV)" --spec "$(SPEC)" --state "$(STATE)" plan
 
 apply: install
-	@"$(LLM_ENV)" apply --spec "$(SPEC)" --state "$(STATE)"
+	@"$(LLM_ENV)" --spec "$(SPEC)" --state "$(STATE)" apply
 
 apply-auto: install
-	@"$(LLM_ENV)" apply --auto-approve --spec "$(SPEC)" --state "$(STATE)"
+	@"$(LLM_ENV)" --spec "$(SPEC)" --state "$(STATE)" apply --auto-approve
 
 status: install
-	@"$(LLM_ENV)" status --state "$(STATE)"
+	@"$(LLM_ENV)" --state "$(STATE)" status
 
 destroy: install
-	@"$(LLM_ENV)" destroy --spec "$(SPEC)" --state "$(STATE)"
+	@"$(LLM_ENV)" --spec "$(SPEC)" --state "$(STATE)" destroy
 
 destroy-auto: install
-	@"$(LLM_ENV)" destroy --auto-approve --spec "$(SPEC)" --state "$(STATE)"
+	@"$(LLM_ENV)" --spec "$(SPEC)" --state "$(STATE)" destroy --auto-approve
 
 start:
 	@systemctl --user daemon-reload

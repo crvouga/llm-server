@@ -39,7 +39,12 @@ def plan_cloudflare(spec: dict[str, Any], secrets: dict[str, str]) -> ReconcileR
 
     config_path = Path(cf.get("config_path", f"~/.cloudflared/{tunnel_name}.yml")).expanduser()
     ingress = cf.get("routes", [])
-    rendered = render_tunnel_config(tunnel_name, tunnel_id or "${CF_TUNNEL_ID}", ingress)
+    tunnel_id_secret_key = cf.get("tunnel_id_secret_key", "CF_TUNNEL_ID")
+    rendered = render_tunnel_config(
+        tunnel_name,
+        tunnel_id or f"${{{tunnel_id_secret_key}}}",
+        ingress,
+    )
     current = config_path.read_text() if config_path.exists() else None
     if current != rendered:
         result.actions.append(

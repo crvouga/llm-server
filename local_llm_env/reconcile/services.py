@@ -97,7 +97,9 @@ def render_units(spec: dict[str, Any], manifest: dict[str, Any]) -> dict[str, st
 
     lmstudio_server = servers.get("lmstudio", {})
     if lmstudio_server.get("enabled", True):
-        lmstudio_bin = host.get("lmstudio", {}).get("binary_path", "~/.local/bin/lmstudio")
+        lmstudio_bin = str(
+            Path(host.get("lmstudio", {}).get("binary_path", "~/.local/bin/lmstudio")).expanduser()
+        )
         model_id = lmstudio_server.get("model_id", model_by_backend.get("lmstudio", ""))
         units["local-llm-lmstudio.service"] = f"""[Unit]
 Description=Local LLM LM Studio server

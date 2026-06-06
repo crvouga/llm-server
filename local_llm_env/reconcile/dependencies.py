@@ -59,14 +59,14 @@ def install_command_for_binary(binary: str, host_spec: dict[str, Any]) -> str:
 
 def install_lmstudio_command(config: dict[str, Any]) -> str:
     install_method = config.get("install_method", "appimage")
-    path = config.get("binary_path", "~/.local/bin/lmstudio")
+    path = Path(config.get("binary_path", "~/.local/bin/lmstudio")).expanduser()
     if install_method == "appimage":
         url = config.get(
             "appimage_url",
             "https://installers.lmstudio.ai/linux/x64/latest/LM-Studio.AppImage",
         )
         return (
-            "mkdir -p ~/.local/bin && "
+            f"mkdir -p \"{path.parent}\" && "
             f"curl -L \"{url}\" -o /tmp/lmstudio.AppImage && "
             "chmod +x /tmp/lmstudio.AppImage && "
             f"mv /tmp/lmstudio.AppImage \"{path}\""
