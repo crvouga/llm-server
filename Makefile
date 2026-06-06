@@ -20,9 +20,15 @@ REMOTE_HOST ?= $(shell awk -F'|' '/^\|/ && index($$2, "Tailscale DNS name") { gs
 
 COMMIT_MSG ?=
 
+DOPPLER_PROJECT ?= personal
+DOPPLER_CONFIG ?= dev
+GITHUB_REPO ?=
+WORKER_DIR := llm-usage-tracker
+
 .PHONY: help venv install setup doctor ensure-system-deps plan apply apply-auto status destroy destroy-auto \
 	start stop restart logs logs-cloudflared \
-	service-status shell clean-venv ssh-target target-tmux pull push
+	service-status shell clean-venv ssh-target target-tmux pull push gh \
+	check test check-worker deploy-worker doppler-seed-github-secrets
 
 help:
 	@echo "Targets:"
@@ -46,11 +52,19 @@ help:
 	@echo "  make target-tmux    -> SSH into target with tmux session 'work'"
 	@echo "  make pull           -> git pull from upstream (auto-stash local changes)"
 	@echo "  make push           -> git add, commit (if needed), push to upstream"
+	@echo "  make gh             -> open GitHub webpage for this repo"
+	@echo "  make check          -> run all CI checks (tests + worker typecheck)"
+	@echo "  make test           -> run Python tests"
+	@echo "  make check-worker   -> run Worker TypeScript typecheck"
+	@echo "  make deploy-worker  -> deploy llm-usage-tracker Worker (requires Doppler secrets)"
+	@echo "  make doppler-seed-github-secrets -> seed DOPPLER_SERVICE_TOKEN in GitHub secrets"
 	@echo ""
 	@echo "Overrides:"
 	@echo "  SPEC=<path> STATE=<path> make plan"
 	@echo "  REMOTE_USER=<user> REMOTE_HOST=<host> make ssh-target"
 	@echo "  COMMIT_MSG='message' make push"
+	@echo "  DOPPLER_PROJECT=<project> DOPPLER_CONFIG=<config> make doppler-seed-github-secrets"
+	@echo "  GITHUB_REPO=<owner/repo> make doppler-seed-github-secrets"
 
 venv:
 	@test -d "$(VENV)" || python3 -m venv "$(VENV)"
@@ -115,6 +129,51 @@ doctor:
 	@echo "Doctor checks completed."
 
 setup: ensure-system-deps install doctor
+
+check: test check-worker
+
+test: install
+	@"$(VENV)/bin/pytest" -q
+
+check-worker:
+	@cd "$(WORKER_DIR)" && npm ci && npm run check
+
+deploy-worker:
+	@set -euo pipefail; \
+	cd "$(WORKER_DIR)"; \
+	npm ci; \
+	if [ -z "$${DATABASE_URL:-}" ]; then \
+		echo "DATABASE_URL is required (set via Doppler or env)."; \
+		exit 1; \
+	fi; \
+	if [ -z "$${CLOUDFLARE_API_TOKEN:-}" ]; then \
+		echo "CLOUDFLARE_API_TOKEN is required (set via Doppler or env)."; \
+		exit 1; \
+	fi; \
+	printf '%s' "$$DATABASE_URL" | npx wrangler secret put DATABASE_URL; \
+	npm run db:migrate; \
+	npm run deploy
+
+doppler-seed-github-secrets:
+	@set -euo pipefail; \
+	command -v gh >/dev/null || { echo "Missing: gh (https://cli.github.com)"; exit 1; }; \
+	command -v doppler >/dev/null || { echo "Missing: doppler"; exit 1; }; \
+	repo_flag=""; \
+	if [ -n "$(GITHUB_REPO)" ]; then \
+		repo_flag="--repo $(GITHUB_REPO)"; \
+	fi; \
+	if [ -n "$${DOPPLER_SERVICE_TOKEN:-}" ]; then \
+		token="$$DOPPLER_SERVICE_TOKEN"; \
+		echo "Using DOPPLER_SERVICE_TOKEN from environment."; \
+	else \
+		echo "Creating Doppler service token for $(DOPPLER_PROJECT)/$(DOPPLER_CONFIG)..."; \
+		token="$$(doppler configs tokens create github-actions \
+			--project "$(DOPPLER_PROJECT)" \
+			--config "$(DOPPLER_CONFIG)" \
+			--plain)"; \
+	fi; \
+	printf '%s' "$$token" | gh secret set DOPPLER_SERVICE_TOKEN $$repo_flag; \
+	echo "Seeded DOPPLER_SERVICE_TOKEN to GitHub secrets."
 
 plan: install
 	@"$(LLM_ENV)" --spec "$(SPEC)" --state "$(STATE)" plan
@@ -238,4 +297,7 @@ push:
 	else \
 		git push -u origin "$$branch"; \
 	fi
+
+gh:
+	@git remote get-url origin | sed 's/.*github.com[:\/]//' | sed 's/\.git$$//' | xargs -I {} open "https://github.com/{}"
 

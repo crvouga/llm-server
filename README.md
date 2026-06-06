@@ -31,13 +31,47 @@ The workflow is idempotent:
 
 1. Login and configure Doppler locally:
    - `doppler login`
-   - `doppler setup --project local-llm --config dev`
+   - `doppler setup --project personal --config dev`
 2. Ensure required keys in `spec/local-llm-env.yaml` exist in your Doppler config.
    The default spec expects:
    - `CLOUDFLARE_API_TOKEN`
    - `CLOUDFLARE_ACCOUNT_ID`
    - `CLOUDFLARE_TUNNEL_ID`
    - `CF_TUNNEL_CREDENTIALS_JSON`
+   - `DATABASE_URL` (for `llm-usage-tracker`)
+
+## CI/CD
+
+GitHub Actions runs the [deployment pipeline](.github/workflows/deployment-pipeline.yml) on every push and pull request to `main`:
+
+1. **Checks** — Python tests (`make test`) and Worker typecheck (`make check-worker`)
+2. **Deploy** (push to `main` only) — sync Worker secrets and deploy `llm-usage-tracker` (`make deploy-worker`)
+
+All runtime secrets are loaded from Doppler (`personal` / `dev`). GitHub only stores a single bootstrap secret.
+
+### Seed GitHub Secrets
+
+One-time setup to allow CI to access Doppler:
+
+```bash
+# Requires: gh auth login, doppler login
+make doppler-seed-github-secrets
+```
+
+This creates a Doppler service token (or uses `DOPPLER_SERVICE_TOKEN` if already set) and stores it as the `DOPPLER_SERVICE_TOKEN` GitHub Actions secret.
+
+To target a specific repo:
+
+```bash
+GITHUB_REPO=crvouga/llm-server make doppler-seed-github-secrets
+```
+
+### Local CI parity
+
+```bash
+doppler run --project personal --config dev -- make check
+doppler run --project personal --config dev -- make deploy-worker
+```
 
 ## Install CLI
 

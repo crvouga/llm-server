@@ -1,0 +1,73 @@
+name: Deployment Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: deployment-pipeline-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOPPLER_PROJECT: personal
+  DOPPLER_CONFIG: dev
+
+jobs:
+  checks:
+    name: Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Doppler CLI
+        uses: dopplerhq/cli-action@v3
+        with:
+          doppler-token: ${{ secrets.DOPPLER_SERVICE_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: make install
+
+      - name: Run Python tests
+        run: make test
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: llm-usage-tracker/package-lock.json
+
+      - name: Run Worker typecheck
+        run: make check-worker
+
+  deploy:
+    name: Deploy
+    needs: checks
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Doppler CLI
+        uses: dopplerhq/cli-action@v3
+        with:
+          doppler-token: ${{ secrets.DOPPLER_SERVICE_TOKEN }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: llm-usage-tracker/package-lock.json
+
+      - name: Deploy Cloudflare Worker
+        run: make deploy-worker
