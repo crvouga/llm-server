@@ -62,10 +62,6 @@ jobs:
         with:
           doppler-token: ${{ secrets.DOPPLER_SERVICE_TOKEN }}
 
-      - name: Setup Doppler configuration
-        run: |
-          doppler configs select --project personal --config dev || true
-
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -74,4 +70,4 @@ jobs:
           cache-dependency-path: llm-usage-tracker/package-lock.json
 
       - name: Deploy Cloudflare Worker
-        run: doppler run -- make deploy-worker
+        run: make deploy-worker
