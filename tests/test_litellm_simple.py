@@ -9,6 +9,11 @@ import sys
 import requests
 import json
 
+try:
+    import pytest
+except ImportError:
+    pass
+
 
 def test_litellm_api():
     """Test that the litellm API endpoint is accessible and responding."""
@@ -31,33 +36,21 @@ def test_litellm_api():
         ]
     }
     
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=10)
-        
-        print(f"Status code: {response.status_code}")
-        print(f"Response headers: {dict(response.headers)}")
-        
-        if response.status_code == 200:
-            data = response.json()
-            print("✅ API is working correctly!")
-            print(f"Response structure: {list(data.keys())}")
-            return True
-        else:
-            # Even non-200 responses are acceptable - it means the server is reachable
-            print(f"⚠️  Server responded with status code {response.status_code}")
-            try:
-                error_data = response.json()
-                print(f"Error details: {error_data}")
-            except:
-                print("Response body:", response.text[:200] + "..." if len(response.text) > 200 else response.text)
-            return True
-            
-    except requests.exceptions.RequestException as e:
-        print(f"❌ Failed to connect to litellm API: {str(e)}")
-        return False
-    except Exception as e:
-        print(f"❌ Unexpected error: {str(e)}")
-        return False
+    response = requests.post(url, headers=headers, json=payload, timeout=30)
+    
+    print(f"Status code: {response.status_code}")
+    print(f"Response headers: {dict(response.headers)}")
+    
+    # The endpoint should return a 200 status code or appropriate error
+    assert response.status_code in [200, 400, 401, 403], f"Unexpected status code: {response.status_code}"
+    
+    if response.status_code == 200:
+        data = response.json()
+        assert "choices" in data
+        assert len(data["choices"]) > 0
+        assert "message" in data["choices"][0]
+        print("✅ API is working correctly!")
+        print(f"Response structure: {list(data.keys())}")
 
 
 def test_litellm_health():
@@ -71,46 +64,10 @@ def test_litellm_health():
         "Authorization": f"Bearer {master_key}",
     }
     
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        print(f"Health check status code: {response.status_code}")
-        
-        if response.status_code == 200:
-            print("✅ Health check passed!")
-            return True
-        else:
-            print(f"⚠️  Health check failed with status code {response.status_code}")
-            return True
-            
-    except requests.exceptions.RequestException as e:
-        print(f"❌ Failed to connect to litellm health endpoint: {str(e)}")
-        return False
-    except Exception as e:
-        print(f"❌ Unexpected error in health check: {str(e)}")
-        return False
-
-
-def main():
-    """Run all tests."""
-    print("Testing litellm.chrisvouga.dev API endpoint...")
-    print("=" * 50)
+    response = requests.get(url, headers=headers, timeout=30)
     
-    success = True
+    print(f"Health check status code: {response.status_code}")
     
-    print("\n1. Testing main chat/completions endpoint:")
-    success &= test_litellm_api()
-    
-    print("\n2. Testing health check endpoint:")
-    success &= test_litellm_health()
-    
-    print("\n" + "=" * 50)
-    if success:
-        print("✅ All tests completed successfully!")
-        return 0
-    else:
-        print("❌ Some tests failed!")
-        return 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+    # Health endpoint should return 200 (authenticated) or 401 (requires auth but works)
+    assert response.status_code in [200, 401], f"Health check failed with status code: {response.status_code}"
+    print("✅ Health check passed!")
