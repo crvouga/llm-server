@@ -28,7 +28,7 @@ WORKER_DIR := llm-usage-tracker
 .PHONY: help venv install setup doctor ensure-system-deps plan apply apply-auto status destroy destroy-auto \
 	start stop restart logs logs-cloudflared \
 	service-status shell clean-venv ssh-target target-tmux pull push gh \
-	check test check-worker deploy-worker doppler-seed-github-secrets
+	check test check-worker deploy-worker doppler-seed-github-secrets setup-tunnel
 
 help:
 	@echo "Targets:"
@@ -58,6 +58,7 @@ help:
 	@echo "  make check-worker   -> run Worker TypeScript typecheck"
 	@echo "  make deploy-worker  -> deploy llm-usage-tracker Worker (requires Doppler secrets)"
 	@echo "  make doppler-seed-github-secrets -> seed DOPPLER_SERVICE_TOKEN in GitHub secrets"
+	@echo "  make setup-tunnel   -> one-shot Cloudflare tunnel for LM Studio (port 1234 → lm-studio.chrisvouga.dev)"
 	@echo ""
 	@echo "Overrides:"
 	@echo "  SPEC=<path> STATE=<path> make plan"
