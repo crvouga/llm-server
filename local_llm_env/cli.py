@@ -25,6 +25,11 @@ def parse_args() -> argparse.Namespace:
     subparsers.add_parser("plan", help="Show the reconciliation actions.")
     apply_parser = subparsers.add_parser("apply", help="Apply reconciliation actions.")
     apply_parser.add_argument("--auto-approve", action="store_true", help="Skip confirmation.")
+    apply_parser.add_argument(
+        "--rotate-tunnel",
+        action="store_true",
+        help="Delete and recreate the Cloudflare tunnel (requires API token with tunnel edit).",
+    )
     destroy_parser = subparsers.add_parser("destroy", help="Destroy managed resources.")
     destroy_parser.add_argument("--auto-approve", action="store_true", help="Skip confirmation.")
     subparsers.add_parser("status", help="Show last applied state.")
@@ -55,7 +60,7 @@ def main() -> None:
             print("Destroy complete.")
         return
 
-    rotate_tunnel = args.command == "apply"
+    rotate_tunnel = args.command == "apply" and args.rotate_tunnel
     plan, _secrets = build_plan(spec, rotate_tunnel=rotate_tunnel)
     print_plan(plan)
     drift = diff_state(current_state, plan)

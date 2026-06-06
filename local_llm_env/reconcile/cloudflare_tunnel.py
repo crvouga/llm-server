@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import secrets as pysecrets
+import shutil
+import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -11,6 +14,8 @@ from typing import Any
 
 from ..doppler import doppler_prefix
 from ..types import Action, ReconcileResult
+
+_TUNNEL_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 
 
 def plan_cloudflare(spec: dict[str, Any], secrets: dict[str, str], rotate_tunnel: bool = False) -> ReconcileResult:
@@ -26,54 +31,58 @@ def plan_cloudflare(spec: dict[str, Any], secrets: dict[str, str], rotate_tunnel
     prefix = doppler_prefix(project, config)
     account_id = secrets.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
     api_token = secrets.get("CLOUDFLARE_API_TOKEN", "").strip()
-    if not account_id or not api_token:
-        raise RuntimeError("Missing `CLOUDFLARE_ACCOUNT_ID` or `CLOUDFLARE_API_TOKEN` in Doppler secrets")
 
-    try:
-        existing = list_tunnels(account_id, api_token, tunnel_name)
-    except RuntimeError as error:
-        if rotate_tunnel:
-            raise RuntimeError(
-                "Cloudflare tunnel lifecycle management requires API token scopes for tunnels "
-                f"(read/edit). Original error: {error}"
-            ) from error
-        existing = []
-        result.observed["cloudflare_api_unavailable"] = str(error)
-    removed_tunnels: list[str] = []
-    if rotate_tunnel:
-        for tunnel in existing:
-            delete_tunnel(account_id, api_token, tunnel["id"])
-            removed_tunnels.append(tunnel["id"])
-        tunnel_id, credentials_json = create_tunnel(account_id, api_token, tunnel_name)
-        result.observed["tunnel_rotated"] = True
-    else:
-        tunnel_id = existing[0]["id"] if existing else ""
-        credentials_json = ""
-        result.observed["tunnel_rotated"] = False
+    tunnel_id, credentials_json, removed_tunnels = resolve_tunnel(
+        cf=cf,
+        secrets=secrets,
+        account_id=account_id,
+        api_token=api_token,
+        rotate_tunnel=rotate_tunnel,
+        observed=result.observed,
+    )
 
     if not tunnel_id:
-        if rotate_tunnel:
-            raise RuntimeError(
-                f"Failed to create Cloudflare tunnel `{tunnel_name}` during apply planning."
-            )
-        tunnel_id = "<created-on-apply>"
-        result.observed["pending_tunnel_creation"] = True
-
-    credentials_path = Path(f"~/.cloudflared/{tunnel_id}.json").expanduser()
-    current_credentials = credentials_path.read_text() if credentials_path.exists() else None
-    if credentials_json and current_credentials != credentials_json:
         result.actions.append(
             Action(
-                id="write-cloudflared-credentials",
+                id="create-cloudflared-tunnel",
                 component=component,
-                description=f"Write cloudflared credentials `{credentials_path}`",
-                operation="write_file",
-                payload={"path": str(credentials_path), "content": credentials_json},
+                description=f"Create cloudflared tunnel `{tunnel_name}` via CLI",
+                operation="run_command",
+                payload={
+                    "command": (
+                        f"{prefix}cloudflared tunnel create {tunnel_name} "
+                        "2>/dev/null || true"
+                    )
+                },
             )
         )
-    result.managed_resources.append(
-        {"type": "cloudflared_credentials", "path": str(credentials_path), "tunnel_id": tunnel_id}
-    )
+        tunnel_id = find_tunnel_id_via_cli(tunnel_name) or ""
+        if tunnel_id:
+            result.observed["tunnel_source"] = "cloudflared_cli_create"
+        else:
+            result.observed["pending_tunnel_creation"] = True
+
+    tunnel_ref = tunnel_route_ref(tunnel_id, tunnel_name)
+    credentials_path = credentials_path_for_tunnel(tunnel_id)
+    if credentials_json and tunnel_id:
+        current_credentials = credentials_path.read_text() if credentials_path.exists() else None
+        if current_credentials != credentials_json:
+            result.actions.append(
+                Action(
+                    id="write-cloudflared-credentials",
+                    component=component,
+                    description=f"Write cloudflared credentials `{credentials_path}`",
+                    operation="write_file",
+                    payload={"path": str(credentials_path), "content": credentials_json},
+                )
+            )
+        result.managed_resources.append(
+            {"type": "cloudflared_credentials", "path": str(credentials_path), "tunnel_id": tunnel_id}
+        )
+    elif tunnel_id:
+        result.managed_resources.append(
+            {"type": "cloudflared_credentials", "path": str(credentials_path), "tunnel_id": tunnel_id}
+        )
 
     config_path = Path(cf.get("config_path", f"~/.cloudflared/{tunnel_name}.yml")).expanduser()
     ingress = cf.get("routes", [])
@@ -102,13 +111,13 @@ def plan_cloudflare(spec: dict[str, Any], secrets: dict[str, str], rotate_tunnel
                 payload={
                     "command": (
                         f"{prefix}cloudflared tunnel route dns "
-                        f"{tunnel_id} {hostname}"
+                        f"{tunnel_ref} {hostname} 2>/dev/null || true"
                     )
                 },
             )
         )
         result.managed_resources.append(
-            {"type": "cloudflare_dns_route", "hostname": hostname, "tunnel": tunnel_id}
+            {"type": "cloudflare_dns_route", "hostname": hostname, "tunnel": tunnel_ref}
         )
 
     unit_name = cf.get("service_name", "local-llm-cloudflared.service")
@@ -136,11 +145,161 @@ def plan_cloudflare(spec: dict[str, Any], secrets: dict[str, str], rotate_tunnel
         )
     )
     result.managed_resources.append({"type": "systemd_unit", "name": unit_name, "path": str(unit_path)})
-    result.managed_resources.append({"type": "cloudflare_tunnel", "name": tunnel_name, "id": tunnel_id})
-    result.observed["tunnel_id"] = tunnel_id
+    result.managed_resources.append(
+        {"type": "cloudflare_tunnel", "name": tunnel_name, "id": tunnel_id or tunnel_name}
+    )
+    result.observed["tunnel_id"] = tunnel_id or tunnel_name
+    result.observed["tunnel_route_ref"] = tunnel_ref
     if removed_tunnels:
         result.observed["removed_tunnel_ids"] = removed_tunnels
     return result
+
+
+def resolve_tunnel(
+    cf: dict[str, Any],
+    secrets: dict[str, str],
+    account_id: str,
+    api_token: str,
+    rotate_tunnel: bool,
+    observed: dict[str, Any],
+) -> tuple[str, str, list[str]]:
+    tunnel_name = cf["tunnel_name"]
+    removed_tunnels: list[str] = []
+    existing: list[dict[str, str]] = []
+    api_error: str | None = None
+
+    if account_id and api_token:
+        try:
+            existing = list_tunnels(account_id, api_token, tunnel_name)
+        except RuntimeError as error:
+            api_error = str(error)
+            observed["cloudflare_api_unavailable"] = api_error
+    elif rotate_tunnel:
+        raise RuntimeError(
+            "Missing `CLOUDFLARE_ACCOUNT_ID` or `CLOUDFLARE_API_TOKEN` in Doppler secrets"
+        )
+
+    if rotate_tunnel:
+        if api_error:
+            raise RuntimeError(
+                "Cloudflare tunnel rotation requires a valid API token with tunnel read/edit "
+                f"scopes. Original error: {api_error}"
+            ) from None
+        for tunnel in existing:
+            delete_tunnel(account_id, api_token, tunnel["id"])
+            removed_tunnels.append(tunnel["id"])
+        tunnel_id, credentials_json = create_tunnel(account_id, api_token, tunnel_name)
+        observed["tunnel_rotated"] = True
+        observed["tunnel_source"] = "cloudflare_api"
+        return tunnel_id, credentials_json, removed_tunnels
+
+    observed["tunnel_rotated"] = False
+
+    if existing:
+        observed["tunnel_source"] = "cloudflare_api"
+        return existing[0]["id"], "", removed_tunnels
+
+    tunnel_id = secret_tunnel_id(cf, secrets)
+    credentials_json = secret_tunnel_credentials(cf, secrets)
+    if tunnel_id:
+        observed["tunnel_source"] = "doppler"
+        return tunnel_id, credentials_json, removed_tunnels
+
+    config_path = Path(cf.get("config_path", f"~/.cloudflared/{tunnel_name}.yml")).expanduser()
+    if config_path.exists():
+        tunnel_id = parse_tunnel_id_from_config(config_path.read_text())
+        if tunnel_id:
+            observed["tunnel_source"] = "config_file"
+            return tunnel_id, "", removed_tunnels
+
+    tunnel_id = find_tunnel_id_from_credentials_dir()
+    if tunnel_id:
+        observed["tunnel_source"] = "credentials_dir"
+        return tunnel_id, "", removed_tunnels
+
+    tunnel_id = find_tunnel_id_via_cli(tunnel_name)
+    if tunnel_id:
+        observed["tunnel_source"] = "cloudflared_cli"
+        return tunnel_id, "", removed_tunnels
+
+    return "", "", removed_tunnels
+
+
+def secret_tunnel_id(cf: dict[str, Any], secrets: dict[str, str]) -> str:
+    key = cf.get("tunnel_id_secret_key", "CLOUDFLARE_TUNNEL_ID")
+    return secrets.get(key, "").strip()
+
+
+def secret_tunnel_credentials(cf: dict[str, Any], secrets: dict[str, str]) -> str:
+    key = cf.get("credentials_file_secret_key", "CF_TUNNEL_CREDENTIALS_JSON")
+    raw = secrets.get(key, "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+    if isinstance(parsed, dict):
+        return json.dumps(parsed, indent=2, sort_keys=True) + "\n"
+    return raw
+
+
+def parse_tunnel_id_from_config(config_text: str) -> str:
+    for line in config_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("tunnel:"):
+            value = stripped.split(":", 1)[1].strip()
+            if _TUNNEL_ID_RE.match(value):
+                return value
+    return ""
+
+
+def find_tunnel_id_from_credentials_dir() -> str:
+    creds_dir = Path("~/.cloudflared").expanduser()
+    if not creds_dir.is_dir():
+        return ""
+    for cred_file in sorted(creds_dir.glob("*.json")):
+        try:
+            payload = json.loads(cred_file.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        tunnel_id = payload.get("TunnelID", "")
+        if isinstance(tunnel_id, str) and _TUNNEL_ID_RE.match(tunnel_id):
+            return tunnel_id
+    return ""
+
+
+def find_tunnel_id_via_cli(tunnel_name: str) -> str:
+    result = subprocess.run(
+        ["cloudflared", "tunnel", "list", "--output", "json"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return ""
+    try:
+        tunnels = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(tunnels, list):
+        return ""
+    for tunnel in tunnels:
+        if tunnel.get("name") == tunnel_name:
+            tunnel_id = tunnel.get("id", "")
+            if isinstance(tunnel_id, str) and _TUNNEL_ID_RE.match(tunnel_id):
+                return tunnel_id
+    return ""
+
+
+def credentials_path_for_tunnel(tunnel_id: str) -> Path:
+    return Path(f"~/.cloudflared/{tunnel_id}.json").expanduser()
+
+
+def tunnel_route_ref(tunnel_id: str, tunnel_name: str) -> str:
+    if tunnel_id and _TUNNEL_ID_RE.match(tunnel_id):
+        return tunnel_id
+    return tunnel_name
 
 
 def plan_cloudflare_destroy(spec: dict[str, Any], state: dict[str, Any]) -> ReconcileResult:
@@ -212,11 +371,11 @@ def plan_cloudflare_destroy(spec: dict[str, Any], state: dict[str, Any]) -> Reco
 
 
 def render_tunnel_config(tunnel_name: str, tunnel_id: str, ingress: list[dict[str, str]]) -> str:
-    lines = [
-        f"tunnel: {tunnel_id}",
-        f"credentials-file: ~/.cloudflared/{tunnel_id}.json",
-        "ingress:",
-    ]
+    tunnel_ref = tunnel_route_ref(tunnel_id, tunnel_name)
+    lines = [f"tunnel: {tunnel_ref}"]
+    if tunnel_id and _TUNNEL_ID_RE.match(tunnel_id):
+        lines.append(f"credentials-file: ~/.cloudflared/{tunnel_id}.json")
+    lines.append("ingress:")
     for route in ingress:
         lines.append(f"  - hostname: {route['hostname']}")
         lines.append(f"    service: {route['service']}")
@@ -226,14 +385,28 @@ def render_tunnel_config(tunnel_name: str, tunnel_id: str, ingress: list[dict[st
     return "\n".join(lines) + "\n"
 
 
+def resolve_cloudflared_bin() -> str:
+    candidates = [
+        shutil.which("cloudflared"),
+        str(Path("~/.local/bin/cloudflared").expanduser()),
+        "/usr/local/bin/cloudflared",
+        "/usr/bin/cloudflared",
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            return candidate
+    return "cloudflared"
+
+
 def render_tunnel_unit(unit_name: str, config_path: Path, restart_policy: str) -> str:
+    cloudflared_bin = resolve_cloudflared_bin()
     return f"""[Unit]
 Description=Cloudflare tunnel for local LLM services ({unit_name})
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=cloudflared tunnel --config {config_path} run
+ExecStart={cloudflared_bin} tunnel --config {config_path} run
 Restart={restart_policy}
 RestartSec=5
 
