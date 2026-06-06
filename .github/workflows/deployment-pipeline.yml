@@ -29,16 +29,6 @@ jobs:
       - name: Run Python tests
         run: make test
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: llm-usage-tracker/package-lock.json
-
-      - name: Run Worker typecheck
-        run: make check-worker
-
   deploy:
     name: Deploy
     needs: checks
@@ -54,14 +44,27 @@ jobs:
       - name: Install Doppler CLI
         uses: dopplerhq/cli-action@v3
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: llm-usage-tracker/package-lock.json
+      - name: Set up Flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
 
-      - name: Deploy Cloudflare Worker
-        run: doppler run -- ./scripts/deploy-worker.sh
+      - name: Install deployment utilities
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Deploy LiteLLM to Fly.io
+        run: doppler run -- ./scripts/deploy-litellm.sh
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_SERVICE_TOKEN }}
+
+      - name: Verify litellm.chrisvouga.dev
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 24); do
+            if curl -fsS "https://litellm.chrisvouga.dev/health/liveliness" >/dev/null; then
+              echo "https://litellm.chrisvouga.dev is healthy."
+              exit 0
+            fi
+            echo "Attempt ${attempt}/24: endpoint not healthy yet, retrying in 5s..."
+            sleep 5
+          done
+          echo "https://litellm.chrisvouga.dev did not become healthy during verification."
+          exit 1

@@ -1,38 +1,53 @@
-# DNS Setup for llm.chrisvouga.dev
+# DNS Setup for litellm.chrisvouga.dev
 
-## Issue
-The `llm.chrisvouga.dev` domain is not resolving because there's no DNS record pointing it to your Cloudflare Worker.
+## Overview
 
-## Solution
+LiteLLM runs on Fly.io (`litellm-chrisvouga.fly.dev`). Cloudflare DNS routes `litellm.chrisvouga.dev` to the Fly app.
 
-### Option 1: Manual Setup (Quick)
+## Automated setup (recommended)
+
+The deploy script creates/updates the DNS record and requests a Fly.io certificate:
+
+```bash
+doppler run --project personal --config dev -- make deploy-litellm
+```
+
+Required Doppler secrets:
+
+- `FLY_API_TOKEN`
+- `LITELLM_MASTER_KEY`
+- `OPENAI_API_KEY`
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
+
+## Manual setup
+
 1. Go to [Cloudflare Dashboard](https://dash.cloudflare.com)
 2. Select **chrisvouga.dev** zone
-3. Go to **DNS** tab → **Add record**
+3. Go to **DNS** → **Add record**
 4. Configure:
 
 | Field | Value |
 |-------|-------|
 | Type | CNAME |
-| Name | llm |
-| Content | `llm-usage-tracker.<your-subdomain>.workers.dev` |
+| Name | litellm |
+| Content | `litellm-chrisvouga.fly.dev` |
 | TTL | Auto |
 | Proxy status | Proxied |
 
-### Option 2: Automated (via CI/CD)
-The deployment script now attempts to create the DNS record automatically. You need:
-1. `CLOUDFLARE_ACCOUNT_ID` in your Doppler secrets
-2. Proper API token permissions for DNS editing
+5. Request a Fly.io certificate:
 
-Run the deploy script manually to test:
 ```bash
-doppler run -- ./scripts/deploy-worker.sh
+fly certs add litellm.chrisvouga.dev -a litellm-chrisvouga
 ```
 
 ## Verification
-After setting up DNS, verify with:
+
 ```bash
-dig llm.chrisvouga.dev
-# or
-curl -I https://llm.chrisvouga.dev
+dig litellm.chrisvouga.dev
+curl -fsS https://litellm.chrisvouga.dev/health/liveliness
 ```
+
+## Legacy domain
+
+The old Worker endpoint `llm.chrisvouga.dev` is retired. Remove its DNS record and Workers custom domain from Cloudflare if still present.

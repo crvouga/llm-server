@@ -23,12 +23,13 @@ COMMIT_MSG ?=
 DOPPLER_PROJECT ?= personal
 DOPPLER_CONFIG ?= dev
 GITHUB_REPO ?=
-WORKER_DIR := llm-usage-tracker
+LITELLM_DIR := litellm
+LITELLM_APP := litellm-chrisvouga
 
 .PHONY: help venv install setup doctor ensure-system-deps plan apply apply-auto status destroy destroy-auto \
 	start stop restart logs logs-cloudflared \
 	service-status shell clean-venv ssh-target target-tmux pull push gh \
-	check test check-worker deploy-worker doppler-seed-github-secrets setup-tunnel
+	check test deploy-litellm litellm-status doppler-seed-github-secrets setup-tunnel
 
 help:
 	@echo "Targets:"
@@ -53,10 +54,10 @@ help:
 	@echo "  make pull           -> git pull from upstream (auto-stash local changes)"
 	@echo "  make push           -> git add, commit (if needed), push to upstream"
 	@echo "  make gh             -> open GitHub webpage for this repo"
-	@echo "  make check          -> run all CI checks (tests + worker typecheck)"
+	@echo "  make check          -> run all CI checks (Python tests)"
 	@echo "  make test           -> run Python tests"
-	@echo "  make check-worker   -> run Worker TypeScript typecheck"
-	@echo "  make deploy-worker  -> deploy llm-usage-tracker Worker (requires Doppler secrets)"
+	@echo "  make deploy-litellm -> deploy LiteLLM proxy to Fly.io (requires Doppler secrets)"
+	@echo "  make litellm-status -> show Fly.io app status for LiteLLM"
 	@echo "  make doppler-seed-github-secrets -> seed DOPPLER_SERVICE_TOKEN in GitHub secrets"
 	@echo "  make setup-tunnel   -> one-shot Cloudflare tunnel for LM Studio (port 1234 → lm-studio.chrisvouga.dev)"
 	@echo ""
@@ -131,13 +132,16 @@ doctor:
 
 setup: ensure-system-deps install doctor
 
-check: test check-worker
+check: test
 
 test: install
 	@"$(VENV)/bin/pytest" -q
 
-check-worker:
-	@cd "$(WORKER_DIR)" && npm ci && npm run check
+deploy-litellm:
+	@doppler run --project "$(DOPPLER_PROJECT)" --config "$(DOPPLER_CONFIG)" -- ./scripts/deploy-litellm.sh
+
+litellm-status:
+	@fly status -a "$(LITELLM_APP)"
 
 
 doppler-seed-github-secrets:

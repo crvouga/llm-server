@@ -23,7 +23,7 @@ The workflow is idempotent:
 
 - `spec/local-llm-env.yaml`: primary desired-state declaration
 - `local_llm_env/`: CLI, schema validation, reconcilers, state/diff logic
-- `llm-usage-tracker/`: Cloudflare Worker proxy at `llm.chrisvouga.dev` with usage tracking
+- `litellm/`: LiteLLM proxy on Fly.io at `litellm.chrisvouga.dev`
 - `state/local-llm-env-state.json`: last applied managed state
 - `systemd/*.service`: template reference units
 
@@ -38,14 +38,16 @@ The workflow is idempotent:
    - `CLOUDFLARE_ACCOUNT_ID`
    - `CLOUDFLARE_TUNNEL_ID`
    - `CF_TUNNEL_CREDENTIALS_JSON`
-   - `DATABASE_URL` (for `llm-usage-tracker`)
+   - `FLY_API_TOKEN`
+   - `LITELLM_MASTER_KEY`
+   - `OPENAI_API_KEY`
 
 ## CI/CD
 
 GitHub Actions runs the [deployment pipeline](.github/workflows/deployment-pipeline.yml) on every push and pull request to `main`:
 
-1. **Checks** — Python tests (`make test`) and Worker typecheck (`make check-worker`)
-2. **Deploy** (push to `main` only) — sync Worker secrets and deploy `llm-usage-tracker` (`make deploy-worker`)
+1. **Checks** — Python tests (`make test`)
+2. **Deploy** (push to `main` only) — deploy LiteLLM to Fly.io (`make deploy-litellm`)
 
 All runtime secrets are loaded from Doppler (`personal` / `dev`). GitHub only stores a single bootstrap secret.
 
@@ -70,7 +72,7 @@ GITHUB_REPO=crvouga/llm-server make doppler-seed-github-secrets
 
 ```bash
 doppler run --project personal --config dev -- make check
-doppler run --project personal --config dev -- make deploy-worker
+doppler run --project personal --config dev -- make deploy-litellm
 ```
 
 ## Install CLI
