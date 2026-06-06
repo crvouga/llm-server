@@ -33,7 +33,7 @@ npm run deploy
 # Create DNS record for the worker (idempotent - checks if record exists first)
 DNS_RECORD_EXISTS=$(curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/dns_records?name=llm.chrisvouga.dev" \
   -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-  -H "Content-Type: application/json" | grep -c '"success":true')
+  -H "Content-Type: application/json" | jq '.result | length')
 
 if [ "$DNS_RECORD_EXISTS" -eq 0 ]; then
   echo "Creating DNS record for llm.chrisvouga.dev..."
