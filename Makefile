@@ -124,10 +124,19 @@ ensure-system-deps:
 
 doctor:
 	@echo "Checking required binaries..."
-	@for cmd in python3 systemctl curl rg doppler cloudflared; do \
+	@for cmd in python3 curl rg doppler cloudflared; do \
 		command -v "$$cmd" >/dev/null || { echo "Missing: $$cmd"; exit 1; }; \
 		echo "  - $$cmd: OK"; \
 	done
+	@if [[ "$$(uname)" == "Linux" ]]; then \
+		if ! command -v systemctl >/dev/null; then \
+			echo "Missing: systemctl (required on Linux)"; \
+			exit 1; \
+		fi; \
+		echo "  - systemctl: OK"; \
+	else \
+		echo "  - systemctl: SKIPPED (not on Linux)"; \
+	fi
 	@echo "Doctor checks completed."
 
 setup: ensure-system-deps install doctor

@@ -13,7 +13,8 @@ The workflow is idempotent:
 
 ## Requirements
 
-- Linux with `systemd --user`
+- **Linux**: `systemd --user` (for managing `cloudflared` service)
+- **macOS/Windows**: Not required - `systemctl` checks are skipped on non-Linux systems
 - Python 3.10+
 - `sudo` access if using `apt` installs
 - Doppler account/project/config with required keys
