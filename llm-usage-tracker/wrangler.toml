@@ -1,0 +1,11 @@
+name = "llm-usage-tracker"
+main = "src/index.ts"
+compatibility_date = "2025-03-10"
+compatibility_flags = ["nodejs_compat"]
+
+routes = [
+  { pattern = "llm.chrisvouga.dev/*", zone_name = "chrisvouga.dev" }
+]
+
+[vars]
+LM_STUDIO_URL = "https://lm-studio.chrisvouga.dev"

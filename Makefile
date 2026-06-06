@@ -11,7 +11,7 @@ LLM_ENV := $(VENV)/bin/local-llm-env
 SPEC ?= spec/local-llm-env.yaml
 STATE ?= state/local-llm-env-state.json
 
-CLOUDFLARED_SERVICE ?= local-llm-cloudflared.service
+CLOUDFLARED_SERVICE ?= lm-studio-cloudflared.service
 SERVICES := $(CLOUDFLARED_SERVICE)
 
 REMOTE_ACCESS_MD ?= REMOTE-ACCESS.md

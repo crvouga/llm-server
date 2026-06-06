@@ -1,0 +1,12 @@
+[Unit]
+Description=Template for LM Studio Cloudflare tunnel service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=cloudflared tunnel --config ~/.cloudflared/lm-studio.yml run
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

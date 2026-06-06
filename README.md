@@ -23,6 +23,7 @@ The workflow is idempotent:
 
 - `spec/local-llm-env.yaml`: primary desired-state declaration
 - `local_llm_env/`: CLI, schema validation, reconcilers, state/diff logic
+- `llm-usage-tracker/`: Cloudflare Worker proxy at `llm.chrisvouga.dev` with usage tracking
 - `state/local-llm-env-state.json`: last applied managed state
 - `systemd/*.service`: template reference units
 
@@ -84,7 +85,7 @@ local-llm-env destroy --spec spec/local-llm-env.yaml --state state/local-llm-env
 ## Verification Checklist
 
 After `apply`, validate:
-- `systemctl --user status local-llm-cloudflared.service`
+- `systemctl --user status lm-studio-cloudflared.service`
 - local endpoint responds (`http://127.0.0.1:1234`)
 - tunnel DNS hostnames route to expected local services
 - second `plan` shows no-op or only informational drift
