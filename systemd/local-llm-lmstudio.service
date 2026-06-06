@@ -1,0 +1,13 @@
+[Unit]
+Description=Template for Local LLM LM Studio service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=~/.local/bin/lmstudio --headless --model qwen3-8b-instruct --host 127.0.0.1 --port 1234
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+

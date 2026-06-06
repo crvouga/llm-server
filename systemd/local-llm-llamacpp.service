@@ -1,0 +1,13 @@
+[Unit]
+Description=Template for Local LLM llama.cpp service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=~/.local/bin/llama-server --model ~/.local/share/local-llm-models/qwen3-8b-instruct-q4_k_m.gguf --host 127.0.0.1 --port 8080 --ctx-size 8192 --n-gpu-layers 99
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+

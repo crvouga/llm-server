@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Local secrets/config
+.env
+.env.*
+!.env.example
+
+# Local runtime state
+state/*.json
+
+# IDE/editor noise
+.DS_Store
+.idea/
+.vscode/
+
