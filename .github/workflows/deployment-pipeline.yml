@@ -10,10 +10,6 @@ concurrency:
   group: deployment-pipeline-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  DOPPLER_PROJECT: personal
-  DOPPLER_CONFIG: dev
-
 jobs:
   checks:
     name: Checks
@@ -21,11 +17,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Install Doppler CLI
-        uses: dopplerhq/cli-action@v3
-        with:
-          doppler-token: ${{ secrets.DOPPLER_SERVICE_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -53,14 +44,15 @@ jobs:
     needs: checks
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    env:
+      DOPPLER_PROJECT: personal
+      DOPPLER_CONFIG: dev
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install Doppler CLI
         uses: dopplerhq/cli-action@v3
-        with:
-          doppler-token: ${{ secrets.DOPPLER_SERVICE_TOKEN }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -71,3 +63,5 @@ jobs:
 
       - name: Deploy Cloudflare Worker
         run: doppler run -- ./scripts/deploy-worker.sh
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_SERVICE_TOKEN }}
