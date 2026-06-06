@@ -40,7 +40,7 @@ fi
 TUNNEL_ID=$(resolve_tunnel_id)
 if [ -z "$TUNNEL_ID" ]; then
   echo "Creating tunnel '${TUNNEL_NAME}'..."
-  cloudflared tunnel create "$TUNNEL_ID" 2>/dev/null || true
+  cloudflared tunnel create "$TUNNEL_NAME" 2>/dev/null || true
   TUNNEL_ID=$(resolve_tunnel_id)
   if [ -z "$TUNNEL_ID" ]; then
     echo "Error: failed to create tunnel. Is cloudflared authenticated? Run: cloudflared tunnel login"
