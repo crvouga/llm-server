@@ -6,7 +6,7 @@ REMOTE_ACCESS_MD ?= remote-access/REMOTE-ACCESS.md
 REMOTE_USER ?=
 REMOTE_HOST ?=
 
-.PHONY: help server-start server-stop server-metrics server-clear-compile-cache run start stop kill logs status ssh \
+.PHONY: help server-start server-stop server-free-ram server-metrics server-clear-compile-cache run start stop kill logs status ssh \
 	proxy-install proxy-dev proxy-check proxy-deploy proxy-db \
 	remote-setup-mac remote-verify pull push gh
 
@@ -15,7 +15,9 @@ help:
 	@echo "  make server-start  -> start LLM server (python3 server/server.py)"
 	@echo "                         VLLM_ALLOW_GPU_SHARING=1 to share GPU with LM Studio"
 	@echo "  make server-stop   -> stop LLM server"
+	@echo "  make server-free-ram -> reclaim RAM/GPU before starting (./server/free-ram.sh)"
 	@echo "  make server-metrics -> CPU/RAM/GPU/disk + LLM health snapshot"
+	@echo "                         METRICS_ARGS='--json' or '--watch 5' for options"
 	@echo "  make server-clear-compile-cache -> wipe torch/Triton cache (fixes missing cubin errors)"
 	@echo "  make logs          -> tail vLLM Docker container logs"
 	@echo "  make status        -> check server process + container"
@@ -58,6 +60,10 @@ server-stop stop kill:
 	fi; \
 	echo "Stopping vLLM + tunnel..."; \
 	python3 "$(CURDIR)/server/server.py" --stop
+
+server-free-ram:
+	@set -euo pipefail; \
+	"$(CURDIR)/server/free-ram.sh" $(FREE_RAM_ARGS)
 
 server-metrics:
 	@set -euo pipefail; \

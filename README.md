@@ -17,6 +17,8 @@ Requires Docker, NVIDIA container toolkit, and Doppler (`doppler login` + `doppl
 ```bash
 make server-start   # start vLLM + tunnel
 make server-stop    # stop everything
+make server-free-ram   # reclaim RAM/GPU (LM Studio, Docker, page cache)
+make server-metrics    # CPU/RAM/GPU/disk + LLM health snapshot
 make logs     # tail container logs
 make status   # check process + container
 ```
