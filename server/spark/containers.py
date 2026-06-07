@@ -21,19 +21,23 @@ def _image_exists_locally(docker_cmd, image: str) -> bool:
     )
 
 
-def _container_status(cfg):
+def _named_container_status(docker_cmd, name: str) -> str:
     r = subprocess.run(
         [
-            *cfg.docker_cmd,
+            *docker_cmd,
             "inspect",
             "--format",
             "{{.State.Status}}",
-            cfg.container_name,
+            name,
         ],
         capture_output=True,
         text=True,
     )
     return r.stdout.strip() if r.returncode == 0 else "missing"
+
+
+def _container_status(cfg):
+    return _named_container_status(cfg.docker_cmd, cfg.container_name)
 
 
 def _container_restart_count(cfg):

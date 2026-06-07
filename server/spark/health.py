@@ -39,9 +39,7 @@ def _vllm_ready(cfg) -> bool:
         return False
 
 
-def _atlas_ready(cfg) -> bool:
-    """Atlas serves the OpenAI API on its port; readiness = /v1/models with models."""
-    url = f"http://localhost:{cfg.service_port}/v1/models"
+def _atlas_models_ok(url: str) -> bool:
     try:
         with urllib.request.urlopen(url, timeout=5) as r:
             if r.status != 200:
@@ -50,6 +48,20 @@ def _atlas_ready(cfg) -> bool:
             return bool(data.get("data"))
     except Exception:
         return False
+
+
+def _atlas_ready(cfg) -> bool:
+    """Atlas serves the OpenAI API on its engine port; readiness = /v1/models."""
+    return _atlas_models_ok(
+        f"http://localhost:{cfg.atlas_internal_port}/v1/models"
+    )
+
+
+def _atlas_legacy_public_ready(cfg) -> bool:
+    """Pre-proxy Atlas bound directly on the public port (not behind local_proxy)."""
+    if cfg.atlas_internal_port == cfg.atlas_port or _atlas_ready(cfg):
+        return False
+    return _atlas_models_ok(f"http://localhost:{cfg.atlas_port}/v1/models")
 
 
 def _server_ready(cfg) -> bool:

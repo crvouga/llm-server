@@ -17,7 +17,7 @@ from .containers import (
     remove_container,
 )
 from .gpu import _gpu_run_flags
-from .health import _atlas_ready
+from .health import _atlas_legacy_public_ready, _atlas_ready
 from .runtime import register_container
 from .shell import run
 
@@ -106,7 +106,7 @@ def _atlas_serve_args(cfg) -> list:
         "serve",
         cfg.atlas_model,
         "--port",
-        str(cfg.atlas_port),
+        str(cfg.atlas_internal_port),
         "--max-seq-len",
         str(cfg.atlas_max_seq_len),
         "--kv-cache-dtype",
@@ -146,7 +146,7 @@ def _atlas_launch_fingerprint(cfg) -> str:
         {
             "image": cfg.atlas_image,
             "model": cfg.atlas_model,
-            "port": cfg.atlas_port,
+            "port": cfg.atlas_internal_port,
             "serve": _atlas_serve_args(cfg),
         },
         sort_keys=True,
@@ -175,6 +175,12 @@ def start_atlas(cfg, docker_cmd) -> str:
             register_container(cfg.container_name)
             ok(f"Container '{cfg.container_name}' already healthy — skipping restart")
             return "ready"
+        if _atlas_legacy_public_ready(cfg):
+            warn(
+                f"Container '{cfg.container_name}' is on the public port "
+                f"({cfg.atlas_port}) — recreating behind the local proxy"
+            )
+            remove_container(cfg, docker_cmd)
         if _container_config_hash(cfg) != fingerprint:
             warn("Running container has stale config — recreating")
             remove_container(cfg, docker_cmd)

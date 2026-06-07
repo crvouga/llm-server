@@ -94,6 +94,8 @@ class Config:
     atlas_model: str = "Qwen/Qwen3.6-35B-A3B-FP8"
     atlas_container: str = "atlas"
     atlas_port: int = 8888
+    # Atlas binds here; a local proxy serves atlas_port (landing page + API forward).
+    atlas_internal_port: int = 0
     # 128K default. fp8 KV keeps this affordable; nvfp4/turbo4 (4x compression) or
     # NVMe High-Speed-Swap push to 256K. Override with ATLAS_MAX_SEQ_LEN.
     atlas_max_seq_len: int = 131072
@@ -202,6 +204,8 @@ def _apply_env_overrides(cfg: "Config") -> None:
         cfg.atlas_model = model
     if port := os.environ.get("ATLAS_PORT"):
         cfg.atlas_port = int(port)
+    if internal := os.environ.get("ATLAS_INTERNAL_PORT"):
+        cfg.atlas_internal_port = int(internal)
     if seq := (os.environ.get("ATLAS_MAX_SEQ_LEN") or os.environ.get("MAX_SEQ_LEN")):
         cfg.atlas_max_seq_len = int(seq)
     if kv := (os.environ.get("ATLAS_KV_CACHE_DTYPE") or os.environ.get("KV_CACHE_DTYPE")):
@@ -235,6 +239,8 @@ def _apply_env_overrides(cfg: "Config") -> None:
     # When running Atlas, unify the shared service handles so all the lifecycle,
     # tunnel, health, helper, and metrics code targets the Atlas container/port.
     if cfg.engine == "atlas":
+        if cfg.atlas_internal_port <= 0:
+            cfg.atlas_internal_port = cfg.atlas_port + 10000
         cfg.container_name = cfg.atlas_container
         cfg.vllm_port = cfg.atlas_port
         cfg.vllm_image = cfg.atlas_image
