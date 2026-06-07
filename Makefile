@@ -2,8 +2,11 @@ SHELL := /usr/bin/env bash
 
 VLLM_CONTAINER ?= vllm-qwen36-dflash
 COMMIT_MSG ?=
+REMOTE_ACCESS_MD ?= remote-access/REMOTE-ACCESS.md
+REMOTE_USER ?=
+REMOTE_HOST ?=
 
-.PHONY: help server-start server-stop run start stop kill logs status \
+.PHONY: help server-start server-stop run start stop kill logs status ssh \
 	proxy-install proxy-dev proxy-check proxy-deploy proxy-db \
 	remote-setup-mac remote-verify pull push gh
 
@@ -22,6 +25,7 @@ help:
 	@echo "  make proxy-db      -> run database migrations"
 	@echo ""
 	@echo "Remote access (Mac controls Linux):"
+	@echo "  make ssh              -> SSH into Linux target (from REMOTE-ACCESS.md)"
 	@echo "  make remote-setup-mac -> ./remote-access/setup-controller.sh"
 	@echo "  make remote-verify    -> connectivity checks only"
 	@echo "  (on Linux target: sudo ./remote-access/setup-target.sh)"
@@ -100,6 +104,22 @@ remote-setup-mac:
 
 remote-verify:
 	@"$(CURDIR)/remote-access/setup-controller.sh" --verify-only
+
+ssh:
+	@set -euo pipefail; \
+	user="$(REMOTE_USER)"; \
+	host="$(REMOTE_HOST)"; \
+	if [ -z "$$user" ]; then \
+		user="$$(awk -F'|' '/^\|/ && index($$2, "Login user") { gsub(/^[ \t`]+|[ \t`]+$$/, "", $$3); print $$3; exit }' "$(CURDIR)/$(REMOTE_ACCESS_MD)" 2>/dev/null || true)"; \
+	fi; \
+	if [ -z "$$host" ]; then \
+		host="$$(awk -F'|' '/^\|/ && index($$2, "Tailscale DNS name") { gsub(/^[ \t`]+|[ \t`]+$$/, "", $$3); print $$3; exit }' "$(CURDIR)/$(REMOTE_ACCESS_MD)" 2>/dev/null || true)"; \
+	fi; \
+	if [ -z "$$user" ] || [ -z "$$host" ]; then \
+		echo "Missing REMOTE_USER/REMOTE_HOST. Set them or update $(REMOTE_ACCESS_MD)."; \
+		exit 1; \
+	fi; \
+	exec ssh "$$user@$$host"
 
 pull:
 	@set -euo pipefail; \
