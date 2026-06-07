@@ -87,10 +87,10 @@ class Config:
     # Models
     # Main:    AEON-7 heretic-NVFP4 — production-stable, correct vLLM key layout
     # Drafter: z-lab DFlash block-diffusion (must be post 2026-04-19 revision)
-    # Flat layout under /opt/qwen36/{main,drafter} — predictable for vLLM flags
+    # Flat layout under {model_dir}/{main,drafter} — predictable for vLLM flags
     model: str = "AEON-7/Qwen3.6-35B-A3B-heretic-NVFP4"
     dflash_drafter: str = "z-lab/Qwen3.6-35B-A3B-DFlash"
-    model_dir: Path = field(default_factory=lambda: Path("/opt/qwen36"))
+    model_dir: Path = field(default_factory=lambda: Path.home() / ".cache" / "qwen36")
 
     # vLLM
     # Image: SM121-patched (8 patches, FlashInfer 0.6.8, Marlin GEMM enforcement)
@@ -102,6 +102,7 @@ class Config:
     dflash_num_spec_tokens: int = 15  # k=15 optimal for code (~78% acceptance)
     container_name: str = "vllm-qwen36-dflash"
     vllm_image: str = "ghcr.io/aeon-7/vllm-spark-omni-q36:v1.2"
+    docker_cmd: list = field(default_factory=lambda: ["docker"])
 
     # Runtime
     helper_dir: Path = field(default_factory=lambda: Path.home() / ".spark-serve")
@@ -110,6 +111,8 @@ class Config:
 # ── Process registry ──────────────────────────────────────────────────────────
 _managed: list = []
 _managed_containers: list = []
+_shutdown_requested = False
+_cleanup_done = False
 
 
 def register(proc):
@@ -121,7 +124,47 @@ def register_container(name):
     _managed_containers.append(name)
 
 
+def _request_shutdown(*, force: bool = False) -> None:
+    global _shutdown_requested
+    if force or _shutdown_requested:
+        print(f"\n{Y}[!]{X} Force quit", flush=True)
+        os._exit(130)
+    _shutdown_requested = True
+    print(
+        f"\n{Y}[!]{X} Shutting down... (Ctrl+C again to force quit)",
+        flush=True,
+    )
+
+
+def _handle_sigint(signum, frame):
+    _request_shutdown()
+
+
+def _handle_sigterm(signum, frame):
+    _request_shutdown()
+
+
+def _sleep(seconds: float) -> bool:
+    """Sleep in short chunks so Ctrl+C is felt within ~200ms. Returns False if interrupted."""
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if _shutdown_requested:
+            return False
+        time.sleep(min(0.2, end - time.monotonic()))
+    return True
+
+
+def _exit_on_shutdown(cfg) -> None:
+    if _shutdown_requested:
+        cleanup(cfg)
+        sys.exit(130)
+
+
 def cleanup(cfg):
+    global _cleanup_done
+    if _cleanup_done:
+        return
+    _cleanup_done = True
     print(f"\n{B}━━━  Shutting down  ━━━{X}", flush=True)
     for proc in _managed:
         if proc.poll() is None:
@@ -139,8 +182,13 @@ def cleanup(cfg):
                     pass
     for name in _managed_containers:
         info(f"Stopping container '{name}'...")
-        subprocess.run(["docker", "stop", name], capture_output=True)
-        subprocess.run(["docker", "rm", name], capture_output=True)
+        subprocess.run(
+            [*cfg.docker_cmd, "stop", name], capture_output=True, timeout=30
+        )
+        subprocess.run(
+            [*cfg.docker_cmd, "rm", name], capture_output=True, timeout=30
+        )
+    (cfg.helper_dir / "cloudflared.pid").unlink(missing_ok=True)
     ok("Clean shutdown complete.")
 
 
@@ -273,9 +321,127 @@ def run(cmd, **kwargs):
 
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
+def _docker_reachable(argv):
+    return (
+        subprocess.run(
+            [*argv, "info"],
+            capture_output=True,
+        ).returncode
+        == 0
+    )
+
+
+def _gpu_run_flags():
+    # --gpus all relies on CDI specs that are often missing on fresh Spark installs.
+    # The nvidia runtime is configured in /etc/docker/daemon.json and works reliably.
+    return [
+        "--runtime",
+        "nvidia",
+        "-e",
+        "NVIDIA_VISIBLE_DEVICES=all",
+        "-e",
+        "NVIDIA_DRIVER_CAPABILITIES=compute,utility",
+    ]
+
+
+def _gpu_test(argv):
+    r = subprocess.run(
+        [
+            *argv,
+            "run",
+            "--rm",
+            *_gpu_run_flags(),
+            "nvidia/cuda:12.0.0-base-ubuntu22.04",
+            "nvidia-smi",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    out = r.stdout + r.stderr
+    return r.returncode == 0 and "NVIDIA" in out
+
+
+def _ensure_nvidia_cdi():
+    if Path("/etc/cdi/nvidia.yaml").exists() or not shutil.which("nvidia-ctk"):
+        return
+    info("Generating NVIDIA CDI specs (fixes --gpus all on newer Docker)...")
+    run(["sudo", "mkdir", "-p", "/etc/cdi"])
+    run(["sudo", "nvidia-ctk", "cdi", "generate", "--output=/etc/cdi/nvidia.yaml"])
+    run(["sudo", "systemctl", "restart", "docker"])
+    time.sleep(2)
+
+
+def _resolve_docker_cmd():
+    for argv in (["docker"], ["sudo", "docker"]):
+        if _docker_reachable(argv):
+            return argv
+
+    if shutil.which("docker") and subprocess.run(
+        ["systemctl", "is-active", "--quiet", "docker"],
+        capture_output=True,
+    ).returncode != 0:
+        info("Docker daemon not running — starting...")
+        start = subprocess.run(
+            ["sudo", "systemctl", "start", "docker"],
+            capture_output=True,
+            text=True,
+        )
+        if start.returncode != 0:
+            journal = subprocess.run(
+                ["journalctl", "-u", "docker.service", "-n", "30", "--no-pager"],
+                capture_output=True,
+                text=True,
+            )
+            if "invalid database" in journal.stdout:
+                info("BuildKit database corrupted — resetting...")
+                run(["sudo", "rm", "-rf", "/var/lib/docker/buildkit"])
+                run(["sudo", "systemctl", "reset-failed", "docker"])
+                run(["sudo", "systemctl", "start", "docker"])
+                time.sleep(2)
+                for argv in (["docker"], ["sudo", "docker"]):
+                    if _docker_reachable(argv):
+                        return argv
+            die(
+                "Docker daemon failed to start. "
+                "Check: systemctl status docker.service"
+            )
+        time.sleep(2)
+        for argv in (["docker"], ["sudo", "docker"]):
+            if _docker_reachable(argv):
+                return argv
+
+    die(
+        "Cannot connect to Docker. Ensure the daemon is running "
+        "(sudo systemctl start docker) or add your user to the docker group."
+    )
+
+
+def _install_nvidia_container_toolkit():
+    info("NVIDIA container toolkit not found — installing...")
+    run(
+        [
+            "bash",
+            "-c",
+            "curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey "
+            "| sudo gpg --batch --yes --dearmor "
+            "-o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg",
+        ]
+    )
+    run(
+        [
+            "bash",
+            "-c",
+            "curl -sL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list "
+            "| sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' "
+            "| sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list",
+        ]
+    )
+    run(["sudo", "apt-get", "update", "-qq"])
+    run(["sudo", "apt-get", "install", "-y", "-q", "nvidia-container-toolkit"])
+
+
 def ensure_docker(cfg):
     section("Checking Docker")
-    docker_cmd = "docker"
 
     if not shutil.which("docker"):
         info("Docker not found — installing...")
@@ -284,51 +450,37 @@ def ensure_docker(cfg):
         warn(
             f"Added {os.environ['USER']} to docker group — may need re-login on first install"
         )
-        docker_cmd = "sudo docker"
     else:
         r = subprocess.run(["docker", "--version"], capture_output=True, text=True)
         ok(r.stdout.strip())
 
-    # NVIDIA container toolkit
-    test = subprocess.run(
-        [
-            docker_cmd,
-            "run",
-            "--rm",
-            "--gpus",
-            "all",
-            "nvidia/cuda:12.0-base-ubuntu22.04",
-            "nvidia-smi",
-        ],
-        capture_output=True,
-    )
-    if test.returncode != 0:
-        info("NVIDIA container toolkit not found — installing...")
-        run(
-            [
-                "bash",
-                "-c",
-                "curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey "
-                "| sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg",
-            ]
-        )
-        run(
-            [
-                "bash",
-                "-c",
-                "curl -sL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list "
-                "| sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' "
-                "| sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list",
-            ]
-        )
-        run(["sudo", "apt-get", "update", "-qq"])
-        run(["sudo", "apt-get", "install", "-y", "-q", "nvidia-container-toolkit"])
-        run(["sudo", "nvidia-ctk", "runtime", "configure", "--runtime=docker"])
-        run(["sudo", "systemctl", "restart", "docker"])
-        ok("NVIDIA container toolkit installed")
-    else:
-        ok("NVIDIA container toolkit working")
+    docker_cmd = _resolve_docker_cmd()
+    _ensure_nvidia_cdi()
 
+    if _gpu_test(docker_cmd):
+        ok("NVIDIA container toolkit working")
+        cfg.docker_cmd = docker_cmd
+        return docker_cmd
+
+    if shutil.which("nvidia-ctk"):
+        info("NVIDIA container toolkit installed — configuring runtime...")
+    else:
+        _install_nvidia_container_toolkit()
+
+    run(["sudo", "nvidia-ctk", "runtime", "configure", "--runtime=docker"])
+    _ensure_nvidia_cdi()
+    run(["sudo", "systemctl", "restart", "docker"])
+    time.sleep(2)
+    docker_cmd = _resolve_docker_cmd()
+
+    if not _gpu_test(docker_cmd):
+        die(
+            "Docker GPU access failed. "
+            "Check NVIDIA drivers (nvidia-smi) and container toolkit."
+        )
+
+    ok("NVIDIA container toolkit working")
+    cfg.docker_cmd = docker_cmd
     return docker_cmd
 
 
@@ -395,8 +547,30 @@ def ensure_cf_tunnel(cfg):
 
 # ── Model download ────────────────────────────────────────────────────────────
 # Flat layout — predictable paths passed directly to vLLM:
-#   /opt/qwen36/main    — AEON-7/Qwen3.6-35B-A3B-heretic-NVFP4  (~26 GB)
-#   /opt/qwen36/drafter — z-lab/Qwen3.6-35B-A3B-DFlash           (~870 MB)
+#   {model_dir}/main    — AEON-7/Qwen3.6-35B-A3B-heretic-NVFP4  (~26 GB)
+#   {model_dir}/drafter — z-lab/Qwen3.6-35B-A3B-DFlash           (~870 MB)
+
+
+def _resolve_model_dir() -> Path:
+    if env_dir := os.environ.get("MODEL_DIR"):
+        return Path(env_dir).expanduser()
+    opt = Path("/opt/qwen36")
+    if opt.exists() and os.access(opt, os.W_OK | os.X_OK):
+        return opt
+    return Path.home() / ".cache" / "qwen36"
+
+
+def _ensure_model_dir(cfg):
+    try:
+        cfg.model_dir.mkdir(parents=True, exist_ok=True)
+    except PermissionError:
+        parent = str(cfg.model_dir)
+        if not parent.startswith("/opt/"):
+            die(f"Cannot create model directory: {cfg.model_dir}")
+        info(f"Creating {cfg.model_dir} with sudo...")
+        run(["sudo", "mkdir", "-p", parent])
+        run(["sudo", "chown", f"{os.environ['USER']}:{os.environ['USER']}", parent])
+        cfg.model_dir.mkdir(parents=True, exist_ok=True)
 
 
 def _model_path(cfg):
@@ -409,7 +583,8 @@ def _drafter_path(cfg):
 
 def ensure_models(cfg, docker_cmd):
     section("Checking models")
-    cfg.model_dir.mkdir(parents=True, exist_ok=True)
+    info(f"Model dir: {cfg.model_dir}")
+    _ensure_model_dir(cfg)
 
     def download_if_missing(repo, local_dir, size_hint):
         if local_dir.exists() and any(local_dir.glob("*.safetensors")):
@@ -426,12 +601,12 @@ def ensure_models(cfg, docker_cmd):
             ")"
         )
         bash_cmd = (
-            "pip install -q 'huggingface_hub[hf_transfer]' && "
-            'HF_HUB_ENABLE_HF_TRANSFER=1 python -c "' + py_cmd + '"'
+            "pip install -q huggingface_hub && "
+            'HF_XET_HIGH_PERFORMANCE=1 python -c "' + py_cmd + '"'
         )
         run(
             [
-                docker_cmd,
+                *docker_cmd,
                 "run",
                 "--rm",
                 "-v",
@@ -441,7 +616,7 @@ def ensure_models(cfg, docker_cmd):
                 "-e",
                 "HUGGING_FACE_HUB_TOKEN=" + cfg.hf_token,
                 "-e",
-                "HF_HUB_ENABLE_HF_TRANSFER=1",
+                "HF_XET_HIGH_PERFORMANCE=1",
                 "python:3.11-slim",
                 "bash",
                 "-c",
@@ -460,20 +635,106 @@ def ensure_models(cfg, docker_cmd):
 def pull_vllm_image(cfg, docker_cmd):
     section("Pulling vLLM image")
     info(f"Image: {cfg.vllm_image}  (~9 GB on first pull)")
-    run([docker_cmd, "pull", cfg.vllm_image])
+    run([*docker_cmd, "pull", cfg.vllm_image])
     ok("Image ready")
+
+
+def _query_cuda_memory(docker_cmd, image: str):
+    """GB10 reports N/A in nvidia-smi; query CUDA's view from inside a GPU container."""
+    r = subprocess.run(
+        [
+            *docker_cmd,
+            "run",
+            "--rm",
+            *_gpu_run_flags(),
+            image,
+            "python3",
+            "-c",
+            "import torch; f,t=torch.cuda.mem_get_info(); print(f'{f},{t}')",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if r.returncode != 0:
+        return None
+    for line in r.stdout.splitlines():
+        line = line.strip()
+        if "," in line and line.split(",", 1)[0].isdigit():
+            free_b, total_b = line.split(",", 1)
+            return int(free_b), int(total_b)
+    return None
+
+
+def _gpu_compute_processes():
+    r = subprocess.run(
+        [
+            "nvidia-smi",
+            "--query-compute-apps=pid,process_name,used_gpu_memory",
+            "--format=csv,noheader",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    return [line.strip() for line in r.stdout.splitlines() if line.strip()]
+
+
+def _check_gpu_memory(cfg, docker_cmd):
+    section("Checking GPU memory")
+    mem = _query_cuda_memory(docker_cmd, cfg.vllm_image)
+    if not mem:
+        warn("Could not query CUDA memory — skipping preflight check")
+        return
+
+    free_b, total_b = mem
+    free_gib = free_b / (1024**3)
+    total_gib = total_b / (1024**3)
+    required_gib = total_gib * cfg.gpu_mem_util
+    others = _gpu_compute_processes()
+
+    if free_gib >= required_gib:
+        ok(
+            f"GPU memory OK: {free_gib:.1f}/{total_gib:.1f} GiB free "
+            f"(budget {required_gib:.1f} GiB at {cfg.gpu_mem_util:.0%})"
+        )
+        return
+
+    max_util = (free_gib / total_gib) * 0.98
+    if max_util >= 0.35:
+        warn(
+            f"Only {free_gib:.1f}/{total_gib:.1f} GiB GPU memory free "
+            f"(need {required_gib:.1f} GiB at {cfg.gpu_mem_util:.0%})"
+        )
+        if others:
+            for line in others:
+                warn(f"  GPU process: {line}")
+        cfg.gpu_mem_util = round(max_util - 0.01, 2)
+        warn(f"Lowering --gpu-memory-utilization to {cfg.gpu_mem_util:.2f}")
+        return
+
+    msg = (
+        f"Insufficient GPU memory: {free_gib:.1f}/{total_gib:.1f} GiB free, "
+        f"but vLLM needs ~{required_gib:.1f} GiB at {cfg.gpu_mem_util:.0%} utilization."
+    )
+    if others:
+        msg += "\nStop these GPU processes first:\n  " + "\n  ".join(others)
+    msg += (
+        "\nDGX Spark has one GPU — only one large model can run at a time. "
+        "Stop LM Studio (or other GPU workloads), then retry."
+    )
+    die(msg)
 
 
 def stop_existing_container(cfg, docker_cmd):
     result = subprocess.run(
-        [docker_cmd, "ps", "-a", "--format", "{{.Names}}"],
+        [*docker_cmd, "ps", "-a", "--format", "{{.Names}}"],
         capture_output=True,
         text=True,
     )
     if cfg.container_name in result.stdout.splitlines():
         status = subprocess.run(
             [
-                docker_cmd,
+                *docker_cmd,
                 "inspect",
                 "--format",
                 "{{.State.Status}}",
@@ -484,8 +745,8 @@ def stop_existing_container(cfg, docker_cmd):
         ).stdout.strip()
         if status == "running":
             info(f"Stopping existing container '{cfg.container_name}'...")
-            run([docker_cmd, "stop", cfg.container_name])
-        run([docker_cmd, "rm", cfg.container_name])
+            run([*docker_cmd, "stop", cfg.container_name])
+        run([*docker_cmd, "rm", cfg.container_name])
 
 
 def start_vllm(cfg, docker_cmd):
@@ -507,13 +768,12 @@ def start_vllm(cfg, docker_cmd):
 
     run(
         [
-            docker_cmd,
+            *docker_cmd,
             "run",
             "-d",
             "--name",
             cfg.container_name,
-            "--gpus",
-            "all",
+            *_gpu_run_flags(),
             "--network",
             "host",
             "--ipc",
@@ -528,21 +788,36 @@ def start_vllm(cfg, docker_cmd):
             "-v",
             str(_drafter_path(cfg)) + ":/models/drafter:ro",
             "-e",
+            "VLLM_ALLOW_LONG_MAX_MODEL_LEN=1",
+            "-e",
+            "TORCH_MATMUL_PRECISION=high",
+            "-e",
+            "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True",
+            "-e",
+            "NVIDIA_FORWARD_COMPAT=1",
+            "-e",
+            "VLLM_TEST_FORCE_FP8_MARLIN=1",
+            "-e",
             "HF_TOKEN=" + cfg.hf_token,
             "-e",
             "HUGGING_FACE_HUB_TOKEN=" + cfg.hf_token,
             cfg.vllm_image,
-            # vLLM serve args passed after image name
+            # Match AEON-7 docker-compose.yml — NVFP4 needs compressed-tensors
             "vllm",
             "serve",
             "/models/main",
             "--served-model-name",
             "qwen3.6-35b",
-            "--port",
-            str(cfg.vllm_port),
             "--host",
             "0.0.0.0",
-            "--trust-remote-code",
+            "--port",
+            str(cfg.vllm_port),
+            "--tensor-parallel-size",
+            "1",
+            "--dtype",
+            "auto",
+            "--quantization",
+            "compressed-tensors",
             "--max-model-len",
             str(cfg.max_model_len),
             "--max-num-seqs",
@@ -551,18 +826,65 @@ def start_vllm(cfg, docker_cmd):
             "32768",
             "--gpu-memory-utilization",
             str(cfg.gpu_mem_util),
-            "--attention-backend",
-            "flash_attn",
-            "--enable-prefix-caching",  # speeds up repeated system prompts in agents
-            "--enable-auto-tool-choice",  # agentic tool calling
+            "--enable-chunked-prefill",
+            "--enable-prefix-caching",
+            "--load-format",
+            "safetensors",
+            "--trust-remote-code",
+            "--enable-auto-tool-choice",
             "--tool-call-parser",
             "qwen3_coder",
+            "--reasoning-parser",
+            "qwen3",
+            "--attention-backend",
+            "flash_attn",
             "--speculative-config",
             spec_config,
-            "--disable-log-requests",  # cleaner output
         ]
     )
     ok(f"Container '{cfg.container_name}' started")
+
+
+def _container_status(cfg):
+    r = subprocess.run(
+        [
+            *cfg.docker_cmd,
+            "inspect",
+            "--format",
+            "{{.State.Status}}",
+            cfg.container_name,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    return r.stdout.strip() if r.returncode == 0 else "missing"
+
+
+def _container_restart_count(cfg):
+    r = subprocess.run(
+        [
+            *cfg.docker_cmd,
+            "inspect",
+            "--format",
+            "{{.RestartCount}}",
+            cfg.container_name,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    try:
+        return int(r.stdout.strip()) if r.returncode == 0 else 0
+    except ValueError:
+        return 0
+
+
+def _container_logs_tail(cfg, lines=30):
+    r = subprocess.run(
+        [*cfg.docker_cmd, "logs", "--tail", str(lines), cfg.container_name],
+        capture_output=True,
+        text=True,
+    )
+    return (r.stdout + r.stderr).strip()
 
 
 def wait_for_vllm(cfg):
@@ -573,6 +895,27 @@ def wait_for_vllm(cfg):
     elapsed = 0
 
     while elapsed < max_wait:
+        status = _container_status(cfg)
+        if status in ("exited", "dead", "missing"):
+            die(
+                f"Container '{cfg.container_name}' is {status}.\n"
+                f"Recent logs:\n{_container_logs_tail(cfg)}"
+            )
+        restarts = _container_restart_count(cfg)
+        if (status == "restarting" or restarts >= 2) and elapsed >= 10:
+            logs = _container_logs_tail(cfg, lines=80)
+            hint = ""
+            if "less than desired gpu memory utilization" in logs.lower():
+                hint = (
+                    "\nHint: another process (often LM Studio) is using GPU memory. "
+                    "Stop it and run `make kill && make run` again.\n"
+                )
+            die(
+                f"Container '{cfg.container_name}' is crash-looping "
+                f"(status={status}, restarts={restarts}).{hint}\n"
+                f"Recent logs:\n{logs}"
+            )
+
         try:
             with urllib.request.urlopen(url, timeout=3) as r:
                 if r.status == 200:
@@ -581,12 +924,16 @@ def wait_for_vllm(cfg):
         except Exception:
             pass
         if elapsed > 0 and elapsed % 30 == 0:
-            info(f"Still waiting... ({elapsed}s)")
-        time.sleep(5)
+            info(f"Still waiting... ({elapsed}s) [container: {status}]")
+        _exit_on_shutdown(cfg)
+        if not _sleep(5):
+            _exit_on_shutdown(cfg)
         elapsed += 5
 
     die(
-        f"vLLM not healthy after {max_wait}s.\n  Check: docker logs {cfg.container_name}"
+        f"vLLM not healthy after {max_wait}s.\n"
+        f"Container status: {_container_status(cfg)}\n"
+        f"Recent logs:\n{_container_logs_tail(cfg)}"
     )
 
 
@@ -608,12 +955,29 @@ def warmup_vllm(cfg):
 
 
 # ── Cloudflare tunnel process ─────────────────────────────────────────────────
+def _stop_spark_tunnel(cfg):
+    """Stop only this server's token-based tunnel, not other cloudflared services."""
+    pid_file = cfg.helper_dir / "cloudflared.pid"
+    if pid_file.exists():
+        try:
+            pid = int(pid_file.read_text().strip())
+            os.kill(pid, signal.SIGTERM)
+            time.sleep(1)
+        except (OSError, ValueError):
+            pass
+        pid_file.unlink(missing_ok=True)
+    subprocess.run(
+        ["pkill", "-f", "cloudflared tunnel --no-autoupdate run --token"],
+        capture_output=True,
+    )
+
+
 def start_cf_tunnel(cfg, tunnel_token):
     section("Starting Cloudflare tunnel")
     cf_log = cfg.helper_dir / "cloudflare-tunnel.log"
     cfg.helper_dir.mkdir(parents=True, exist_ok=True)
 
-    subprocess.run(["pkill", "-f", "cloudflared tunnel run"], capture_output=True)
+    _stop_spark_tunnel(cfg)
     time.sleep(1)
 
     log_file = open(cf_log, "w")
@@ -623,6 +987,7 @@ def start_cf_tunnel(cfg, tunnel_token):
         stderr=log_file,
         start_new_session=True,
     )
+    (cfg.helper_dir / "cloudflared.pid").write_text(str(proc.pid))
     register(proc)
 
     info("Waiting for tunnel to connect...")
@@ -661,7 +1026,11 @@ def write_helpers(cfg):
         f"#!/usr/bin/env bash\n"
         f"docker stop {cfg.container_name} 2>/dev/null || true\n"
         f"docker rm   {cfg.container_name} 2>/dev/null || true\n"
-        f'pkill -f "cloudflared tunnel run" 2>/dev/null || true\n'
+        f'if [ -f "{d}/cloudflared.pid" ]; then\n'
+        f'  kill "$(cat "{d}/cloudflared.pid")" 2>/dev/null || true\n'
+        f'  rm -f "{d}/cloudflared.pid"\n'
+        f"fi\n"
+        f'pkill -f "cloudflared tunnel --no-autoupdate run --token" 2>/dev/null || true\n'
         f'echo "Done."\n'
     )
     (d / "status.sh").write_text(
@@ -674,8 +1043,11 @@ def write_helpers(cfg):
         f"curl -s http://localhost:{cfg.vllm_port}/v1/models "
         f"| python3 -c \"import sys,json; [print('  •', m['id']) for m in json.load(sys.stdin).get('data',[])]\" "
         f"2>/dev/null || echo '(not ready)'\n"
-        f'pgrep -f "cloudflared tunnel run" >/dev/null '
-        f'&& echo -e "${{G}}● tunnel running${{X}}" || echo -e "${{R}}✗ tunnel not running${{X}}"\n'
+        f'if [ -f "{d}/cloudflared.pid" ] && kill -0 "$(cat "{d}/cloudflared.pid")" 2>/dev/null; then\n'
+        f'  echo -e "${{G}}● tunnel running${{X}}"\n'
+        f"else\n"
+        f'  echo -e "${{R}}✗ tunnel not running${{X}}"\n'
+        f"fi\n"
     )
     for f in d.glob("*.sh"):
         f.chmod(0o755)
@@ -718,6 +1090,7 @@ def print_summary(cfg, cf_url):
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     cfg = Config()
+    cfg.model_dir = _resolve_model_dir()
     cfg.doppler_token = os.environ.get("DOPPLER_TOKEN", "")
 
     if platform.machine() != "aarch64":
@@ -725,25 +1098,25 @@ def main():
             f"Expected aarch64 (GB10), got {platform.machine()} — optimisations may not apply"
         )
 
-    def _sig(signum, frame):
-        print(f"\n{Y}[!]{X} Signal {signum} received", flush=True)
-        cleanup(cfg)
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, _sig)
-    signal.signal(signal.SIGTERM, _sig)
+    signal.signal(signal.SIGINT, _handle_sigint)
+    signal.signal(signal.SIGTERM, _handle_sigterm)
 
     try:
         fetch_doppler_secrets(cfg)
+        _exit_on_shutdown(cfg)
 
         docker_cmd = ensure_docker(cfg)
+        _exit_on_shutdown(cfg)
         ensure_cloudflared()
         ensure_git_lfs()
         pull_vllm_image(cfg, docker_cmd)
+        _exit_on_shutdown(cfg)
         ensure_models(cfg, docker_cmd)
+        _check_gpu_memory(cfg, docker_cmd)
         start_vllm(cfg, docker_cmd)
         wait_for_vllm(cfg)
         warmup_vllm(cfg)
+        _exit_on_shutdown(cfg)
 
         tunnel_token = ensure_cf_tunnel(cfg)
         cf_url = start_cf_tunnel(cfg, tunnel_token)
@@ -752,11 +1125,11 @@ def main():
         print_summary(cfg, cf_url)
 
         info("Running. Press Ctrl+C to stop everything.")
-        while True:
+        while not _shutdown_requested:
             # Watchdog: restart container if it exits unexpectedly
             r = subprocess.run(
                 [
-                    docker_cmd,
+                    *docker_cmd,
                     "inspect",
                     "--format",
                     "{{.State.Status}}",
@@ -770,14 +1143,20 @@ def main():
                 start_vllm(cfg, docker_cmd)
                 wait_for_vllm(cfg)
                 warmup_vllm(cfg)
-            time.sleep(30)
+            if not _sleep(30):
+                break
 
+    except KeyboardInterrupt:
+        _request_shutdown()
     except SystemExit:
         raise
     except Exception as e:
         err(f"Unexpected error: {e}")
         cleanup(cfg)
         raise
+    finally:
+        if _shutdown_requested:
+            cleanup(cfg)
 
 
 if __name__ == "__main__":
