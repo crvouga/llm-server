@@ -5,12 +5,12 @@ Transparent Cloudflare Worker that forwards all requests to a configurable backe
 ## Architecture
 
 ```
-Client → llm-proxy.chrisvouga.dev → Cloudflare Worker → backend (from proxy_state table)
+Client → llm-proxy.chrisvouga.dev → Cloudflare Worker → backend (from config table)
                                               ↓
-                                         PostgreSQL (proxy_state + raw JSONB logs)
+                                         PostgreSQL (config + raw JSONB logs)
 ```
 
-The upstream backend URL is stored in `llm_proxy.proxy_state` — not in environment variables or worker code. Until that row exists, proxied requests return **503 Proxy not configured**.
+The upstream backend URL is stored in `llm_proxy.config` — not in environment variables or worker code. Until that row exists, proxied requests return **503 Proxy not configured**.
 
 ## Prerequisites
 
@@ -30,13 +30,13 @@ The upstream backend URL is stored in `llm_proxy.proxy_state` — not in environ
 
 2. **Configure the backend URL** (required before the proxy will forward traffic):
    ```sql
-   INSERT INTO llm_proxy.proxy_state (backend_url)
+   INSERT INTO llm_proxy.config (backend_url)
    VALUES ('https://lm-studio.chrisvouga.dev');
    ```
 
    To change the backend later:
    ```sql
-   UPDATE llm_proxy.proxy_state
+   UPDATE llm_proxy.config
    SET backend_url = 'https://new-backend.example.com', updated_at = NOW()
    WHERE id = 1;
    ```
@@ -65,7 +65,7 @@ The upstream backend URL is stored in `llm_proxy.proxy_state` — not in environ
    CREATE INDEX IF NOT EXISTS idx_http_log_request_method ON llm_proxy.http_log(request_method);
    CREATE INDEX IF NOT EXISTS idx_http_log_request_path ON llm_proxy.http_log(request_path);
 
-   CREATE TABLE IF NOT EXISTS llm_proxy.proxy_state (
+   CREATE TABLE IF NOT EXISTS llm_proxy.config (
      id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
      backend_url TEXT NOT NULL,
      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -86,7 +86,7 @@ The upstream backend URL is stored in `llm_proxy.proxy_state` — not in environ
    wrangler deploy
    ```
 
-## Proxy state
+## Proxy config
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -97,7 +97,7 @@ The upstream backend URL is stored in `llm_proxy.proxy_state` — not in environ
 The worker reads `backend_url` from this table on each request (cached for 30 seconds per isolate). If the row is missing or the URL is invalid, proxied requests return:
 
 ```json
-{ "error": "Proxy not configured", "details": "Set llm_proxy.proxy_state.backend_url" }
+{ "error": "Proxy not configured", "details": "Set llm_proxy.config.backend_url" }
 ```
 
 ## Logging Format

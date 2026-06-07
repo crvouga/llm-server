@@ -27,7 +27,24 @@ CREATE INDEX IF NOT EXISTS idx_http_log_request_method ON llm_proxy.http_log(req
 CREATE INDEX IF NOT EXISTS idx_http_log_request_path ON llm_proxy.http_log(request_path);
 
 -- Singleton proxy configuration (backend URL, etc.)
-CREATE TABLE IF NOT EXISTS llm_proxy.proxy_state (
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.tables
+    WHERE table_schema = 'llm_proxy'
+      AND table_name = 'proxy_state'
+  ) AND NOT EXISTS (
+    SELECT 1
+    FROM information_schema.tables
+    WHERE table_schema = 'llm_proxy'
+      AND table_name = 'config'
+  ) THEN
+    ALTER TABLE llm_proxy.proxy_state RENAME TO config;
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS llm_proxy.config (
   id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
   backend_url TEXT NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

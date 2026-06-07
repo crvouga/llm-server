@@ -155,7 +155,7 @@ export function createApp(): Hono<AppEnv> {
       return c.json(
         {
           error: 'Proxy not configured',
-          details: 'Set llm_proxy.proxy_state.backend_url',
+          details: 'Set llm_proxy.config.backend_url',
         },
         503,
       );

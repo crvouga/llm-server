@@ -35,7 +35,7 @@ async function loadBackendUrl(databaseUrl: string): Promise<string | null> {
     const sql = neon(databaseUrl);
     const rows = await sql`
       SELECT backend_url
-      FROM llm_proxy.proxy_state
+      FROM llm_proxy.config
       WHERE id = 1
       LIMIT 1
     `;
