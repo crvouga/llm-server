@@ -56,7 +56,7 @@ help:
 	@echo "  make test           -> run Python tests"
 	@echo "  make doppler-seed-github-secrets -> seed DOPPLER_SERVICE_TOKEN in GitHub secrets"
 	@echo "  make setup-tunnel   -> one-shot Cloudflare tunnel for LM Studio (port 1234 → lm-studio.chrisvouga.dev)"
-	@echo "  make run            -> start vLLM + DFlash server (requires Docker, NVIDIA toolkit, DOPPLER_TOKEN)"
+	@echo "  make run            -> start vLLM + DFlash server (requires Docker, NVIDIA toolkit, Doppler login)"
 	@echo ""
 	@echo "Overrides:"
 	@echo "  SPEC=<path> STATE=<path> make plan"
