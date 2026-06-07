@@ -12,8 +12,8 @@ def run_prechecks(cfg, docker_cmd):
     precheck_cf_tunnel(cfg)
     precheck_gpu_available(cfg, docker_cmd)
     if cfg.engine != "atlas":
-        # Atlas auto-downloads the checkpoint into the HF cache on first serve, and
-        # its image has no torch for the CUDA memory probe — skip the vLLM-only checks.
+        # Atlas pre-downloads its checkpoint just before launch (ensure_atlas_model),
+        # and its image has no torch for the CUDA memory probe — skip vLLM-only checks.
         precheck_models(cfg)
         _check_gpu_memory(cfg, docker_cmd)
     ok(f"All prechecks passed — starting {'Atlas' if cfg.engine == 'atlas' else 'vLLM'}")

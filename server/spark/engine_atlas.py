@@ -22,6 +22,61 @@ from .runtime import register_container
 from .shell import run
 
 
+def _atlas_model_cached(cfg) -> bool:
+    """True if the Atlas model is already in the host HF hub cache."""
+    hub = Path.home() / ".cache" / "huggingface" / "hub"
+    repo_dir = hub / ("models--" + cfg.atlas_model.replace("/", "--"))
+    snapshots = repo_dir / "snapshots"
+    if not snapshots.is_dir():
+        return False
+    return any(snapshots.rglob("*.safetensors"))
+
+
+def ensure_atlas_model(cfg, docker_cmd):
+    """Atlas needs the checkpoint pre-downloaded into the mounted HF hub cache
+    (it does NOT download on its own — it crash-loops with "Download it first").
+    """
+    section("Checking Atlas model")
+    hf_cache = Path.home() / ".cache" / "huggingface"
+    hf_cache.mkdir(parents=True, exist_ok=True)
+    if _atlas_model_cached(cfg):
+        ok(f"Model cached: {cfg.atlas_model}")
+        return
+
+    info(f"Downloading {cfg.atlas_model} into HF cache  (~35 GB FP8 — grab a coffee)")
+    # snapshot_download() with no local_dir lands in /root/.cache/huggingface/hub
+    # in the standard hub layout Atlas expects (== `huggingface-cli download <repo>`).
+    # Mirrors the vLLM downloader (huggingface_hub + Xet) — proven on this box.
+    py_cmd = (
+        "from huggingface_hub import snapshot_download; "
+        "snapshot_download('" + cfg.atlas_model + "')"
+    )
+    bash_cmd = (
+        "pip install -q huggingface_hub && "
+        'HF_XET_HIGH_PERFORMANCE=1 python -c "' + py_cmd + '"'
+    )
+    run(
+        [
+            *docker_cmd,
+            "run",
+            "--rm",
+            "-v",
+            f"{hf_cache}:/root/.cache/huggingface",
+            "-e",
+            "HF_TOKEN=" + cfg.hf_token,
+            "-e",
+            "HUGGING_FACE_HUB_TOKEN=" + cfg.hf_token,
+            "-e",
+            "HF_XET_HIGH_PERFORMANCE=1",
+            "python:3.11-slim",
+            "bash",
+            "-c",
+            bash_cmd,
+        ]
+    )
+    ok(f"Downloaded: {cfg.atlas_model}")
+
+
 def pull_atlas_image(cfg, docker_cmd):
     section("Pulling Atlas image")
     force_pull = os.environ.get("ATLAS_PULL", "").lower() in (

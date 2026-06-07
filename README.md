@@ -37,7 +37,7 @@ ENGINE=vllm make server-start    # use the legacy vLLM + DFlash engine instead
 | Env var | Default | Purpose |
 | --- | --- | --- |
 | `ENGINE` | `atlas` | `atlas` or `vllm` |
-| `ATLAS_MODEL` | `Qwen/Qwen3.6-35B-A3B-FP8` | HF model id (auto-downloads to `~/.cache/huggingface`) |
+| `ATLAS_MODEL` | `Qwen/Qwen3.6-35B-A3B-FP8` | HF model id (pre-downloaded to `~/.cache/huggingface` before launch) |
 | `ATLAS_MAX_SEQ_LEN` | `131072` | Context window (128K) |
 | `ATLAS_KV_CACHE_DTYPE` | `fp8` | `bf16` / `fp8` / `turbo8` / `nvfp4` / `turbo4` / `turbo3` |
 | `ATLAS_NUM_DRAFTS` | `2` | MTP speculative depth (K); `ATLAS_NO_SPECULATIVE=1` to disable |

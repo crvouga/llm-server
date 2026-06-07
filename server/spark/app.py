@@ -33,7 +33,7 @@ from .docker_env import (
     ensure_git_lfs,
 )
 from .doppler import fetch_doppler_secrets
-from .engine_atlas import pull_atlas_image, start_atlas
+from .engine_atlas import ensure_atlas_model, pull_atlas_image, start_atlas
 from .engine_vllm import pull_vllm_image, start_vllm, warmup_vllm
 from .health import _gpu_oom_hint, wait_for_vllm
 from .helpers import write_helpers
@@ -93,6 +93,8 @@ def main():
 
         if cfg.engine == "atlas":
             pull_atlas_image(cfg, docker_cmd)
+            _exit_on_shutdown(cfg)
+            ensure_atlas_model(cfg, docker_cmd)
             _exit_on_shutdown(cfg)
             _boot_engine(cfg, docker_cmd)
         else:

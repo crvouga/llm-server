@@ -88,7 +88,8 @@ class Config:
 
     # ── Atlas engine ──────────────────────────────────────────────────────────────
     # One multi-model binary; the right hand-tuned kernels are picked from the
-    # model's config.json at startup. Model auto-downloads to the mounted HF cache.
+    # model's config.json at startup. The checkpoint must be pre-downloaded into the
+    # mounted HF hub cache (server does this automatically before launch).
     atlas_image: str = "avarok/atlas-gb10:latest"
     atlas_model: str = "Qwen/Qwen3.6-35B-A3B-FP8"
     atlas_container: str = "atlas"

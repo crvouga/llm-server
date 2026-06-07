@@ -58,9 +58,9 @@ def _server_ready(cfg) -> bool:
 
 def _health_max_wait(cfg) -> int:
     if cfg.engine == "atlas":
-        # Atlas cold-starts in <2 min once cached, but the first run downloads the
-        # ~35 GB FP8 checkpoint into the HF cache — allow generous headroom.
-        return int(os.environ.get("ATLAS_READY_TIMEOUT", "3600"))
+        # The checkpoint is downloaded before boot (ensure_atlas_model), so Atlas
+        # itself cold-starts in <2 min — keep headroom for kernel init regardless.
+        return int(os.environ.get("ATLAS_READY_TIMEOUT", "900"))
     return {0: 180, 1: 480, 2: 720}.get(cfg.optimization_level, 480)
 
 
