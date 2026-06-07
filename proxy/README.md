@@ -155,3 +155,14 @@ bun run dev
 # Type-check without deploying
 bun run check
 ```
+
+## Usage Dashboard
+
+Open `/usage-dashboard` on the Worker (e.g. `https://llm-proxy.chrisvouga.dev/usage-dashboard`).
+
+- **Pure HTML forms** — no client-side JavaScript
+- **Date range** — filter usage for any period (defaults to today)
+- **Per-model cloud rates** — defaults to $1 / 1M input tokens and $2 / 1M output tokens; override globally or per model
+- **Money saved** — `(prompt_tokens × input_rate) + (completion_tokens × output_rate)` assuming local inference is free
+
+Implementation lives in [`src/usage-dashboard.ts`](src/usage-dashboard.ts). Static markup reference: [`usage-dashboard.html`](usage-dashboard.html).

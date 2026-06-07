@@ -3,6 +3,8 @@
 
 import { neon, NeonDbError } from '@neondatabase/serverless';
 
+import { handleUsageDashboard, isUsageDashboardPath } from './usage-dashboard';
+
 export interface Env {
   DATABASE_URL: string;
   BACKEND_URL?: string;
@@ -114,6 +116,10 @@ export default {
     const requestId = generateRequestId();
 
     console.log(`[${requestId}] ${request.method} ${path}`);
+
+    if (isUsageDashboardPath(path)) {
+      return handleUsageDashboard(request, env);
+    }
 
     // Construct backend URL
     const backendPath = requestUrl.pathname + requestUrl.search;
