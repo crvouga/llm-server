@@ -6,14 +6,17 @@ REMOTE_ACCESS_MD ?= remote-access/REMOTE-ACCESS.md
 REMOTE_USER ?=
 REMOTE_HOST ?=
 
-.PHONY: help server-start server-stop run start stop kill logs status ssh \
+.PHONY: help server-start server-stop server-metrics server-clear-compile-cache run start stop kill logs status ssh \
 	proxy-install proxy-dev proxy-check proxy-deploy proxy-db \
 	remote-setup-mac remote-verify pull push gh
 
 help:
 	@echo "Server (vLLM):"
 	@echo "  make server-start  -> start LLM server (python3 server/server.py)"
+	@echo "                         VLLM_ALLOW_GPU_SHARING=1 to share GPU with LM Studio"
 	@echo "  make server-stop   -> stop LLM server"
+	@echo "  make server-metrics -> CPU/RAM/GPU/disk + LLM health snapshot"
+	@echo "  make server-clear-compile-cache -> wipe torch/Triton cache (fixes missing cubin errors)"
 	@echo "  make logs          -> tail vLLM Docker container logs"
 	@echo "  make status        -> check server process + container"
 	@echo ""
@@ -55,6 +58,14 @@ server-stop stop kill:
 	fi; \
 	echo "Stopping vLLM + tunnel..."; \
 	python3 "$(CURDIR)/server/server.py" --stop
+
+server-metrics:
+	@set -euo pipefail; \
+	"$(CURDIR)/server/metrics.sh" $(METRICS_ARGS)
+
+server-clear-compile-cache:
+	@set -euo pipefail; \
+	python3 "$(CURDIR)/server/server.py" --clear-compile-cache
 
 logs:
 	@set -euo pipefail; \
