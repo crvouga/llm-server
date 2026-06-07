@@ -8,8 +8,9 @@
 #   sudo ./ensure-remote-access.sh
 #
 # Secrets are pulled from Doppler (not passed as plaintext env vars):
-#   TAILSCALE_AUTHKEY       - Tailscale auth key (tskey-...) for unattended re-auth.
-#   CLOUDFLARE_TUNNEL_TOKEN - Connector token for a remotely-managed named tunnel.
+#   CLOUDFLARE_API_TOKEN  - API token (Account → Cloudflare Tunnel → Edit; Zone:Read for DNS).
+#   CLOUDFLARE_ACCOUNT_ID - Cloudflare account id.
+#   CF_TUNNEL_NAME        - Optional tunnel name (default: remote-access).
 #
 # Doppler access (provide ONE of these so the CLI can read the secrets):
 #   DOPPLER_TOKEN     - A Doppler service token scoped to the project/config.
@@ -66,11 +67,29 @@ else
 fi
 
 TS_AUTHKEY="$(doppler_secret TAILSCALE_AUTHKEY)"
-CLOUDFLARE_TUNNEL_TOKEN="$(doppler_secret CLOUDFLARE_TUNNEL_TOKEN)"
+CF_TUNNEL_NAME="${CF_TUNNEL_NAME:-remote-access}"
 [ -n "${TS_AUTHKEY}" ] && ok "Loaded TAILSCALE_AUTHKEY from Doppler." \
   || warn "TAILSCALE_AUTHKEY not found in Doppler."
-[ -n "${CLOUDFLARE_TUNNEL_TOKEN}" ] && ok "Loaded CLOUDFLARE_TUNNEL_TOKEN from Doppler." \
-  || warn "CLOUDFLARE_TUNNEL_TOKEN not found in Doppler."
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/cloudflare-api.sh
+source "${SCRIPT_DIR}/scripts/lib/cloudflare-api.sh"
+
+CLOUDFLARE_TUNNEL_TOKEN=""
+if load_cloudflare_secrets; then
+  ok "Loaded CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID from Doppler."
+  if TUNNEL_ID="$(cf_ensure_tunnel "${CF_TUNNEL_NAME}")"; then
+    if CLOUDFLARE_TUNNEL_TOKEN="$(cf_tunnel_connector_token "${TUNNEL_ID}")"; then
+      ok "Resolved tunnel connector token via API."
+    else
+      warn "Could not fetch tunnel connector token via API."
+    fi
+  else
+    warn "Could not ensure Cloudflare tunnel '${CF_TUNNEL_NAME}' via API."
+  fi
+else
+  warn "CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID not found in Doppler."
+fi
 
 # ----------------------------------------------------------------------------
 # 1. OpenSSH server
@@ -190,7 +209,7 @@ elif [ -f /etc/cloudflared/config.yml ]; then
   ok "Installed cloudflared service from config.yml."
 else
   warn "cloudflared installed but no tunnel configured."
-  warn "  -> Set CLOUDFLARE_TUNNEL_TOKEN=... (Zero Trust dashboard) and re-run,"
+  warn "  -> Set CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID in Doppler and re-run,"
   warn "     or place a config at /etc/cloudflared/config.yml first."
 fi
 

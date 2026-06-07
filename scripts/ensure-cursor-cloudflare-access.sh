@@ -83,9 +83,8 @@ doppler_secret() {
   doppler secrets get "$1" --plain ${DOPPLER_ARGS[@]+"${DOPPLER_ARGS[@]}"} 2>/dev/null || true
 }
 
-CF_API_TOKEN="$(doppler_secret CLOUDFLARE_API_TOKEN)"
-[ -n "${CF_API_TOKEN}" ] || CF_API_TOKEN="${CLOUDFLARE_API_TOKEN:-}"
-[ -n "${CF_API_TOKEN}" ] || die "CLOUDFLARE_API_TOKEN not found (Doppler or env). Needs Zone WAF:Edit + Zone:Read."
+[ -n "${CLOUDFLARE_API_TOKEN:-}" ] || CLOUDFLARE_API_TOKEN="$(doppler_secret CLOUDFLARE_API_TOKEN)"
+[ -n "${CLOUDFLARE_API_TOKEN}" ] || die "CLOUDFLARE_API_TOKEN not found (Doppler or env). Needs Zone WAF:Edit + Zone:Read."
 ok "Loaded CLOUDFLARE_API_TOKEN."
 
 # Account id (for the Zero Trust Access check) — env wins, else pull from Doppler.
@@ -96,7 +95,7 @@ ok "Loaded CLOUDFLARE_API_TOKEN."
 cf() {
   local method="$1" path="$2"; shift 2
   curl -fsS -X "$method" "${API}${path}" \
-    -H "Authorization: Bearer ${CF_API_TOKEN}" \
+    -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
     -H "Content-Type: application/json" "$@"
 }
 
@@ -183,13 +182,13 @@ if [ "${BOT_FIGHT_MODE_DISABLE:-yes}" = "yes" ]; then
   log "Checking Bot Fight Mode (Free-plan zone-wide bot block)..."
   # Raw curl (no -f) so we can read the JSON body even on 403.
   BM="$(curl -sS "${API}/zones/${ZONE_ID}/bot_management" \
-        -H "Authorization: Bearer ${CF_API_TOKEN}" || true)"
+        -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" || true)"
   if printf '%s' "${BM}" | cf_ok; then
     FIGHT="$(printf '%s' "${BM}" | jq -r '.result.fight_mode // false')"
     if [ "${FIGHT}" = "true" ]; then
       log "Bot Fight Mode is ON; disabling it..."
       RESP="$(curl -sS -X PUT "${API}/zones/${ZONE_ID}/bot_management" \
-        -H "Authorization: Bearer ${CF_API_TOKEN}" \
+        -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
         -H "Content-Type: application/json" \
         --data '{"fight_mode": false}' || true)"
       if printf '%s' "${RESP}" | cf_ok; then

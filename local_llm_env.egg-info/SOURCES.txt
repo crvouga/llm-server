@@ -18,7 +18,5 @@ local_llm_env/reconcile/__init__.py
 local_llm_env/reconcile/cloudflare_tunnel.py
 local_llm_env/reconcile/dependencies.py
 tests/test_cloudflare_tunnel.py
-tests/test_litellm_api.py
-tests/test_litellm_simple.py
 tests/test_schema.py
 tests/test_state.py
