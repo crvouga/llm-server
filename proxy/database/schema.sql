@@ -25,3 +25,10 @@ CREATE TABLE IF NOT EXISTS llm_proxy.http_log (
 CREATE INDEX IF NOT EXISTS idx_http_log_created_at ON llm_proxy.http_log(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_http_log_request_method ON llm_proxy.http_log(request_method);
 CREATE INDEX IF NOT EXISTS idx_http_log_request_path ON llm_proxy.http_log(request_path);
+
+-- Singleton proxy configuration (backend URL, etc.)
+CREATE TABLE IF NOT EXISTS llm_proxy.proxy_state (
+  id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  backend_url TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

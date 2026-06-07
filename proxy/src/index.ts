@@ -4,11 +4,11 @@
 import { neon, NeonDbError } from '@neondatabase/serverless';
 import { Hono } from 'hono';
 
+import { fetchBackendUrl } from './proxy-state';
 import { usageDashboardRoute } from './usage-dashboard';
 
 export interface Env {
   DATABASE_URL: string;
-  BACKEND_URL?: string;
 }
 
 type AppEnv = {
@@ -17,8 +17,6 @@ type AppEnv = {
     requestId: string;
   };
 };
-
-const DEFAULT_BACKEND = 'https://lm-studio.chrisvouga.dev';
 
 function generateRequestId(): string {
   try {
@@ -142,9 +140,27 @@ export function createApp(): Hono<AppEnv> {
     const env = c.env;
     const request = c.req.raw;
     const requestId = c.get('requestId');
-    const backendUrl = env.BACKEND_URL || DEFAULT_BACKEND;
     const requestUrl = new URL(request.url);
     const path = c.req.path || '/';
+
+    if (!env.DATABASE_URL) {
+      return c.json(
+        { error: 'Proxy not configured', details: 'DATABASE_URL is not set' },
+        503,
+      );
+    }
+
+    const backendUrl = await fetchBackendUrl(env.DATABASE_URL);
+    if (!backendUrl) {
+      return c.json(
+        {
+          error: 'Proxy not configured',
+          details: 'Set llm_proxy.proxy_state.backend_url',
+        },
+        503,
+      );
+    }
+
     const backendPath = requestUrl.pathname + requestUrl.search;
     const targetUrl = `${backendUrl}${backendPath}`;
 

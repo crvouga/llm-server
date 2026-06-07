@@ -1,14 +1,16 @@
 # LLM Proxy
 
-Transparent Cloudflare Worker that forwards all requests to LM Studio while logging raw request/response data to PostgreSQL.
+Transparent Cloudflare Worker that forwards all requests to a configurable backend while logging raw request/response data to PostgreSQL.
 
 ## Architecture
 
 ```
-Client → llm-proxy.chrisvouga.dev → Cloudflare Worker → lm-studio.chrisvouga.dev
+Client → llm-proxy.chrisvouga.dev → Cloudflare Worker → backend (from proxy_state table)
                                               ↓
-                                         PostgreSQL (raw JSONB logs)
+                                         PostgreSQL (proxy_state + raw JSONB logs)
 ```
+
+The upstream backend URL is stored in `llm_proxy.proxy_state` — not in environment variables or worker code. Until that row exists, proxied requests return **503 Proxy not configured**.
 
 ## Prerequisites
 
@@ -20,13 +22,28 @@ Client → llm-proxy.chrisvouga.dev → Cloudflare Worker → lm-studio.chrisvou
 
 ## Setup
 
-1. **Create the database table**:
+1. **Create the database tables**:
    ```bash
    # Ensure DATABASE_URL is set in your environment
    ./proxy/database/setup.sh
    ```
 
-   Or manually run:
+2. **Configure the backend URL** (required before the proxy will forward traffic):
+   ```sql
+   INSERT INTO llm_proxy.proxy_state (backend_url)
+   VALUES ('https://lm-studio.chrisvouga.dev');
+   ```
+
+   To change the backend later:
+   ```sql
+   UPDATE llm_proxy.proxy_state
+   SET backend_url = 'https://new-backend.example.com', updated_at = NOW()
+   WHERE id = 1;
+   ```
+
+   Or manually run the schema from [`database/schema.sql`](database/schema.sql), then insert the row above.
+
+   Legacy manual schema (http_log only):
    ```sql
    CREATE SCHEMA IF NOT EXISTS llm_proxy;
 
@@ -47,14 +64,20 @@ Client → llm-proxy.chrisvouga.dev → Cloudflare Worker → lm-studio.chrisvou
    CREATE INDEX IF NOT EXISTS idx_http_log_created_at ON llm_proxy.http_log(created_at DESC);
    CREATE INDEX IF NOT EXISTS idx_http_log_request_method ON llm_proxy.http_log(request_method);
    CREATE INDEX IF NOT EXISTS idx_http_log_request_path ON llm_proxy.http_log(request_path);
+
+   CREATE TABLE IF NOT EXISTS llm_proxy.proxy_state (
+     id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+     backend_url TEXT NOT NULL,
+     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+   );
    ```
 
-2. **Install dependencies**:
+3. **Install dependencies**:
    ```bash
    bun install
    ```
 
-3. **Deploy to Cloudflare Workers**:
+4. **Deploy to Cloudflare Workers**:
    ```bash
    # Ensure Doppler is configured and secrets are loaded
    doppler setup --project personal --config prod
@@ -62,6 +85,20 @@ Client → llm-proxy.chrisvouga.dev → Cloudflare Worker → lm-studio.chrisvou
    # Deploy the worker
    wrangler deploy
    ```
+
+## Proxy state
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | SMALLINT | Always `1` (singleton row) |
+| `backend_url` | TEXT | Upstream origin, e.g. `https://lm-studio.example.com` |
+| `updated_at` | TIMESTAMPTZ | Last time the backend URL was changed |
+
+The worker reads `backend_url` from this table on each request (cached for 30 seconds per isolate). If the row is missing or the URL is invalid, proxied requests return:
+
+```json
+{ "error": "Proxy not configured", "details": "Set llm_proxy.proxy_state.backend_url" }
+```
 
 ## Logging Format
 
