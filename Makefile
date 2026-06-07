@@ -27,7 +27,7 @@ GITHUB_REPO ?=
 .PHONY: help venv install setup doctor ensure-system-deps plan apply apply-auto status destroy destroy-auto \
 	start stop restart logs logs-cloudflared \
 	service-status shell clean-venv ssh-target target-tmux pull push gh \
-	check test doppler-seed-github-secrets setup-tunnel
+	check test doppler-seed-github-secrets setup-tunnel run
 
 help:
 	@echo "Targets:"
@@ -56,6 +56,7 @@ help:
 	@echo "  make test           -> run Python tests"
 	@echo "  make doppler-seed-github-secrets -> seed DOPPLER_SERVICE_TOKEN in GitHub secrets"
 	@echo "  make setup-tunnel   -> one-shot Cloudflare tunnel for LM Studio (port 1234 → lm-studio.chrisvouga.dev)"
+	@echo "  make run            -> start vLLM + DFlash server (requires Docker, NVIDIA toolkit, DOPPLER_TOKEN)"
 	@echo ""
 	@echo "Overrides:"
 	@echo "  SPEC=<path> STATE=<path> make plan"
@@ -293,4 +294,11 @@ setup-tunnel:
 	@set -euo pipefail; \
 	command -v cloudflared >/dev/null || { echo "cloudflared not found. Run: make ensure-system-deps"; exit 1; }; \
 	bash "$(CURDIR)/scripts/setup-tunnel.sh"
+
+run:
+	@set -euo pipefail; \
+	command -v python3 >/dev/null || { echo "Missing: python3"; exit 1; }; \
+	command -v docker >/dev/null || { echo "Missing: docker"; exit 1; }; \
+	echo "Starting vLLM + DFlash server..."; \
+	PYTHONUNBUFFERED=1 python3 "$(CURDIR)/server/server.py"
 
