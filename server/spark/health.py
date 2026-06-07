@@ -77,7 +77,7 @@ def _gpu_oom_hint(logs: str) -> str:
     ):
         return (
             "\nHint: another process (often LM Studio) is using GPU memory. "
-            "Stop it and run `make server-stop-hard && make server-start` again.\n"
+            "Stop it and run `make server-stop && make server-start` again.\n"
         )
     return ""
 

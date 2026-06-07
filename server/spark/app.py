@@ -1,5 +1,5 @@
 """Top-level orchestration: boot the engine + tunnel, run the watchdog, handle
-the CLI subcommands (stop / stop-hard / setup-tunnel / clear-compile-cache).
+the CLI subcommands (stop / setup-tunnel / clear-compile-cache).
 
 This is the only module that wires everything together. Read this first to
 understand the boot order; each step lives in its own focused module.
@@ -25,7 +25,7 @@ from .compile_cache import (
 )
 from .config import Config, _apply_env_overrides, engine_label
 from .console import die, err, info, ok, section, warn
-from .containers import _container_logs_tail, _container_status
+from .containers import _container_logs_tail
 from .docker_env import (
     _resolve_docker_cmd,
     ensure_cloudflared,
@@ -116,8 +116,7 @@ def main():
         print_summary(cfg, cf_url)
 
         info(
-            f"Running. Ctrl+C or `make server-stop` stops tunnel ({engine_label(cfg)} stays warm). "
-            "`make server-stop-hard` stops everything."
+            f"Running. Ctrl+C or `make server-stop` stops tunnel + {engine_label(cfg)} container."
         )
         while not runtime.is_shutdown_requested():
             # Watchdog: restart container if it exits unexpectedly
@@ -156,26 +155,14 @@ def main():
         raise SystemExit(1) from e
     except Exception as e:
         err(f"Unexpected error: {e}")
-        cleanup(cfg, stop_vllm=False)
-        if _container_status(cfg) == "running":
-            label = "Atlas" if cfg.engine == "atlas" else "vLLM"
-            warn(f"{label} container still running — use: make server-stop-hard")
+        cleanup(cfg, stop_vllm=True)
         raise
     finally:
         if runtime.is_shutdown_requested() or runtime.is_runtime_active():
-            cleanup(cfg, stop_vllm=False)
+            cleanup(cfg, stop_vllm=True)
 
 
-def stop_soft():
-    """Stop tunnel + launcher; leave the engine container running for fast restart."""
-    cfg = Config()
-    cfg.model_dir = _resolve_model_dir()
-    _apply_env_overrides(cfg)
-    cfg.docker_cmd = _resolve_docker_cmd() or ["docker"]
-    cleanup(cfg, stop_vllm=False)
-
-
-def stop_hard():
+def stop():
     """Stop tunnel, launcher, and the engine container."""
     cfg = Config()
     cfg.model_dir = _resolve_model_dir()
@@ -214,9 +201,7 @@ def dispatch(argv):
     if arg in ("--setup-tunnel", "setup-tunnel"):
         setup_tunnel_only()
     elif arg in ("--stop", "stop"):
-        stop_soft()
-    elif arg in ("--stop-hard", "stop-hard"):
-        stop_hard()
+        stop()
     elif arg in ("--clear-compile-cache", "clear-compile-cache"):
         clear_compile_cache_only()
     else:

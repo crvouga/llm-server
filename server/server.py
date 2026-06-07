@@ -8,13 +8,11 @@ concern); start with `spark/app.py` to follow the boot order.
 Default engine:  Atlas (Qwen3.6-35B-A3B-FP8) — set ENGINE=vllm for the legacy path.
 
 Idempotent. Manages its own process group. Ctrl+C or `make server-stop` stops
-the tunnel and launcher but leaves the engine container running for fast restart.
-Use `make server-stop-hard` to stop the container too.
+the tunnel, launcher, and engine container.
 
 Usage:
     python3 server/server.py                  # run the server
-    python3 server/server.py --stop           # stop tunnel only (engine stays warm)
-    python3 server/server.py --stop-hard      # stop tunnel + engine container
+    python3 server/server.py --stop           # stop tunnel + engine container
     python3 server/server.py --setup-tunnel   # configure DNS/ingress only
     python3 server/server.py --clear-compile-cache
 
