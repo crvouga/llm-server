@@ -3,7 +3,8 @@
 spark_serve.py — vLLM + DFlash + Cloudflare Tunnel for DGX Spark / GB10
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Model:   Qwen3.6-35B-A3B (NVFP4, GB10-optimised) + DFlash speculative decoding
-Target:  120-150 tok/s single-stream on coding workloads
+Target:  120-128 tok/s single-stream (memory-bound) + high aggregate throughput
+         across parallel agents (64K context, k=8 DFlash by default)
 
 Idempotent. Manages its own process group. Ctrl+C or `make server-stop` stops
 the tunnel and launcher but leaves the vLLM container running for fast restart.
@@ -114,6 +115,15 @@ def _apply_env_overrides(cfg: "Config") -> None:
         cfg.native_context_len = int(native)
     if backend := os.environ.get("VLLM_ATTENTION_BACKEND"):
         cfg.attention_backend = backend
+    if k := os.environ.get("VLLM_DFLASH_K"):
+        cfg.dflash_num_spec_tokens = int(k)
+    if seqs := os.environ.get("VLLM_MAX_NUM_SEQS"):
+        # ⚠️  > 16 can freeze the box during torch.compile on GB10 — experiment with care.
+        cfg.max_num_seqs = int(seqs)
+    if os.environ.get("VLLM_FLASHINFER_MOE_FP4", "").lower() in ("1", "true", "yes"):
+        cfg.flashinfer_moe_fp4 = True
+    if moe_backend := os.environ.get("VLLM_FLASHINFER_MOE_BACKEND"):
+        cfg.flashinfer_moe_backend = moe_backend
 
 
 def _boot_time_hint(cfg: "Config") -> str:
@@ -161,6 +171,8 @@ def _vllm_launch_fingerprint(cfg: "Config") -> str:
             "rope_scaling": _rope_scaling_json(cfg),
             "kv_cache_dtype": cfg.kv_cache_dtype,
             "attention_backend": cfg.attention_backend,
+            "flashinfer_moe_fp4": cfg.flashinfer_moe_fp4,
+            "flashinfer_moe_backend": cfg.flashinfer_moe_backend,
             "native_context_len": _model_native_context(cfg),
             "port": cfg.vllm_port,
         },
@@ -371,9 +383,12 @@ class Config:
     # Image: SM121-patched (8 patches, FlashInfer 0.6.8, Marlin GEMM enforcement)
     # ⚠️  max_num_seqs > 16 causes system freeze during torch.compile on GB10
     vllm_port: int = 8000
-    max_model_len: int = 262144  # 256K + YaRN for long agentic-coding sessions
+    # 64K (YaRN 2x over 32K native) maximizes parallel-agent KV headroom: at 256K
+    # only ~5 agents fit; at 64K the max_num_seqs=16 ceiling becomes the limit
+    # instead. Raise with VLLM_MAX_MODEL_LEN=262144 for long single-agent sessions.
+    max_model_len: int = 65536
     # "auto" (bf16) KV cache — the flash_attn backend on this SM121 build rejects
-    # fp8 ("kv_cache_dtype not supported"), and 256K bf16 KV fits in 128GB anyway.
+    # fp8 ("kv_cache_dtype not supported"), and 64K bf16 KV fits in 128GB anyway.
     # Override with VLLM_KV_CACHE_DTYPE=fp8 only if also switching attention backend.
     kv_cache_dtype: str = "auto"
     rope_scaling_enabled: bool = True
@@ -385,11 +400,22 @@ class Config:
     gpu_mem_util: float = 0.85
     max_num_seqs: int = 16  # hard ceiling on GB10
     max_batched_tokens: int = 16384
-    dflash_num_spec_tokens: int = 15  # k=15 optimal for code (~78% acceptance)
+    # k=8 balances single-stream speed vs parallel-agent throughput: per-position
+    # draft acceptance falls below ~5% past position 6, so k=15 mostly wastes
+    # verify compute under concurrency (the 50 tok/s dips). Tune with VLLM_DFLASH_K
+    # (e.g. 15 for pure single-agent, 4 for heavy concurrency).
+    dflash_num_spec_tokens: int = 8
     # vLLM defaults capture CUDA graphs up to 512 batch slots; we only run 16 seqs.
     max_cudagraph_capture_size: int = 16
     # 0=eager (~1-2 min), 1=balanced (default), 2=production. VLLM_PRODUCTION=1 for O2.
     optimization_level: int = 1
+    # Experimental: route NVFP4 MoE experts through FlashInfer instead of the
+    # default Marlin kernel (Marlin is compute-bound and slow when batched). The
+    # runtime auto-rejected FlashInfer on sm_121 in testing, so this is opt-in via
+    # VLLM_FLASHINFER_MOE_FP4=1 (backend: "throughput" or "latency"). If the
+    # kernels reject the device the container crash-loops and the watchdog reports it.
+    flashinfer_moe_fp4: bool = False
+    flashinfer_moe_backend: str = "throughput"
     container_name: str = "vllm-qwen36-dflash"
     vllm_image: str = "ghcr.io/aeon-7/vllm-spark-omni-q36:v1.2"
     compile_cache_dir: Path = field(
@@ -1521,8 +1547,10 @@ def remove_container(cfg, docker_cmd):
 
 def start_vllm(cfg, docker_cmd) -> str:
     """Start or reuse the vLLM container (see return values in main())."""
-    section("Starting vLLM + DFlash  [Qwen3.6-35B-A3B NVFP4, k=15]")
-    info("Target: 120-150 tok/s on coding workloads via DFlash speculative decoding")
+    section(
+        f"Starting vLLM + DFlash  [Qwen3.6-35B-A3B NVFP4, k={cfg.dflash_num_spec_tokens}]"
+    )
+    info("Target: 120-128 tok/s single-stream + high aggregate across parallel agents")
     info(f"Boot estimate: {_boot_time_hint(cfg)} (O{cfg.optimization_level})")
     _prepare_compile_cache_dir(cfg, docker_cmd)
     if _compile_cache_populated(cfg):
@@ -1628,6 +1656,19 @@ def start_vllm(cfg, docker_cmd) -> str:
     if cfg.kv_cache_dtype and cfg.kv_cache_dtype != "auto":
         vllm_serve_args.extend(["--kv-cache-dtype", str(cfg.kv_cache_dtype)])
 
+    moe_env: list[str] = []
+    if cfg.flashinfer_moe_fp4:
+        info(
+            f"Experimental: FlashInfer NVFP4 MoE backend "
+            f"({cfg.flashinfer_moe_backend}) instead of Marlin"
+        )
+        moe_env = [
+            "-e",
+            "VLLM_USE_FLASHINFER_MOE_FP4=1",
+            "-e",
+            f"VLLM_FLASHINFER_MOE_BACKEND={cfg.flashinfer_moe_backend}",
+        ]
+
     run(
         [
             *docker_cmd,
@@ -1671,6 +1712,7 @@ def start_vllm(cfg, docker_cmd) -> str:
             "HF_TOKEN=" + cfg.hf_token,
             "-e",
             "HUGGING_FACE_HUB_TOKEN=" + cfg.hf_token,
+            *moe_env,
             cfg.vllm_image,
             # Match AEON-7 docker-compose.yml — NVFP4 needs compressed-tensors
             *vllm_serve_args,
@@ -1930,7 +1972,7 @@ def print_summary(cfg, cf_url):
   {B}DFlash:{X}   {cfg.dflash_drafter} (k={cfg.dflash_num_spec_tokens})
   {B}Profile:{X}  O{cfg.optimization_level} — {cfg.boot_profile or "default"}
   {B}GPU budget:{X} {cfg.gpu_mem_util:.0%}  |  compile cache: {"warm" if _compile_cache_populated(cfg) else "cold"}
-  {B}Target:{X}   120-150 tok/s on coding  |  300+ tok/s aggregate at concurrency 16
+  {B}Target:{X}   120-128 tok/s single-stream  |  high aggregate at concurrency {cfg.max_num_seqs}
   {B}Context:{X}  {_context_summary(cfg)}  |  {B}Max seqs:{X} {cfg.max_num_seqs}
  
   {B}Local API:{X}

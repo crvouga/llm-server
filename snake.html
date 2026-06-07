@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Snake Game</title>
+<style>
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  body {
+    background: #1a1a2e;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    color: #e0e0e0;
+    user-select: none;
+  }
+
+  #game-container {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+  }
+
+  #header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    padding: 0 4px;
+  }
+
+  .score-box {
+    font-size: 20px;
+    font-weight: 600;
+    color: #00ff88;
+  }
+
+  .score-box span {
+    color: #fff;
+  }
+
+  #grid {
+    display: grid;
+    background: #0f0f23;
+    border: 2px solid #333;
+    border-radius: 8px;
+    box-shadow: 0 0 40px rgba(0, 255, 136, 0.08);
+    overflow: hidden;
+  }
+
+  #status {
+    font-size: 16px;
+    color: #888;
+    height: 20px;
+    text-align: center;
+  }
+
+  #controls {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  button {
+    background: #16213e;
+    color: #00ff88;
+    border: 1px solid #00ff8844;
+    padding: 10px 24px;
+    border-radius: 6px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.1s;
+  }
+
+  button:hover {
+    background: #1a3a5c;
+  }
+
+  button:active {
+    transform: scale(0.97);
+  }
+
+  /* Mobile D-pad */
+  #dpad {
+    display: none;
+    grid-template-columns: repeat(3, 56px);
+    grid-template-rows: repeat(3, 56px);
+    gap: 4px;
+    margin-top: 8px;
+  }
+
+  @media (hover: none) and (pointer: coarse) {
+    #dpad { display: grid; }
+  }
+
+  #dpad button {
+    padding: 0;
+    font-size: 22px;
+    width: 56px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #0f3460;
+    border-color: #00ff8833;
+  }
+
+  #dpad .empty {
+    background: transparent;
+    border: none;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div id="game-container">
+  <div id="header">
+    <div class="score-box">Score: <span id="score-val">0</span></div>
+    <div class="score-box">Best: <span id="best-val">0</span></div>
+  </div>
+  <div id="grid"></div>
+  <div id="status"></div>
+  <div id="controls">
+    <button id="btn-start">Start</button>
+    <button id="btn-pause">Pause</button>
+    <button id="btn-reset">Reset</button>
+  </div>
+  <div id="dpad">
+    <div class="empty"></div>
+    <button data-dir="up">▲</button>
+    <div class="empty"></div>
+    <button data-dir="left">◀</button>
+    <button data-dir="down">▼</button>
+    <button data-dir="right">▶</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  // --- Configuration ---
+  const COLS = 20;
+  const ROWS = 20;
+  const CELL = 22;
+  const GAP = 2;
+  const TICK_MS = 100;
+  const FOOD_EMOJI = '🍎';
+  const FOOD_EMOJI_ALT = '🍊';
+
+  // --- DOM refs ---
+  const gridEl = document.getElementById('grid');
+  const scoreEl = document.getElementById('score-val');
+  const bestEl = document.getElementById('best-val');
+  const statusEl = document.getElementById('status');
+  const btnStart = document.getElementById('btn-start');
+  const btnPause = document.getElementById('btn-pause');
+  const btnReset = document.getElementById('btn-reset');
+
+  // --- State ---
+  let snake, dir, nextDir, food, score, best, alive, running, intervalId;
+  let foodEmoji = FOOD_EMOJI;
+
+  // --- Grid helpers ---
+  function cellSize() { return CELL + GAP; }
+  function gridCols() { return COLS; }
+  function gridRows() { return ROWS; }
+
+  function renderGrid() {
+    const cs = cellSize();
+    gridEl.style.gridTemplateColumns = `repeat(${COLS}, ${cs}px)`;
+    gridEl.style.gridTemplateRows = `repeat(${ROWS}, ${cs}px)`;
+    gridEl.innerHTML = '';
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const cell = document.createElement('div');
+        cell.dataset.r = r;
+        cell.dataset.c = c;
+        cell.style.width = CELL + 'px';
+        cell.style.height = CELL + 'px';
+        cell.style.margin = GAP + 'px';
+        cell.style.borderRadius = '3px';
+        cell.style.transition = 'background 0.08s';
+        gridEl.appendChild(cell);
+      }
+    }
+  }
+
+  function cell(r, c) {
+    return gridEl.children[r * COLS + c];
+  }
+
+  // --- Game logic ---
+  function init() {
+    snake = [{r: 5, c: 5}, {r: 5, c: 4}, {r: 5, c: 3}];
+    dir = 'right';
+    nextDir = 'right';
+    score = 0;
+    best = +(localStorage.getItem('snake_best') || 0);
+    alive = true;
+    running = false;
+    statusEl.textContent = 'Press Start or press Space';
+    btnStart.textContent = 'Start';
+    placeFood();
+    draw();
+    scoreEl.textContent = score;
+    bestEl.textContent = best;
+  }
+
+  function placeFood() {
+    const occupied = new Set(snake.map(s => `${s.r},${s.c}`));
+    let pos;
+    do {
+      pos = {r: Math.floor(Math.random() * ROWS), c: Math.floor(Math.random() * COLS)};
+    } while (occupied.has(`${pos.r},${pos.c}`));
+    food = pos;
+    foodEmoji = Math.random() < 0.5 ? FOOD_EMOJI : FOOD_EMOJI_ALT;
+  }
+
+  function tick() {
+    dir = nextDir;
+    const head = snake[0];
+    let nr = head.r, nc = head.c;
+    if (dir === 'up') nr--;
+    else if (dir === 'down') nr++;
+    else if (dir === 'left') nc--;
+    else if (dir === 'right') nc++;
+
+    // Wall collision
+    if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) return gameOver();
+    // Self collision
+    if (snake.some(s => s.r === nr && s.c === nc)) return gameOver();
+
+    const ate = food && nr === food.r && nc === food.c;
+    snake.unshift({r: nr, c: nc});
+    if (ate) {
+      score++;
+      scoreEl.textContent = score;
+      placeFood();
+    } else {
+      snake.pop();
+    }
+    draw();
+  }
+
+  function draw() {
+    // Clear
+    const cells = gridEl.children;
+    for (let i = 0; i < cells.length; i++) {
+      cells[i].style.background = '#1a1a2e';
+    }
+    // Snake
+    for (let i = 0; i < snake.length; i++) {
+      const s = snake[i];
+      const el = cell(s.r, s.c);
+      if (!el) continue;
+      const alpha = Math.max(0.5, 1 - i * 0.02);
+      el.style.background = i === 0 ? '#00ff88' : `rgba(0,255,136,${alpha})`;
+      if (i === 0) {
+        el.style.boxShadow = '0 0 6px #00ff8888';
+      }
+    }
+    // Food
+    if (food) {
+      const f = cell(food.r, food.c);
+      if (f) {
+        f.style.background = '#ff6b6b';
+        f.style.boxShadow = '0 0 8px #ff6b6b88';
+        f.style.display = 'flex';
+        f.style.alignItems = 'center';
+        f.style.justifyContent = 'center';
+        f.style.fontSize = '14px';
+        f.textContent = foodEmoji;
+      }
+    }
+  }
+
+  function start() {
+    if (running) return;
+    running = true;
+    statusEl.textContent = 'Playing...';
+    btnStart.textContent = 'Running';
+    intervalId = setInterval(tick, TICK_MS);
+  }
+
+  function pause() {
+    if (!running) return;
+    running = false;
+    clearInterval(intervalId);
+    statusEl.textContent = 'Paused — press Space to resume';
+    btnStart.textContent = 'Resume';
+  }
+
+  function resume() {
+    if (running) return;
+    running = true;
+    statusEl.textContent = 'Playing...';
+    btnStart.textContent = 'Running';
+    intervalId = setInterval(tick, TICK_MS);
+  }
+
+  function gameOver() {
+    alive = false;
+    running = false;
+    clearInterval(intervalId);
+    if (score > best) {
+      best = score;
+      localStorage.setItem('snake_best', best);
+      bestEl.textContent = best;
+    }
+    statusEl.textContent = `Game Over! Score: ${score}. Press Space to restart.`;
+    btnStart.textContent = 'Restart';
+    // Highlight dead snake red
+    for (const s of snake) {
+      const el = cell(s.r, s.c);
+      if (el) el.style.background = '#ff6b6b';
+    }
+  }
+
+  function reset() {
+    clearInterval(intervalId);
+    running = false;
+    init();
+  }
+
+  // --- Direction input ---
+  const OPPOSITE = {up:'down', down:'up', left:'right', right:'left'};
+  function setDir(d) {
+    if (OPPOSITE[dir] === d) return; // no 180 turn
+    nextDir = d;
+    if (!running) start();
+  }
+
+  document.addEventListener('keydown', (e) => {
+    const keyMap = {
+      ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
+      w: 'up', s: 'down', a: 'left', d: 'right',
+    };
+    if (e.key === ' ' || e.key === ' ') {
+      e.preventDefault();
+      if (!running) {
+        if (alive) start();
+        else reset();
+      } else {
+        pause();
+      }
+      return;
+    }
+    if (keyMap[e.key]) {
+      e.preventDefault();
+      setDir(keyMap[e.key]);
+    }
+  });
+
+  // Mobile D-pad
+  document.querySelectorAll('#dpad button[data-dir]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      setDir(btn.dataset.dir);
+    });
+    btn.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      setDir(btn.dataset.dir);
+    });
+  });
+
+  // Buttons
+  btnStart.addEventListener('click', () => {
+    if (!running) {
+      if (alive) start();
+      else reset();
+    }
+  });
+  btnPause.addEventListener('click', pause);
+  btnReset.addEventListener('click', reset);
+
+  // --- Init ---
+  renderGrid();
+  init();
+})();
+</script>
+</body>
+</html>
