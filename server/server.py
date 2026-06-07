@@ -23,6 +23,7 @@ All prechecks run before vLLM starts so config errors fail in seconds, not minut
 
 import hashlib
 import json
+import math
 import os
 import platform
 import shutil
@@ -102,6 +103,14 @@ def _apply_env_overrides(cfg: "Config") -> None:
         cfg.cf_tunnel_hostname = hostname
     if name := os.environ.get("CF_TUNNEL_NAME"):
         cfg.cf_tunnel_name = name
+    if model_len := os.environ.get("VLLM_MAX_MODEL_LEN"):
+        cfg.max_model_len = int(model_len)
+    if kv_dtype := os.environ.get("VLLM_KV_CACHE_DTYPE"):
+        cfg.kv_cache_dtype = kv_dtype
+    if rope := os.environ.get("VLLM_ROPE_SCALING"):
+        cfg.rope_scaling_enabled = rope.lower() not in ("0", "false", "no", "off")
+    if native := os.environ.get("VLLM_NATIVE_CONTEXT_LEN"):
+        cfg.native_context_len = int(native)
 
 
 def _boot_time_hint(cfg: "Config") -> str:
@@ -146,6 +155,9 @@ def _vllm_launch_fingerprint(cfg: "Config") -> str:
             "max_batched_tokens": cfg.max_batched_tokens,
             "max_cudagraph_capture_size": cfg.max_cudagraph_capture_size,
             "speculative": _speculative_config_json(cfg),
+            "rope_scaling": _rope_scaling_json(cfg),
+            "kv_cache_dtype": cfg.kv_cache_dtype,
+            "native_context_len": _model_native_context(cfg),
             "port": cfg.vllm_port,
         },
         sort_keys=True,
@@ -355,7 +367,10 @@ class Config:
     # Image: SM121-patched (8 patches, FlashInfer 0.6.8, Marlin GEMM enforcement)
     # ⚠️  max_num_seqs > 16 causes system freeze during torch.compile on GB10
     vllm_port: int = 8000
-    max_model_len: int = 65536  # 65K: best tradeoff for agentic coding
+    max_model_len: int = 262144  # 256K + YaRN for long agentic-coding sessions
+    kv_cache_dtype: str = "fp8"
+    rope_scaling_enabled: bool = True
+    native_context_len: int = 0  # 0 = auto-detect from model config.json
     gpu_mem_util: float = 0.85
     max_num_seqs: int = 16  # hard ceiling on GB10
     max_batched_tokens: int = 16384
@@ -1134,6 +1149,42 @@ def _model_path(cfg):
     return cfg.model_dir / "main"
 
 
+_DEFAULT_NATIVE_CONTEXT = 32768
+
+
+def _model_native_context(cfg: "Config") -> int:
+    if cfg.native_context_len > 0:
+        return cfg.native_context_len
+    config_path = _model_path(cfg) / "config.json"
+    if config_path.is_file():
+        try:
+            with open(config_path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            native = data.get("max_position_embeddings")
+            if isinstance(native, int) and native > 0:
+                return native
+        except (OSError, json.JSONDecodeError, TypeError):
+            pass
+    return _DEFAULT_NATIVE_CONTEXT
+
+
+def _rope_scaling_json(cfg: "Config") -> str:
+    if not cfg.rope_scaling_enabled:
+        return ""
+    native = _model_native_context(cfg)
+    if cfg.max_model_len <= native:
+        return ""
+    factor = math.ceil(cfg.max_model_len / native)
+    return json.dumps(
+        {
+            "rope_type": "yarn",
+            "factor": factor,
+            "original_max_position_embeddings": native,
+        },
+        sort_keys=True,
+    )
+
+
 def _drafter_path(cfg):
     return cfg.model_dir / "drafter"
 
@@ -1481,6 +1532,63 @@ def start_vllm(cfg, docker_cmd) -> str:
 
     register_container(cfg.container_name)
     spec_config = _speculative_config_json(cfg)
+    rope_config = _rope_scaling_json(cfg)
+    native_ctx = _model_native_context(cfg)
+    if rope_config:
+        info(
+            f"Context window: {cfg.max_model_len} tokens "
+            f"(YaRN {json.loads(rope_config)['factor']}x over native {native_ctx})"
+        )
+    else:
+        info(f"Context window: {cfg.max_model_len} tokens (native {native_ctx})")
+
+    vllm_serve_args = [
+            "vllm",
+            "serve",
+            "/models/main",
+            "--served-model-name",
+            "qwen3.6-35b",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            str(cfg.vllm_port),
+            "--tensor-parallel-size",
+            "1",
+            "--dtype",
+            "auto",
+            "--quantization",
+            "compressed-tensors",
+            "--max-model-len",
+            str(cfg.max_model_len),
+            "--kv-cache-dtype",
+            str(cfg.kv_cache_dtype),
+            "--max-num-seqs",
+            str(cfg.max_num_seqs),
+            "--max-num-batched-tokens",
+            str(cfg.max_batched_tokens),
+            "--max-cudagraph-capture-size",
+            str(cfg.max_cudagraph_capture_size),
+            "--optimization-level",
+            str(cfg.optimization_level),
+            "--gpu-memory-utilization",
+            str(cfg.gpu_mem_util),
+            "--enable-chunked-prefill",
+            "--enable-prefix-caching",
+            "--load-format",
+            "safetensors",
+            "--trust-remote-code",
+            "--enable-auto-tool-choice",
+            "--tool-call-parser",
+            "qwen3_coder",
+            "--reasoning-parser",
+            "qwen3",
+            "--attention-backend",
+            "flash_attn",
+            "--speculative-config",
+            spec_config,
+    ]
+    if rope_config:
+        vllm_serve_args.extend(["--rope-scaling", rope_config])
 
     run(
         [
@@ -1527,47 +1635,7 @@ def start_vllm(cfg, docker_cmd) -> str:
             "HUGGING_FACE_HUB_TOKEN=" + cfg.hf_token,
             cfg.vllm_image,
             # Match AEON-7 docker-compose.yml — NVFP4 needs compressed-tensors
-            "vllm",
-            "serve",
-            "/models/main",
-            "--served-model-name",
-            "qwen3.6-35b",
-            "--host",
-            "0.0.0.0",
-            "--port",
-            str(cfg.vllm_port),
-            "--tensor-parallel-size",
-            "1",
-            "--dtype",
-            "auto",
-            "--quantization",
-            "compressed-tensors",
-            "--max-model-len",
-            str(cfg.max_model_len),
-            "--max-num-seqs",
-            str(cfg.max_num_seqs),
-            "--max-num-batched-tokens",
-            str(cfg.max_batched_tokens),
-            "--max-cudagraph-capture-size",
-            str(cfg.max_cudagraph_capture_size),
-            "--optimization-level",
-            str(cfg.optimization_level),
-            "--gpu-memory-utilization",
-            str(cfg.gpu_mem_util),
-            "--enable-chunked-prefill",
-            "--enable-prefix-caching",
-            "--load-format",
-            "safetensors",
-            "--trust-remote-code",
-            "--enable-auto-tool-choice",
-            "--tool-call-parser",
-            "qwen3_coder",
-            "--reasoning-parser",
-            "qwen3",
-            "--attention-backend",
-            "flash_attn",
-            "--speculative-config",
-            spec_config,
+            *vllm_serve_args,
         ]
     )
     ok(f"Container '{cfg.container_name}' started")
@@ -1795,6 +1863,18 @@ def write_helpers(cfg):
 
 
 # ── Summary ───────────────────────────────────────────────────────────────────
+def _context_summary(cfg) -> str:
+    rope = _rope_scaling_json(cfg)
+    if rope:
+        native = _model_native_context(cfg)
+        factor = json.loads(rope)["factor"]
+        return (
+            f"{cfg.max_model_len} tokens (YaRN {factor}x over {native}, "
+            f"KV {cfg.kv_cache_dtype})"
+        )
+    return f"{cfg.max_model_len} tokens (KV {cfg.kv_cache_dtype})"
+
+
 def print_summary(cfg, cf_url):
     section("🚀 Server is live")
     d = cfg.helper_dir
@@ -1805,7 +1885,7 @@ def print_summary(cfg, cf_url):
   {B}Profile:{X}  O{cfg.optimization_level} — {cfg.boot_profile or "default"}
   {B}GPU budget:{X} {cfg.gpu_mem_util:.0%}  |  compile cache: {"warm" if _compile_cache_populated(cfg) else "cold"}
   {B}Target:{X}   120-150 tok/s on coding  |  300+ tok/s aggregate at concurrency 16
-  {B}Context:{X}  {cfg.max_model_len} tokens  |  {B}Max seqs:{X} {cfg.max_num_seqs}
+  {B}Context:{X}  {_context_summary(cfg)}  |  {B}Max seqs:{X} {cfg.max_num_seqs}
  
   {B}Local API:{X}
     http://localhost:{cfg.vllm_port}/v1
