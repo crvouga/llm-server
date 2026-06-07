@@ -56,9 +56,9 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Configure Doppler secrets
+      - name: Login to Doppler
         run: |
-          echo "${{ secrets.DOPPLER_SERVICE_TOKEN }}" | doppler login --token-only
+          doppler login -t ${{ secrets.DOPPLER_SERVICE_TOKEN }}
           doppler setup --project personal --config prod --no-interactive
 
       - name: Run database migrations
