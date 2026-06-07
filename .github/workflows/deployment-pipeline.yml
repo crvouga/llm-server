@@ -21,11 +21,6 @@ jobs:
       - name: Install Doppler CLI
         uses: dopplerhq/cli-action@v3
 
-      - name: Run checks
-        run: |
-          set -euo pipefail
-          echo "Checking CI configuration..."
-
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:

@@ -4,6 +4,7 @@ __pycache__/
 *.so
 .pytest_cache/
 .mypy_cache/
+*.egg-info/
 
 # Virtual environments
 .venv/
@@ -11,15 +12,12 @@ venv/
 
 # Build artifacts
 build/
-dist/*.egg-info/
+dist/
 
 # Local secrets/config
 .env
 .env.*
 !.env.example
-
-# Local runtime state
-state/*.json
 
 # Proxy project
 proxy/node_modules/

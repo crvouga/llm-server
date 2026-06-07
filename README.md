@@ -1,129 +1,52 @@
-# Declarative Local LLM Environment
+# llm-server
 
-`local-llm-env` is a Terraform-like reconciler for exposing a local LM Studio API:
-- host dependency installation (including LM Studio binary helper)
-- Cloudflare Tunnel config + DNS route declaration
-- systemd user service for `cloudflared`
-- Doppler-managed secrets for credentials
+Local vLLM inference server with Cloudflare tunnel exposure, plus a Cloudflare Worker proxy that logs API usage.
 
-The workflow is idempotent:
-- `plan` computes drift and actions
-- `apply` reconciles only what's missing/out-of-sync
-- `destroy` tears down managed resources with safety controls
+## Layout
 
-## Requirements
+| Path | Purpose |
+| --- | --- |
+| [`server/`](server/) | vLLM + DFlash launcher (`server/server.py`) |
+| [`proxy/`](proxy/) | Cloudflare Worker proxy + usage dashboard |
+| [`remote-access/`](remote-access/) | Mac ↔ Linux remote control setup (SSH, Tailscale, NoMachine) |
 
-- **Linux**: `systemd --user` (for managing `cloudflared` service)
-- **macOS/Windows**: Not required - `systemctl` checks are skipped on non-Linux systems
-- Python 3.10+
-- `sudo` access if using `apt` installs
-- Doppler account/project/config with required keys
-- Cloudflare account with tunnel + DNS permissions
+## LLM server
 
-## Project Layout
-
-- `spec/local-llm-env.yaml`: primary desired-state declaration
-- `local_llm_env/`: CLI, schema validation, reconcilers, state/diff logic
-- `state/local-llm-env-state.json`: last applied managed state
-- `systemd/*.service`: template reference units
-
-## Doppler Setup
-
-1. Login and configure Doppler locally:
-   - `doppler login`
-   - `doppler setup --project personal --config dev`
-2. Ensure required keys in `spec/local-llm-env.yaml` exist in your Doppler config.
-   The default spec expects:
-   - `CLOUDFLARE_API_TOKEN`
-   - `CLOUDFLARE_ACCOUNT_ID`
-   - `CLOUDFLARE_TUNNEL_ID`
-   - `CF_TUNNEL_CREDENTIALS_JSON`
-
-## CI/CD
-
-GitHub Actions runs the [deployment pipeline](.github/workflows/deployment-pipeline.yml) on every push and pull request to `main`:
-
-1. **Checks** — Python tests (`make test`)
-
-All runtime secrets are loaded from Doppler (`personal` / `dev`). GitHub only stores a single bootstrap secret.
-
-### Seed GitHub Secrets
-
-One-time setup to allow CI to access Doppler:
+Requires Docker, NVIDIA container toolkit, and Doppler (`doppler login` + `doppler setup`).
 
 ```bash
-# Requires: gh auth login, doppler login
-make doppler-seed-github-secrets
+make server-start   # start vLLM + tunnel
+make server-stop    # stop everything
+make logs     # tail container logs
+make status   # check process + container
 ```
 
-This creates a Doppler service token (or uses `DOPPLER_SERVICE_TOKEN` if already set) and stores it as the `DOPPLER_SERVICE_TOKEN` GitHub Actions secret.
+## Proxy
 
-To target a specific repo:
+Requires [Bun](https://bun.sh) and Doppler secrets (`DATABASE_URL`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`).
 
 ```bash
-GITHUB_REPO=crvouga/llm-server make doppler-seed-github-secrets
+make proxy-install
+make proxy-dev     # local wrangler dev
+make proxy-check   # type-check
+make proxy-deploy  # deploy to Cloudflare Workers
+make proxy-db      # run database migrations
 ```
 
-### Local CI parity
+See [`proxy/README.md`](proxy/README.md) for architecture and SQL examples.
+
+## Remote access
+
+Set up a headless Linux box to be controlled from a Mac.
 
 ```bash
-doppler run --project personal --config dev -- make check
+# On Linux target (once):
+sudo ./remote-access/setup-target.sh
+git add remote-access/REMOTE-ACCESS.md && git commit -m "Add remote access handoff" && git push
+
+# On Mac (once, after git pull):
+make remote-setup-mac
+# or: ./remote-access/setup-controller.sh
 ```
 
-## Install CLI
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-```
-
-## Declarative Lifecycle
-
-### Plan
-
-```bash
-local-llm-env plan --spec spec/local-llm-env.yaml --state state/local-llm-env-state.json
-```
-
-### Apply
-
-```bash
-local-llm-env apply --spec spec/local-llm-env.yaml --state state/local-llm-env-state.json
-```
-
-Use `--auto-approve` for non-interactive apply.
-
-### Status
-
-```bash
-local-llm-env status --state state/local-llm-env-state.json
-```
-
-### Destroy
-
-```bash
-local-llm-env destroy --spec spec/local-llm-env.yaml --state state/local-llm-env-state.json
-```
-
-## Idempotency and Cleanup
-
-- Re-running `apply` after successful reconciliation should produce no meaningful actions.
-- `safety.cleanup_mode` controls destroy behavior:
-  - `managed_only`: remove managed service/tunnel resources only.
-  - `full_destroy`: remove all managed resources from recorded state.
-
-## Verification Checklist
-
-After `apply`, validate:
-- `systemctl --user status lm-studio-cloudflared.service`
-- local endpoint responds (`http://127.0.0.1:1234`)
-- tunnel DNS hostnames route to expected local services
-- second `plan` shows no-op or only informational drift
-
-## Notes
-
-- LM Studio model downloads, model selection, and server lifecycle are intentionally user-managed in LM Studio.
-- Cloudflare route creation can require a pre-existing tunnel and account token scopes.
-- The reconciler only deletes resources marked as managed by spec/state rules.
-
+Verify connectivity: `make remote-verify`

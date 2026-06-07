@@ -7,8 +7,8 @@ if [[ "$(uname -s)" != "Linux" ]]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/remote-access-common.sh
-source "${SCRIPT_DIR}/lib/remote-access-common.sh"
+# shellcheck source=_common.sh
+source "${SCRIPT_DIR}/_common.sh"
 
 NOMACHINE_VERSION="${NOMACHINE_VERSION:-9.6.3_1}"
 NOMACHINE_SERIES="${NOMACHINE_SERIES:-9.6}"
@@ -19,11 +19,11 @@ usage() {
   cat <<EOF
 Usage: sudo $0 [OPTIONS]
 
-Install NoMachine server for remote keyboard/mouse/display control over Tailscale.
+Configure this Linux machine for remote control from a Mac (SSH + Tailscale + NoMachine).
 
 Options:
   --with-ubuntu-desktop  Install ubuntu-desktop-minimal if no GUI is present
-  --write-doc-only       Regenerate REMOTE-ACCESS.md only
+  --write-doc-only       Regenerate remote-access/REMOTE-ACCESS.md only
   -h, --help             Show this help
 EOF
 }
@@ -53,6 +53,51 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
+install_pkgs() {
+  if need_cmd apt-get; then
+    apt-get update
+    apt-get install -y curl openssh-server tmux ripgrep
+  elif need_cmd dnf; then
+    dnf install -y curl openssh-server tmux ripgrep
+  elif need_cmd pacman; then
+    pacman -Sy --noconfirm curl openssh tmux ripgrep
+  elif need_cmd zypper; then
+    zypper --non-interactive install curl openssh tmux ripgrep
+  else
+    echo "Unsupported package manager. Install curl + OpenSSH server manually." >&2
+    exit 1
+  fi
+}
+
+install_tailscale() {
+  if need_cmd tailscale && need_cmd tailscaled; then
+    echo "Tailscale already installed."
+    return
+  fi
+  curl -fsSL https://tailscale.com/install.sh | sh
+}
+
+enable_ssh_service() {
+  local service_name=""
+  if systemctl list-unit-files | rg -q '^ssh\.service'; then
+    service_name="ssh"
+  elif systemctl list-unit-files | rg -q '^sshd\.service'; then
+    service_name="sshd"
+  else
+    echo "Could not find SSH service unit (ssh/sshd)." >&2
+    exit 1
+  fi
+  systemctl enable --now "${service_name}"
+}
+
+enable_tailscale_service() {
+  systemctl enable --now tailscaled
+}
+
+bring_up_tailscale() {
+  tailscale up --ssh
+}
+
 nomachine_installed() {
   [[ -x /usr/NX/bin/nxserver ]] || dpkg -s nomachine >/dev/null 2>&1
 }
@@ -78,7 +123,6 @@ nomachine_deb_url() {
       echo "https://download.nomachine.com/download/${NOMACHINE_SERIES}/Linux/nomachine_${NOMACHINE_VERSION}_${deb_arch}.deb"
       ;;
     arm64)
-      # ARM64 packages live under Arm/, not Linux/ (Linux/arm64 URL returns HTML).
       echo "https://download.nomachine.com/download/${NOMACHINE_SERIES}/Arm/nomachine_${NOMACHINE_VERSION}_${deb_arch}.deb"
       ;;
     armhf)
@@ -95,8 +139,7 @@ validate_deb_package() {
   fi
   if need_cmd file; then
     file -b "${deb_file}" | rg -q 'Debian binary package' || {
-      echo "Download failed: ${deb_file} is not a Debian package (got HTML or an error page)." >&2
-      echo "Try setting NOMACHINE_VERSION / NOMACHINE_SERIES or install from https://www.nomachine.com/download" >&2
+      echo "Download failed: ${deb_file} is not a Debian package." >&2
       return 1
     }
   else
@@ -112,9 +155,8 @@ maybe_install_ubuntu_desktop() {
   if [[ "${INSTALL_UBUNTU_DESKTOP}" != "true" ]]; then
     return
   fi
-
   if need_cmd apt-get; then
-    echo "Installing ubuntu-desktop-minimal (real Ubuntu GNOME session)..."
+    echo "Installing ubuntu-desktop-minimal..."
     apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get install -y ubuntu-desktop-minimal
   else
@@ -128,7 +170,6 @@ install_nomachine() {
     echo "NoMachine already installed."
     return 0
   fi
-
   if ! need_cmd apt-get; then
     echo "Automatic NoMachine install supports Debian/Ubuntu (.deb) only." >&2
     echo "Install manually from https://www.nomachine.com/download" >&2
@@ -141,14 +182,8 @@ install_nomachine() {
   trap 'rm -f "${tmp_deb}"' RETURN
 
   echo "Downloading NoMachine ${NOMACHINE_VERSION} (${deb_arch})..."
-  echo "  URL: ${deb_url}"
-  if ! curl -fsSL "${deb_url}" -o "${tmp_deb}"; then
-    echo "Failed to download NoMachine package." >&2
-    exit 1
-  fi
-  if ! validate_deb_package "${tmp_deb}"; then
-    exit 1
-  fi
+  curl -fsSL "${deb_url}" -o "${tmp_deb}"
+  validate_deb_package "${tmp_deb}"
 
   echo "Installing NoMachine..."
   if ! dpkg -i "${tmp_deb}"; then
@@ -163,16 +198,14 @@ install_nomachine() {
     echo "NoMachine installation did not complete successfully." >&2
     exit 1
   fi
-
   echo "NoMachine installed successfully."
 }
 
 configure_firewall() {
   if ! need_cmd ufw; then
-    echo "ufw not installed; skipping firewall rule (Tailscale still provides network isolation)."
+    echo "ufw not installed; skipping firewall rule."
     return
   fi
-
   if ufw status | rg -q 'Status: active'; then
     ufw allow in on tailscale0 to any port 4000 proto tcp comment 'nomachine over tailscale' \
       >/dev/null 2>&1 || true
@@ -187,7 +220,6 @@ enable_nomachine() {
     echo "NoMachine is not installed; skipping service enable." >&2
     return 1
   fi
-
   if systemctl list-unit-files | rg -q '^nxserver\.service'; then
     systemctl enable --now nxserver
   elif [[ -x /etc/NX/nxserver ]]; then
@@ -197,13 +229,25 @@ enable_nomachine() {
 
 show_status() {
   echo
-  echo "===== NOMACHINE STATUS ====="
-  if [[ -x /usr/NX/bin/nxserver ]]; then
-    /usr/NX/bin/nxserver --version 2>/dev/null || true
-  fi
-  systemctl --no-pager --full status nxserver 2>/dev/null | sed -n '1,10p' || true
+  echo "===== STATUS ====="
+  systemctl --no-pager --full status tailscaled 2>/dev/null | sed -n '1,8p' || true
+  systemctl --no-pager --full status ssh 2>/dev/null | sed -n '1,8p' || true
+  systemctl --no-pager --full status sshd 2>/dev/null | sed -n '1,8p' || true
   echo
-  ss -ltnp 2>/dev/null | rg ':4000' || true
+  tailscale status || true
+  echo
+  if nomachine_installed; then
+    echo "===== NOMACHINE ====="
+    if [[ -x /usr/NX/bin/nxserver ]]; then
+      /usr/NX/bin/nxserver --version 2>/dev/null || true
+    fi
+    systemctl --no-pager --full status nxserver 2>/dev/null | sed -n '1,10p' || true
+    ss -ltnp 2>/dev/null | rg ':4000' || true
+  fi
+  echo
+  echo "Hostname: $(hostname)"
+  echo "User accounts (for ssh login):"
+  awk -F: '$3 >= 1000 && $1 != "nobody" {print " - " $1}' /etc/passwd || true
 }
 
 main() {
@@ -212,27 +256,37 @@ main() {
     exit 0
   fi
 
-  echo "Installing NoMachine server (remote desktop)..."
+  echo "Installing prerequisites..."
+  install_pkgs
+  echo "Installing Tailscale..."
+  install_tailscale
+  echo "Enabling SSH..."
+  enable_ssh_service
+  echo "Enabling Tailscale daemon..."
+  enable_tailscale_service
+  echo "Bringing Tailscale online..."
+  bring_up_tailscale
+  echo "Installing NoMachine..."
   maybe_install_ubuntu_desktop
   install_nomachine
   echo "Enabling NoMachine..."
   enable_nomachine || exit 1
-  echo "Configuring firewall (Tailscale interface only)..."
+  echo "Configuring firewall..."
   configure_firewall
   show_status
-  echo "Updating REMOTE-ACCESS.md..."
+  echo "Writing connection instructions..."
   remote_access_write_md
 
   cat <<EOF
 
-NoMachine is ready.
+Target setup complete.
 
-From your Mac:
-  1) Pull the updated REMOTE-ACCESS.md from this repo.
-  2) Run: ./scripts/setup-mac-nomachine.sh
-  3) Open NoMachine and connect to: $(remote_access_tailscale_fqdn || echo '<tailscale-hostname>')
-
-Use your Linux login password when prompted.
+Next steps:
+1) Commit the generated handoff doc:
+     git add remote-access/REMOTE-ACCESS.md && git commit -m "Add remote access instructions" && git push
+2) On your Mac, pull the repo and run:
+     ./remote-access/setup-controller.sh
+3) Connect via SSH or NoMachine (see remote-access/REMOTE-ACCESS.md).
 EOF
 }
 

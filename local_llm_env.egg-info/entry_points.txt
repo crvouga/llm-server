@@ -1,2 +1,0 @@
-[console_scripts]
-local-llm-env = local_llm_env.cli:main

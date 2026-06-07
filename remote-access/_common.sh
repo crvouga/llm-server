@@ -2,15 +2,15 @@
 # Shared helpers for remote-access setup scripts (Linux target + macOS controller).
 # Source this file; do not execute directly.
 
-_REMOTE_ACCESS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-_REMOTE_ACCESS_REPO_ROOT="$(cd "${_REMOTE_ACCESS_LIB_DIR}/../.." && pwd)"
+_REMOTE_ACCESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_REMOTE_ACCESS_REPO_ROOT="$(cd "${_REMOTE_ACCESS_DIR}/.." && pwd)"
 
 remote_access_repo_root() {
   echo "${_REMOTE_ACCESS_REPO_ROOT}"
 }
 
 remote_access_output_file() {
-  echo "$(remote_access_repo_root)/REMOTE-ACCESS.md"
+  echo "${_REMOTE_ACCESS_DIR}/REMOTE-ACCESS.md"
 }
 
 remote_access_invoking_user() {
@@ -46,16 +46,9 @@ remote_access_nomachine_enabled() {
     || [[ -x /etc/NX/nxserver ]]
 }
 
-remote_access_xrdp_enabled() {
-  command -v systemctl >/dev/null 2>&1 \
-    && systemctl is-enabled xrdp >/dev/null 2>&1
-}
-
 remote_access_desktop_method() {
   if remote_access_nomachine_enabled; then
     echo "nomachine"
-  elif remote_access_xrdp_enabled; then
-    echo "xrdp"
   else
     echo "none"
   fi
@@ -68,8 +61,7 @@ remote_access_desktop_enabled() {
 remote_access_desktop_summary() {
   case "$(remote_access_desktop_method)" in
     nomachine) echo "NoMachine on port 4000 (Tailscale only)" ;;
-    xrdp) echo "xrdp on port 3389 (legacy; prefer NoMachine)" ;;
-    *) echo "not configured (run \`setup-target-nomachine.sh\`)" ;;
+    *) echo "not configured (run \`sudo ./remote-access/setup-target.sh\`)" ;;
   esac
 }
 
@@ -119,16 +111,10 @@ EOF
    \`${target_fqdn}\` (port 4000) as user \`${login_user}\`.
 EOF
       ;;
-    xrdp)
-      cat >>"${output_file}" <<EOF
-5. For keyboard/mouse GUI control, prefer NoMachine (\`setup-target-nomachine.sh\`).
-   Legacy xrdp is available on \`${target_fqdn}:3389\`.
-EOF
-      ;;
     *)
       cat >>"${output_file}" <<EOF
-5. For keyboard/mouse GUI control, run \`sudo ./scripts/setup-target-nomachine.sh\`
-   on the target, then \`./scripts/setup-mac-nomachine.sh\` on the Mac.
+5. For keyboard/mouse GUI control, run \`sudo ./remote-access/setup-target.sh\`
+   on the target, then \`./remote-access/setup-controller.sh\` on the Mac.
 EOF
       ;;
   esac
@@ -138,8 +124,8 @@ EOF
 ## What this machine is
 
 A headless ("no keyboard / mouse / monitor") Linux box accessed remotely. It is
-intended to be controlled over SSH from a Mac Studio, with optional GUI access
-via NoMachine over Tailscale.
+intended to be controlled over SSH from a Mac, with optional GUI access via
+NoMachine over Tailscale.
 
 ## Connection facts
 
@@ -157,17 +143,9 @@ via NoMachine over Tailscale.
 
 ## One-time setup on the Mac (controller)
 
-SSH + Tailscale:
-
 \`\`\`bash
-./scripts/setup-mac-controller.sh
+./remote-access/setup-controller.sh
 open -a Tailscale   # sign in to the SAME Tailscale account as the target
-\`\`\`
-
-Remote desktop client (keyboard/mouse GUI via NoMachine):
-
-\`\`\`bash
-./scripts/setup-mac-nomachine.sh
 \`\`\`
 
 ## Connect from the Mac (SSH)
@@ -197,7 +175,7 @@ EOF
   case "${desktop_method}" in
     nomachine)
       cat >>"${output_file}" <<EOF
-1. Install the Mac client (once): \`./scripts/setup-mac-nomachine.sh\`
+1. Run the Mac setup (once): \`./remote-access/setup-controller.sh\`
 2. Open **NoMachine** (\`open -a NoMachine\`).
 3. Connect to:
    - Host: \`${target_fqdn}\`
@@ -208,20 +186,8 @@ EOF
 Verify from the Mac:
 
 \`\`\`bash
-./scripts/verify-mac-remote-access.sh --nomachine
+./remote-access/setup-controller.sh --verify-only
 \`\`\`
-EOF
-      ;;
-    xrdp)
-      cat >>"${output_file}" <<EOF
-Legacy xrdp is configured. Prefer migrating to NoMachine:
-
-\`\`\`bash
-sudo ./scripts/setup-target-nomachine.sh
-./scripts/setup-mac-nomachine.sh
-\`\`\`
-
-Current xrdp connection (Microsoft Remote Desktop): \`${target_fqdn}:3389\`
 EOF
       ;;
     *)
@@ -229,16 +195,16 @@ EOF
 Remote desktop is not configured yet. On the **target** (over SSH):
 
 \`\`\`bash
-sudo ./scripts/setup-target-nomachine.sh
+sudo ./remote-access/setup-target.sh
 \`\`\`
 
 Then on the **Mac**:
 
 \`\`\`bash
-./scripts/setup-mac-nomachine.sh
+./remote-access/setup-controller.sh
 \`\`\`
 
-Re-pull \`REMOTE-ACCESS.md\` after target setup for updated connection values.
+Re-pull \`remote-access/REMOTE-ACCESS.md\` after target setup for updated connection values.
 EOF
       ;;
   esac
@@ -248,7 +214,7 @@ EOF
 ## Verify connectivity from the Mac
 
 \`\`\`bash
-./scripts/verify-mac-remote-access.sh
+./remote-access/setup-controller.sh --verify-only
 \`\`\`
 
 Or manually:
@@ -262,8 +228,7 @@ ssh ${login_user}@${target_fqdn} 'hostname && uptime'
 ## How to continue the work (for the agent)
 
 - The repository on the target is at \`${repo_root}\`.
-- Inspect \`README.md\`, \`Makefile\`, and \`pyproject.toml\` for project context
-  and runnable tasks.
+- Inspect \`README.md\` and \`Makefile\` for project context and runnable tasks.
 - Prefer running long jobs inside \`tmux\` so they survive disconnects:
   \`\`\`bash
   ssh ${login_user}@${target_fqdn} -t 'tmux new -A -s work'
@@ -277,9 +242,7 @@ ssh ${login_user}@${target_fqdn} 'hostname && uptime'
 Re-run on the target to refresh values after IP/hostname changes:
 
 \`\`\`bash
-sudo ./scripts/setup-target-headless-remote.sh
-# or, if only refreshing docs after NoMachine setup:
-sudo ./scripts/setup-target-nomachine.sh --write-doc-only
+sudo ./remote-access/setup-target.sh --write-doc-only
 \`\`\`
 EOF
 
