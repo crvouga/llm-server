@@ -1,13 +1,14 @@
-import importlib.util
+import importlib
+import sys
 from pathlib import Path
 
 
 def _load_server():
-    path = Path(__file__).resolve().parents[1] / "server" / "server.py"
-    spec = importlib.util.spec_from_file_location("spark_serve", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    # Tunnel ingress helpers now live in the `spark` package (server/spark/).
+    server_dir = Path(__file__).resolve().parents[1] / "server"
+    if str(server_dir) not in sys.path:
+        sys.path.insert(0, str(server_dir))
+    return importlib.import_module("spark.cloudflare")
 
 
 def test_merge_tunnel_ingress_replaces_existing_hostname():
