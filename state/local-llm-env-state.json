@@ -1,0 +1,50 @@
+{
+  "applied_spec_hash": "69af180dfc79186e145e8b11957f8e2916064a9d03db651cd7c8a42f5d4b3cb5",
+  "last_observed": {
+    "cloudflare": {
+      "cloudflare_api_unavailable": "Cloudflare API GET /cfd_tunnel?is_deleted=false failed: {\"success\":false,\"errors\":[{\"code\":10000,\"message\":\"Authentication error\"}],\"messages\":[],\"result\":null}\n",
+      "tunnel_id": "b90278cf-8b86-43ac-8081-81579a647a3b",
+      "tunnel_rotated": false,
+      "tunnel_route_ref": "b90278cf-8b86-43ac-8081-81579a647a3b",
+      "tunnel_source": "config_file"
+    },
+    "dependencies": {
+      "binary:cloudflared": "present",
+      "binary:curl": "present",
+      "binary:doppler": "present",
+      "binary:rg": "present",
+      "lmstudio_binary": "/home/crvouga/.lmstudio/bin/lms"
+    }
+  },
+  "managed_resources": [
+    {
+      "name": "lmstudio",
+      "path": "/home/crvouga/.lmstudio/bin/lms",
+      "type": "binary"
+    },
+    {
+      "path": "/home/crvouga/.cloudflared/b90278cf-8b86-43ac-8081-81579a647a3b.json",
+      "tunnel_id": "b90278cf-8b86-43ac-8081-81579a647a3b",
+      "type": "cloudflared_credentials"
+    },
+    {
+      "path": "/home/crvouga/.cloudflared/local-llm.yml",
+      "type": "cloudflared_config"
+    },
+    {
+      "hostname": "openai.chrisvouga.dev",
+      "tunnel": "b90278cf-8b86-43ac-8081-81579a647a3b",
+      "type": "cloudflare_dns_route"
+    },
+    {
+      "name": "local-llm-cloudflared.service",
+      "path": "/home/crvouga/.config/systemd/user/local-llm-cloudflared.service",
+      "type": "systemd_unit"
+    },
+    {
+      "id": "b90278cf-8b86-43ac-8081-81579a647a3b",
+      "name": "local-llm",
+      "type": "cloudflare_tunnel"
+    }
+  ]
+}
