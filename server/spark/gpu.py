@@ -3,12 +3,11 @@
 import os
 import shutil
 import subprocess
-from typing import Optional
 
-from .console import die, info, ok, section, warn
+from .console import die, ok, section, warn
 from .containers import _container_status
 
-_gpu_probe_cache: Optional[tuple[int, int]] = None
+_gpu_probe_cache: tuple[int, int] | None = None
 
 
 def _gpu_run_flags():
@@ -41,7 +40,7 @@ def _gpu_test(argv):
     return r.returncode == 0 and "NVIDIA" in out
 
 
-def _probe_gpu(docker_cmd, image: str) -> Optional[tuple[int, int]]:
+def _probe_gpu(docker_cmd, image: str) -> tuple[int, int] | None:
     """GB10 reports N/A in nvidia-smi; query CUDA's view from inside a GPU container."""
     global _gpu_probe_cache
     if _gpu_probe_cache is not None:

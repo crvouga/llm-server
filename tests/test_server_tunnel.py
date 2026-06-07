@@ -14,11 +14,11 @@ def _load_server():
 def test_merge_tunnel_ingress_replaces_existing_hostname():
     mod = _load_server()
     existing = [
-        {"hostname": "vllm.chrisvouga.dev", "service": "http://127.0.0.1:1234"},
+        {"hostname": "llm.chrisvouga.dev", "service": "http://127.0.0.1:1234"},
         {"service": "http_status:404"},
     ]
     merged = mod.merge_tunnel_ingress(
-        existing, "vllm.chrisvouga.dev", "http://127.0.0.1:8000"
+        existing, "llm.chrisvouga.dev", "http://127.0.0.1:8000"
     )
     assert merged[0]["service"] == "http://127.0.0.1:8000"
     assert merged[-1] == {"service": "http_status:404"}
@@ -28,10 +28,25 @@ def test_merge_tunnel_ingress_appends_new_hostname():
     mod = _load_server()
     merged = mod.merge_tunnel_ingress(
         [{"service": "http_status:404"}],
-        "vllm.chrisvouga.dev",
+        "llm.chrisvouga.dev",
         "http://127.0.0.1:8000",
     )
-    assert merged[0]["hostname"] == "vllm.chrisvouga.dev"
+    assert merged[0]["hostname"] == "llm.chrisvouga.dev"
+    assert merged[-1] == {"service": "http_status:404"}
+
+
+def test_merge_tunnel_ingress_drops_legacy_hostname():
+    mod = _load_server()
+    existing = [
+        {"hostname": "vllm.chrisvouga.dev", "service": "http://127.0.0.1:8000"},
+        {"service": "http_status:404"},
+    ]
+    merged = mod.merge_tunnel_ingress(
+        existing, "llm.chrisvouga.dev", "http://127.0.0.1:8000"
+    )
+    hostnames = [rule.get("hostname") for rule in merged]
+    assert "vllm.chrisvouga.dev" not in hostnames
+    assert merged[0]["hostname"] == "llm.chrisvouga.dev"
     assert merged[-1] == {"service": "http_status:404"}
 
 
@@ -61,7 +76,7 @@ def test_tunnel_ingress_from_config_response_missing_result():
 def test_tunnel_ingress_from_config_response_existing_ingress():
     mod = _load_server()
     ingress = [
-        {"hostname": "vllm.chrisvouga.dev", "service": "http://127.0.0.1:8000"},
+        {"hostname": "llm.chrisvouga.dev", "service": "http://127.0.0.1:8000"},
         {"service": "http_status:404"},
     ]
     resp = {"result": {"config": {"ingress": ingress}}}

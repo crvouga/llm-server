@@ -32,6 +32,15 @@ make status              # check process + container
 ENGINE=vllm make server-start    # use the legacy vLLM + DFlash engine instead
 ```
 
+The launcher serves the OpenAI-compatible API publicly at `https://llm.chrisvouga.dev`.
+
+### Development
+
+```bash
+make server-install   # one-time: install ruff + pyright + pytest (dev deps)
+make server-check     # lint + typecheck server/ and tests/
+```
+
 ### Engine selection & Atlas tuning
 
 | Env var | Default | Purpose |

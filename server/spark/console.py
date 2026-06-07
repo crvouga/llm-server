@@ -1,6 +1,7 @@
 """Coloured console output. The only module everything else is allowed to import."""
 
 import sys
+from typing import NoReturn
 
 # ── ANSI colours ──────────────────────────────────────────────────────────────
 R = "\033[0;31m"
@@ -31,6 +32,6 @@ def section(msg):
     print(f"\n{B}━━━  {msg}  ━━━{X}", flush=True)
 
 
-def die(msg):
+def die(msg) -> NoReturn:
     err(msg)
     sys.exit(1)

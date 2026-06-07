@@ -23,7 +23,7 @@ class Config:
 
     # Cloudflare tunnel — connector token fetched via CLOUDFLARE_API_TOKEN at runtime
     cf_tunnel_name: str = "spark-serve"
-    cf_tunnel_hostname: str = "vllm.chrisvouga.dev"
+    cf_tunnel_hostname: str = "llm.chrisvouga.dev"
 
     # Models
     # Main:    AEON-7 heretic-NVFP4 — production-stable, correct vLLM key layout

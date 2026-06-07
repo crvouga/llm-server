@@ -7,7 +7,6 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Optional
 
 from .console import die, info, ok, section, warn
 from .constants import _COMPILE_CACHE_SUBDIRS
@@ -24,7 +23,7 @@ def _compile_cache_populated(cfg) -> bool:
     return compile_root.is_dir() and any(compile_root.rglob("*"))
 
 
-def _prepare_compile_cache_dir(cfg, docker_cmd: Optional[list] = None) -> None:
+def _prepare_compile_cache_dir(cfg, docker_cmd: list | None = None) -> None:
     cfg.compile_cache_dir.mkdir(parents=True, exist_ok=True)
     probe = cfg.compile_cache_dir / ".write_probe"
     try:
@@ -124,7 +123,7 @@ def _repair_triton_cache(cfg) -> int:
     return synced
 
 
-def _ensure_compile_cache(cfg, docker_cmd: Optional[list] = None) -> None:
+def _ensure_compile_cache(cfg, docker_cmd: list | None = None) -> None:
     _prepare_compile_cache_dir(cfg, docker_cmd)
     if os.environ.get("VLLM_CLEAR_COMPILE_CACHE", "").lower() in ("1", "true", "yes"):
         section("Clearing compile cache")

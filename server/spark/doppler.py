@@ -6,11 +6,12 @@ import shutil
 import subprocess
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 
 from .console import die, ok, section, warn
 
 
-def _apply_doppler_secrets(cfg, secrets: dict, source: str) -> None:
+def _apply_doppler_secrets(cfg, secrets: Mapping[str, str], source: str) -> None:
     def require(key):
         val = secrets.get(key, "")
         if not val:

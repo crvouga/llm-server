@@ -25,7 +25,12 @@ def _docker_reachable(argv):
 def _ensure_nvidia_cdi():
     from pathlib import Path
 
-    if Path("/etc/cdi/nvidia.yaml").exists() or not shutil.which("nvidia-ctk"):
+    if (
+        platform.system() != "Linux"
+        or Path("/etc/cdi/nvidia.yaml").exists()
+        or not shutil.which("nvidia-ctk")
+        or not shutil.which("systemctl")
+    ):
         return
     info("Generating NVIDIA CDI specs (fixes --gpus all on newer Docker)...")
     run(["sudo", "mkdir", "-p", "/etc/cdi"])
@@ -39,39 +44,46 @@ def _resolve_docker_cmd():
         if _docker_reachable(argv):
             return argv
 
-    if shutil.which("docker") and subprocess.run(
-        ["systemctl", "is-active", "--quiet", "docker"],
-        capture_output=True,
-    ).returncode != 0:
-        info("Docker daemon not running — starting...")
-        start = subprocess.run(
-            ["sudo", "systemctl", "start", "docker"],
+    if shutil.which("docker") and shutil.which("systemctl"):
+        if subprocess.run(
+            ["systemctl", "is-active", "--quiet", "docker"],
             capture_output=True,
-            text=True,
-        )
-        if start.returncode != 0:
-            journal = subprocess.run(
-                ["journalctl", "-u", "docker.service", "-n", "30", "--no-pager"],
+        ).returncode != 0:
+            info("Docker daemon not running — starting...")
+            start = subprocess.run(
+                ["sudo", "systemctl", "start", "docker"],
                 capture_output=True,
                 text=True,
             )
-            if "invalid database" in journal.stdout:
-                info("BuildKit database corrupted — resetting...")
-                run(["sudo", "rm", "-rf", "/var/lib/docker/buildkit"])
-                run(["sudo", "systemctl", "reset-failed", "docker"])
-                run(["sudo", "systemctl", "start", "docker"])
-                time.sleep(2)
-                for argv in (["docker"], ["sudo", "docker"]):
-                    if _docker_reachable(argv):
-                        return argv
-            die(
-                "Docker daemon failed to start. "
-                "Check: systemctl status docker.service"
-            )
-        time.sleep(2)
-        for argv in (["docker"], ["sudo", "docker"]):
-            if _docker_reachable(argv):
-                return argv
+            if start.returncode != 0:
+                journal = subprocess.run(
+                    ["journalctl", "-u", "docker.service", "-n", "30", "--no-pager"],
+                    capture_output=True,
+                    text=True,
+                )
+                if "invalid database" in journal.stdout:
+                    info("BuildKit database corrupted — resetting...")
+                    run(["sudo", "rm", "-rf", "/var/lib/docker/buildkit"])
+                    run(["sudo", "systemctl", "reset-failed", "docker"])
+                    run(["sudo", "systemctl", "start", "docker"])
+                    time.sleep(2)
+                    for argv in (["docker"], ["sudo", "docker"]):
+                        if _docker_reachable(argv):
+                            return argv
+                die(
+                    "Docker daemon failed to start. "
+                    "Check: systemctl status docker.service"
+                )
+            time.sleep(2)
+            for argv in (["docker"], ["sudo", "docker"]):
+                if _docker_reachable(argv):
+                    return argv
+
+    if platform.system() == "Darwin":
+        die(
+            "Cannot connect to Docker. Start Docker Desktop and wait until "
+            "`docker info` succeeds, then retry."
+        )
 
     die(
         "Cannot connect to Docker. Ensure the daemon is running "
@@ -132,8 +144,9 @@ def ensure_docker(cfg):
 
     run(["sudo", "nvidia-ctk", "runtime", "configure", "--runtime=docker"])
     _ensure_nvidia_cdi()
-    run(["sudo", "systemctl", "restart", "docker"])
-    time.sleep(2)
+    if shutil.which("systemctl"):
+        run(["sudo", "systemctl", "restart", "docker"])
+        time.sleep(2)
     docker_cmd = _resolve_docker_cmd()
 
     if not _gpu_test(docker_cmd):
@@ -153,6 +166,12 @@ def ensure_cloudflared():
         r = subprocess.run(["cloudflared", "--version"], capture_output=True, text=True)
         ok(r.stdout.strip())
         return
+
+    if platform.system() == "Darwin":
+        die(
+            "cloudflared not found. Install with: brew install cloudflared\n"
+            "  (This server is meant to run on the GB10 Spark host, not macOS.)"
+        )
 
     arch = platform.machine()
     cf_arch = {"aarch64": "arm64", "x86_64": "amd64"}.get(arch)

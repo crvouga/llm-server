@@ -4,6 +4,7 @@ __pycache__/
 *.so
 .pytest_cache/
 .mypy_cache/
+.pyright/
 *.egg-info/
 
 # Virtual environments

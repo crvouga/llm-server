@@ -6,7 +6,7 @@ REMOTE_ACCESS_MD ?= remote-access/REMOTE-ACCESS.md
 REMOTE_USER ?=
 REMOTE_HOST ?=
 
-.PHONY: help server-start server-stop server-stop-hard server-free server-metrics server-clear-compile-cache server-tune run start stop kill logs status ssh \
+.PHONY: help server-start server-stop server-stop-hard server-free server-metrics server-clear-compile-cache server-tune server-install server-check run start stop kill logs status ssh \
 	proxy-install proxy-dev proxy-check proxy-deploy proxy-db bench \
 	remote-setup-mac remote-verify pull push gh
 
@@ -23,6 +23,8 @@ help:
 	@echo "  make server-tune -> sweep Atlas KV dtype x num-drafts x context, report decode tok/s"
 	@echo "                         TUNE_ARGS='--quick' for a faster sweep"
 	@echo "  make server-clear-compile-cache -> wipe torch/Triton cache (vLLM only)"
+	@echo "  make server-install -> pip install ruff, pyright, pytest (dev deps)"
+	@echo "  make server-check  -> lint + typecheck server code (ruff + pyright)"
 	@echo "  make logs          -> tail engine Docker container logs"
 	@echo "  make status        -> check server process + container"
 	@echo ""
@@ -96,6 +98,18 @@ server-tune:
 server-clear-compile-cache:
 	@set -euo pipefail; \
 	python3 "$(CURDIR)/server/server.py" --clear-compile-cache
+
+server-install:
+	@set -euo pipefail; \
+	python3 -m pip install -e ".[dev]"; \
+	command -v pyenv >/dev/null && pyenv rehash || true
+
+server-check:
+	@set -euo pipefail; \
+	command -v ruff >/dev/null || { echo "Missing ruff — run: make server-install"; exit 1; }; \
+	command -v pyright >/dev/null || { echo "Missing pyright — run: make server-install"; exit 1; }; \
+	ruff check server tests; \
+	pyright
 
 logs:
 	@set -euo pipefail; \

@@ -7,9 +7,13 @@ import shutil
 import subprocess
 import time
 
-from .console import die, info, ok, section, warn
+from .console import die, info, ok, section
 from .runtime import _stop_spark_tunnel, register
 from .webapi import CloudflareAPIError, http_get, http_post, http_put
+
+# Hostnames retired in favour of cfg.cf_tunnel_hostname; dropped from ingress on
+# the next provision so old routes stop serving traffic.
+_LEGACY_TUNNEL_HOSTNAMES = frozenset({"vllm.chrisvouga.dev"})
 
 
 def cf_headers(cfg):
@@ -73,7 +77,7 @@ def _cf_public_url(cfg) -> str:
 
 
 def _cf_service_url(cfg) -> str:
-    return f"http://127.0.0.1:{cfg.vllm_port}"
+    return f"http://127.0.0.1:{cfg.service_port}"
 
 
 def merge_tunnel_ingress(
@@ -89,6 +93,8 @@ def merge_tunnel_ingress(
                 {"hostname": hostname, "service": service, "originRequest": {}}
             )
             replaced = True
+        elif rule.get("hostname") in _LEGACY_TUNNEL_HOSTNAMES:
+            continue
         elif "http_status" in str(svc):
             continue
         else:
