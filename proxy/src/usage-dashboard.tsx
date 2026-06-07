@@ -206,7 +206,8 @@ async function fetchUsageRows(
       COUNT(*)::int AS request_count,
       COALESCE(SUM((response_body->'usage'->>'prompt_tokens')::bigint), 0)::bigint AS prompt_tokens,
       COALESCE(SUM((response_body->'usage'->>'completion_tokens')::bigint), 0)::bigint AS completion_tokens
-    FROM llm_proxy.http_log
+    FROM 
+      llm_proxy.http_log
     WHERE request_path = '/v1/chat/completions'
       AND response_status_code >= 200
       AND response_status_code < 300
