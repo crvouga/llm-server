@@ -160,7 +160,135 @@ def _compile_cache_populated(cfg: "Config") -> bool:
         d = cfg.compile_cache_dir / sub
         if d.is_dir() and any(d.rglob("*")):
             return True
-    return False
+    compile_root = cfg.compile_cache_dir / "torch_compile_cache"
+    return compile_root.is_dir() and any(compile_root.rglob("*"))
+
+
+_COMPILE_CACHE_SUBDIRS = (
+    "triton",
+    "torchinductor",
+    "torch_compile_cache",
+    "dummy_cache",
+)
+
+
+def _prepare_compile_cache_dir(cfg: "Config", docker_cmd: Optional[list] = None) -> None:
+    cfg.compile_cache_dir.mkdir(parents=True, exist_ok=True)
+    probe = cfg.compile_cache_dir / ".write_probe"
+    try:
+        probe.write_text("ok")
+        probe.unlink(missing_ok=True)
+        return
+    except OSError:
+        pass
+
+    uid, gid = os.getuid(), os.getgid()
+    warn(
+        f"Compile cache not writable ({cfg.compile_cache_dir}) — "
+        f"fixing ownership to {uid}:{gid}"
+    )
+    if docker_cmd:
+        r = subprocess.run(
+            [
+                *docker_cmd,
+                "run",
+                "--rm",
+                "-v",
+                f"{cfg.compile_cache_dir}:/cache",
+                "busybox",
+                "chown",
+                "-R",
+                f"{uid}:{gid}",
+                "/cache",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if r.returncode == 0:
+            ok(f"Compile cache ownership fixed ({cfg.compile_cache_dir})")
+            return
+        warn(f"Docker chown failed: {(r.stderr or r.stdout).strip()}")
+
+    chown = subprocess.run(
+        ["sudo", "chown", "-R", f"{uid}:{gid}", str(cfg.compile_cache_dir)],
+        capture_output=True,
+        text=True,
+    )
+    if chown.returncode != 0:
+        die(
+            f"Cannot write compile cache at {cfg.compile_cache_dir}.\n"
+            f"  Fix manually: sudo chown -R {uid}:{gid} {cfg.compile_cache_dir}"
+        )
+    ok(f"Compile cache ownership fixed ({cfg.compile_cache_dir})")
+
+
+def _clear_compile_cache(cfg: "Config") -> None:
+    removed: list[str] = []
+    for name in _COMPILE_CACHE_SUBDIRS:
+        path = cfg.compile_cache_dir / name
+        if path.is_dir():
+            shutil.rmtree(path)
+            removed.append(name)
+    if removed:
+        ok(f"Cleared compile cache ({', '.join(removed)}) at {cfg.compile_cache_dir}")
+    else:
+        info(f"Compile cache already empty at {cfg.compile_cache_dir}")
+
+
+def _repair_triton_cache(cfg: "Config") -> int:
+    """Sync missing Triton cubins into TRITON_CACHE_DIR from inductor_cache."""
+    cache = cfg.compile_cache_dir
+    triton_root = cache / "triton"
+    triton_root.mkdir(parents=True, exist_ok=True)
+
+    for tmp in triton_root.glob("tmp.*"):
+        if tmp.is_dir():
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    compile_root = cache / "torch_compile_cache"
+    if not compile_root.is_dir():
+        return 0
+
+    synced = 0
+    seen: set[Path] = set()
+    for cubin in compile_root.rglob("inductor_cache/triton/*/*.cubin"):
+        hash_dir = cubin.parent
+        if hash_dir in seen:
+            continue
+        seen.add(hash_dir)
+        dest_dir = triton_root / hash_dir.name
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        for src in hash_dir.iterdir():
+            if not src.is_file():
+                continue
+            target = dest_dir / src.name
+            if target.exists():
+                continue
+            try:
+                os.link(src, target)
+            except OSError:
+                shutil.copy2(src, target)
+            synced += 1
+    return synced
+
+
+def _ensure_compile_cache(cfg: "Config", docker_cmd: Optional[list] = None) -> None:
+    _prepare_compile_cache_dir(cfg, docker_cmd)
+    if os.environ.get("VLLM_CLEAR_COMPILE_CACHE", "").lower() in ("1", "true", "yes"):
+        section("Clearing compile cache")
+        _clear_compile_cache(cfg)
+        return
+    if not _compile_cache_populated(cfg):
+        return
+    section("Checking compile cache")
+    synced = _repair_triton_cache(cfg)
+    if synced:
+        ok(
+            f"Repaired Triton cache: linked/copied {synced} missing artifact(s) "
+            f"into {cfg.compile_cache_dir / 'triton'}"
+        )
+    else:
+        ok("Compile cache looks consistent")
 
 
 def _resolve_optimization_profile(cfg: "Config") -> None:
@@ -891,6 +1019,13 @@ def _ingress_already_routed(
     return False
 
 
+def _tunnel_ingress_from_config_response(resp: dict) -> list[dict]:
+    """Parse ingress rules from GET /cfd_tunnel/{id}/configurations."""
+    result = resp.get("result") or {}
+    config = result.get("config") or {}
+    return config.get("ingress", []) or []
+
+
 def _cf_ensure_tunnel_ingress(cfg, tunnel_id: str, hdrs: dict) -> None:
     base = _cf_tunnel_api_base(cfg)
     service = _cf_service_url(cfg)
@@ -899,7 +1034,7 @@ def _cf_ensure_tunnel_ingress(cfg, tunnel_id: str, hdrs: dict) -> None:
     existing: list[dict] = []
     try:
         resp = http_get(f"{base}/{tunnel_id}/configurations", hdrs)
-        existing = resp.get("result", {}).get("config", {}).get("ingress", []) or []
+        existing = _tunnel_ingress_from_config_response(resp)
     except CloudflareAPIError as e:
         if e.code != 404:
             raise
@@ -1219,11 +1354,17 @@ def _check_gpu_memory(cfg, docker_cmd):
         msg += "\nStop these GPU processes first:\n  " + "\n  ".join(others)
     msg += (
         "\nDGX Spark has one GPU — only one large model can run at a time. "
-        "Stop LM Studio (or other GPU workloads), then run `make run` again."
+        "Stop LM Studio (or other GPU workloads), then run `make server-start` again."
     )
+    max_util = (free_gib / total_gib) * 0.98
+    if max_util >= 0.35:
+        msg += (
+            f"\nOr share the GPU with a lower memory budget: "
+            f"VLLM_ALLOW_GPU_SHARING=1 make server-start "
+            f"(would use ~{max_util - 0.01:.0%} utilization, ~{total_gib * (max_util - 0.01):.1f} GiB)."
+        )
 
     if allow_sharing:
-        max_util = (free_gib / total_gib) * 0.98
         if max_util < 0.35:
             die(msg)
         warn(msg)
@@ -1305,7 +1446,7 @@ def start_vllm(cfg, docker_cmd) -> str:
     section("Starting vLLM + DFlash  [Qwen3.6-35B-A3B NVFP4, k=15]")
     info("Target: 120-150 tok/s on coding workloads via DFlash speculative decoding")
     info(f"Boot estimate: {_boot_time_hint(cfg)} (O{cfg.optimization_level})")
-    cfg.compile_cache_dir.mkdir(parents=True, exist_ok=True)
+    _prepare_compile_cache_dir(cfg, docker_cmd)
     if _compile_cache_populated(cfg):
         info(f"Reusing compile cache at {cfg.compile_cache_dir}")
     else:
@@ -1719,6 +1860,8 @@ def main():
         run_prechecks(cfg, docker_cmd)
         _exit_on_shutdown(cfg)
 
+        _ensure_compile_cache(cfg, docker_cmd)
+        _exit_on_shutdown(cfg)
         _resolve_optimization_profile(cfg)
 
         pull_vllm_image(cfg, docker_cmd)
@@ -1811,10 +1954,26 @@ def setup_tunnel_only():
     ok(f"Public API will be at {_cf_public_url(cfg)}/v1 (start with: make run)")
 
 
+def clear_compile_cache_only():
+    """Remove vLLM torch/Triton compile artifacts (forces a cold recompile)."""
+    cfg = Config()
+    cfg.model_dir = _resolve_model_dir()
+    _apply_env_overrides(cfg)
+    cfg.docker_cmd = _resolve_docker_cmd() or ["docker"]
+    section("Clearing compile cache")
+    _prepare_compile_cache_dir(cfg, cfg.docker_cmd)
+    _clear_compile_cache(cfg)
+
+
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] in ("--setup-tunnel", "setup-tunnel"):
         setup_tunnel_only()
     elif len(sys.argv) > 1 and sys.argv[1] in ("--stop", "stop"):
         stop_managed()
+    elif len(sys.argv) > 1 and sys.argv[1] in (
+        "--clear-compile-cache",
+        "clear-compile-cache",
+    ):
+        clear_compile_cache_only()
     else:
         main()
