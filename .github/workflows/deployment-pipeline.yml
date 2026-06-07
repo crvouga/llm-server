@@ -60,6 +60,7 @@ jobs:
         working-directory: proxy
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_SERVICE_TOKEN }}
+          DOPPLER_CONFIG: dev
         run: |
           doppler run -- bash database/setup.sh
 
@@ -74,5 +75,6 @@ jobs:
         working-directory: proxy
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_SERVICE_TOKEN }}
+          DOPPLER_CONFIG: dev
         run: |
           doppler run -- wrangler deploy
