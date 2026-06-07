@@ -64,23 +64,23 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-section() {
-  [[ "${JSON}" == true ]] && return 0
-  echo -e "\n${B}━━━  $*  ━━━${X}"
+section() { :; }
+
+status_word() {
+  local code="$1"
+  case "${code}" in
+    200) echo "ok" ;;
+    000) echo "down" ;;
+    *) echo "http${code}" ;;
+  esac
 }
 
-kv() {
-  local key="$1"
-  local value="$2"
-  if [[ "${JSON}" == true ]]; then
-    return 0
-  fi
-  printf "  %-22s %s\n" "${key}:" "${value}"
+gib_short() {
+  awk -v kib="$1" 'BEGIN {printf "%.0f", kib/1024/1024}'
 }
 
-warn_line() {
-  [[ "${JSON}" == true ]] && return 0
-  echo -e "  ${Y}!${X} $*"
+compact_line() {
+  printf '%s\n' "$*"
 }
 
 docker_cmd() {
@@ -168,7 +168,7 @@ collect_metrics() {
   local mem_total mem_avail mem_free mem_used swap_total swap_free swap_used
   local gpu_name gpu_driver gpu_temp gpu_util gpu_mem_util gpu_power gpu_sm_clock
   local gpu_mem_used gpu_mem_total gpu_mem_free gpu_mem_source
-  local disk_root_pct disk_root_avail model_cache_size compile_cache_size
+  local disk_root_pct disk_root_avail disk_root_avail_gib model_cache_size compile_cache_size
   local server_running server_pid container_status container_cpu container_mem
   local health_code models_code tunnel_running top_procs gpu_procs sensors_text
   local dc json_blob
@@ -195,8 +195,10 @@ collect_metrics() {
   if [[ -n "${dc}" ]]; then
     if ${dc} ps --format '{{.Names}}' 2>/dev/null | grep -qx "${VLLM_CONTAINER}"; then
       container_status="running"
-      IFS='|' read -r container_cpu container_mem _ <<< \
-        "$(${dc} stats --no-stream --format '{{.CPUPerc}}|{{.MemUsage}}' "${VLLM_CONTAINER}" 2>/dev/null || echo '|')"
+      if [[ "${JSON}" == true ]]; then
+        IFS='|' read -r container_cpu container_mem _ <<< \
+          "$(timeout 3 ${dc} stats --no-stream --format '{{.CPUPerc}}|{{.MemUsage}}' "${VLLM_CONTAINER}" 2>/dev/null || echo '|')"
+      fi
     elif ${dc} ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "${VLLM_CONTAINER}"; then
       container_status="stopped"
     fi
@@ -227,8 +229,8 @@ collect_metrics() {
     gpu_driver="${gpu_driver#"${gpu_driver%%[![:space:]]*}"}"
     gpu_driver="${gpu_driver%"${gpu_driver##*[![:space:]]}"}"
     gpu_temp="${gpu_temp//[[:space:]]/}"
-    gpu_util="${gpu_util#"${gpu_util%%[![:space:]]*}"}"
-    gpu_mem_util="${gpu_mem_util#"${gpu_mem_util%%[![:space:]]*}"}"
+    gpu_util="${gpu_util//[[:space:]]/}"
+    gpu_mem_util="${gpu_mem_util//[[:space:]]/}"
     gpu_power="${gpu_power#"${gpu_power%%[![:space:]]*}"}"
     gpu_sm_clock="${gpu_sm_clock#"${gpu_sm_clock%%[![:space:]]*}"}"
 
@@ -236,7 +238,12 @@ collect_metrics() {
       --format=csv,noheader 2>/dev/null | sed '/^$/d' || true)"
 
     local cuda_line
-    if cuda_line="$(probe_gpu_memory_cuda "${dc}" "${VLLM_CONTAINER}")"; then
+    if [[ "${JSON}" == true ]]; then
+      cuda_line="$(probe_gpu_memory_cuda "${dc}" "${VLLM_CONTAINER}")" || true
+    else
+      cuda_line=""
+    fi
+    if [[ -n "${cuda_line}" ]]; then
       local free_b total_b
       IFS=',' read -r free_b total_b <<< "${cuda_line}"
       gpu_mem_free="$(awk -v b="${free_b}" 'BEGIN {printf "%.1f GiB", b/1024/1024/1024}')"
@@ -259,7 +266,7 @@ collect_metrics() {
     fi
   fi
 
-  if command -v sensors >/dev/null 2>&1; then
+  if [[ "${JSON}" == true ]] && command -v sensors >/dev/null 2>&1; then
     sensors_text="$(sensors 2>/dev/null \
       | awk '/^[^ ]/ {chip=$0; next} /\+/ {gsub(/^[ \t]+/,""); print chip " " $0}' \
       | head -n 12 || true)"
@@ -267,9 +274,15 @@ collect_metrics() {
 
   read -r disk_root_pct disk_root_avail _ <<< \
     "$(df -P / 2>/dev/null | awk 'NR==2 {print $5, $4, $6}')"
-  disk_root_avail="$(format_mib "${disk_root_avail}")"
-  model_cache_size="$(dir_size_human "${MODEL_CACHE}")"
-  compile_cache_size="$(dir_size_human "${COMPILE_CACHE}")"
+  disk_root_avail_gib="$(awk -v kib="${disk_root_avail:-0}" 'BEGIN {printf "%.0fG", kib/1024/1024}')"
+  if [[ "${JSON}" == true ]]; then
+    model_cache_size="$(dir_size_human "${MODEL_CACHE}")"
+    compile_cache_size="$(dir_size_human "${COMPILE_CACHE}")"
+    disk_root_avail="$(format_mib "${disk_root_avail}")"
+  else
+    model_cache_size="$([[ -d "${MODEL_CACHE}" ]] && echo yes || echo no)"
+    compile_cache_size="$([[ -d "${COMPILE_CACHE}" ]] && echo yes || echo no)"
+  fi
 
   server_running="no"
   server_pid=""
@@ -289,9 +302,12 @@ collect_metrics() {
     fi
   fi
 
-  top_procs="$(ps -eo pid,rss,comm --sort=-rss 2>/dev/null \
-    | awk 'NR==1 {next} NR<=8 {printf "%s:%.0fMiB:%s,", $1, $2/1024, $3}' \
-    | sed 's/,$//' || true)"
+  top_procs=""
+  if [[ "${JSON}" == true ]]; then
+    top_procs="$(ps -eo pid,rss,comm --sort=-rss 2>/dev/null \
+      | awk 'NR==1 {next} NR<=8 {printf "%s:%.0fMiB:%s,", $1, $2/1024, $3}' \
+      | sed 's/,$//' || true)"
+  fi
 
   if [[ "${JSON}" == true ]]; then
     python3 - "${now}" "${host}" "${uptime_str}" "${load1}" "${load5}" "${load15}" "${cores}" "${cpu_pct}" \
@@ -420,63 +436,48 @@ PY
     return 0
   fi
 
-  echo -e "${B}metrics${X}  ${D}${now}${X}  ${host}"
+  local health_status models_status gpu_proc_summary
+  local mem_used_gib mem_total_gib mem_avail_gib swap_used_gib swap_total_gib
 
-  section "System"
-  kv "Uptime" "${uptime_str}"
-  kv "Load (1/5/15m)" "${load1} / ${load5} / ${load15}  (${cores} cores)"
-  kv "CPU usage" "${cpu_pct}%"
+  echo -e "${B}metrics${X}  ${host}  ${D}${now}${X}"
 
-  section "Memory"
-  kv "Total" "$(format_gib "${mem_total}")"
-  kv "Used" "$(format_gib "${mem_used}")"
-  kv "Available" "$(format_gib "${mem_avail}")"
-  kv "Swap" "$(format_mib "${swap_used}") / $(format_mib "${swap_total}")"
+  mem_used_gib="$(gib_short "${mem_used}")"
+  mem_total_gib="$(gib_short "${mem_total}")"
+  mem_avail_gib="$(gib_short "${mem_avail}")"
+  swap_used_gib="$(gib_short "${swap_used}")"
+  swap_total_gib="$(gib_short "${swap_total}")"
 
-  section "GPU"
+  compact_line "cpu  ${cpu_pct}%  load ${load1}/${load5}/${load15}  ·  ${cores}c  ·  ${uptime_str#up }"
+
+  compact_line "ram  ${mem_used_gib}/${mem_total_gib} GiB used  ·  ${mem_avail_gib} GiB free  ·  swap ${swap_used_gib}/${swap_total_gib} GiB"
+
   if [[ -z "${gpu_name}" ]]; then
-    warn_line "nvidia-smi not available"
+    compact_line "gpu  n/a"
   else
-    kv "Device" "${gpu_name} (driver ${gpu_driver})"
-    kv "Temperature" "${gpu_temp}°C"
-    kv "Utilization" "GPU ${gpu_util}  |  mem ${gpu_mem_util}"
-    kv "Memory" "${gpu_mem_used} / ${gpu_mem_total}  (free ${gpu_mem_free}, source: ${gpu_mem_source})"
-    kv "Power" "${gpu_power}"
-    kv "SM clock" "${gpu_sm_clock}"
+    gpu_proc_summary="none"
     if [[ -n "${gpu_procs:-}" ]]; then
-      echo "  Compute processes:"
-      echo "${gpu_procs}" | sed 's/^/    /'
-    else
-      kv "Compute processes" "none"
+      gpu_proc_summary="$(echo "${gpu_procs}" | head -n1 \
+        | awk -F',' '{gsub(/^ +| +$/,"",$2); gsub(/^ +| +$/,"",$3); printf "%s %s", $2, $3}')"
     fi
+    compact_line "gpu  ${gpu_name}  ${gpu_temp}°C  ${gpu_util:-0}/${gpu_mem_util:-0}  ·  ${gpu_mem_used}/${gpu_mem_total}  ·  ${gpu_power}  ·  ${gpu_proc_summary}"
   fi
 
-  section "Temperatures"
-  kv "GPU" "${gpu_temp:-n/a}°C"
-  if [[ -n "${sensors_text:-}" ]]; then
-    echo "${sensors_text}" | sed 's/^/  /'
-  else
-    kv "System sensors" "sensors not installed"
+  compact_line "disk  / ${disk_root_pct} used  ·  ${disk_root_avail_gib} free  ·  models ${model_cache_size}  ·  compile ${compile_cache_size}"
+
+  health_status="$(status_word "${health_code}")"
+  models_status="$(status_word "${models_code}")"
+  container_cpu="${container_cpu:-}"
+  container_mem="${container_mem:-}"
+  if [[ "${container_mem}" == *" / "* ]]; then
+    container_mem="${container_mem%% / *}"
   fi
 
-  section "Disk"
-  kv "Root (/) used" "${disk_root_pct}  (${disk_root_avail} free)"
-  kv "Model cache" "${MODEL_CACHE}  (${model_cache_size})"
-  kv "Compile cache" "${COMPILE_CACHE}  (${compile_cache_size})"
+  local vllm_stats=""
+  if [[ -n "${container_cpu}" && -n "${container_mem}" ]]; then
+    vllm_stats="${container_cpu} cpu  ${container_mem} ram  ·  "
+  fi
 
-  section "LLM server"
-  kv "Launcher" "${server_running}$( [[ -n "${server_pid}" ]] && printf '  pid %s' "${server_pid}" )"
-  kv "Container" "${VLLM_CONTAINER}: ${container_status}"
-  [[ -n "${container_cpu}" ]] && kv "Container CPU" "${container_cpu}"
-  [[ -n "${container_mem}" ]] && kv "Container RAM" "${container_mem}"
-  kv "Health :${VLLM_PORT}" "$([[ "${health_code}" == "200" ]] && echo OK || echo HTTP ${health_code})"
-  kv "Models API" "$([[ "${models_code}" == "200" ]] && echo OK || echo HTTP ${models_code})"
-  kv "CF tunnel" "${tunnel_running}"
-
-  section "Top memory processes"
-  ps -eo pid,rss,comm --sort=-rss 2>/dev/null \
-    | awk 'NR==1 {printf "  %-8s %10s  %s\n", "PID", "RSS", "COMMAND"; next}
-           NR<=10 {printf "  %-8s %8.0f MiB  %s\n", $1, $2/1024, $3}'
+  compact_line "vllm  ${container_status}  ${vllm_stats}health ${health_status}  models ${models_status}  ·  tunnel $([[ "${tunnel_running}" == yes ]] && echo on || echo off)  ·  launcher $([[ "${server_running}" == yes ]] && echo "pid ${server_pid}" || echo off)"
 }
 
 if [[ -n "${WATCH_INTERVAL}" ]]; then
