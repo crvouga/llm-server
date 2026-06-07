@@ -8,6 +8,7 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
     "wrangler": "^3.82.0"
   },
   "devDependencies": {

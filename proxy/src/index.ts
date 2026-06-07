@@ -1,6 +1,8 @@
 // Transparent LLM Proxy with Raw Request Logging
 // Forwards all requests to LM Studio and logs raw request/response data to PostgreSQL
 
+import { neon, NeonDbError } from '@neondatabase/serverless';
+
 export interface Env {
   DATABASE_URL: string;
   BACKEND_URL?: string;
@@ -47,12 +49,13 @@ async function logRequest(
   responseBody: unknown | null,
   errorMessage?: string
 ): Promise<void> {
+  if (!env.DATABASE_URL) {
+    console.warn('DATABASE_URL not configured, skipping request logging');
+    return;
+  }
+
   try {
-    const url = env.DATABASE_URL;
-    if (!url) {
-      console.warn('DATABASE_URL not configured, skipping request logging');
-      return;
-    }
+    const sql = neon(env.DATABASE_URL);
 
     // Convert query params to object using forEach
     const queryParamsObj: Record<string, string> = {};
@@ -60,58 +63,45 @@ async function logRequest(
       queryParamsObj[key] = value;
     });
 
-    // Build INSERT statement with JSONB data
-    // Neon uses standard PostgreSQL syntax with $1, $2 placeholders
-    const columns = [
-      'id',
-      'created_at',
-      'request_method',
-      'request_path',
-      'request_query_params',
-      'request_headers',
-      'request_body',
-      'response_status_code',
-      'response_headers',
-      'response_body',
-      'response_error_message'
-    ];
-    const values: unknown[] = [
-      requestId,
-      new Date().toISOString(),
-      method,
-      path,
-      JSON.stringify(queryParamsObj),
-      JSON.stringify(headersToObject(requestHeaders)),
-      body,
-      statusCode,
-      JSON.stringify(headersToObject(responseHeaders)),
-      responseBody,
-      errorMessage || null
-    ];
+    // Tagged-template interpolation: the driver parameterizes each ${value}
+    // so it is sent separately from the SQL text (injection-safe, and the
+    // password-bearing connection string is never part of the query).
+    const requestBody = body === null ? null : JSON.stringify(body);
+    const responseBodyJson = responseBody === null ? null : JSON.stringify(responseBody);
 
-    const queryText = `
-      INSERT INTO llm_proxy.http_log (${columns.join(', ')})
-      VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7, $8::jsonb, $9::jsonb, $10::jsonb, $11)
+    await sql`
+      INSERT INTO llm_proxy.http_log (
+        id, created_at, request_method, request_path, request_query_params,
+        request_headers, request_body, response_status_code, response_headers,
+        response_body, response_error_message
+      )
+      VALUES (
+        ${requestId},
+        ${new Date().toISOString()},
+        ${method},
+        ${path},
+        ${JSON.stringify(queryParamsObj)}::jsonb,
+        ${JSON.stringify(headersToObject(requestHeaders))}::jsonb,
+        ${requestBody}::jsonb,
+        ${statusCode},
+        ${JSON.stringify(headersToObject(responseHeaders))}::jsonb,
+        ${responseBodyJson}::jsonb,
+        ${errorMessage || null}
+      )
     `;
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Prefer': 'return=none',
-      },
-      body: JSON.stringify({
-        statement: queryText,
-        parameters: values,
-      }),
-    });
-
-    if (!response.ok) {
-      console.error('Failed to log request:', response.statusText);
-    }
   } catch (error) {
-    // Non-blocking: don't fail the request if logging fails
-    console.warn('Request logging failed:', error instanceof Error ? error.message : String(error));
+    // Non-blocking: don't fail the request if logging fails.
+    // Use NeonDbError fields (never the raw error/connection string) to avoid
+    // leaking the DATABASE_URL password into logs.
+    if (error instanceof NeonDbError) {
+      console.error('Request logging failed:', {
+        code: error.code,
+        detail: error.detail,
+        severity: error.severity,
+      });
+    } else {
+      console.warn('Request logging failed with a non-database error');
+    }
   }
 }
 
