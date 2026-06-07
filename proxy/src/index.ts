@@ -105,7 +105,7 @@ function getPath(url: URL): string {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const backendUrl = env.BACKEND_URL || DEFAULT_BACKEND;
 
     // Parse incoming request
@@ -145,7 +145,7 @@ export default {
       response = await fetch(targetUrl, init);
     } catch (error) {
       // Log the error and return 503
-      void logRequest(
+      ctx.waitUntil(logRequest(
         env,
         requestId,
         request.method,
@@ -157,7 +157,7 @@ export default {
         new Headers(),
         { error: 'Backend unavailable', details: String(error) },
         error instanceof Error ? error.message : String(error)
-      );
+      ));
 
       return new Response(
         JSON.stringify({ error: 'Backend unavailable', details: String(error) }),
@@ -176,19 +176,22 @@ export default {
       }
     }
 
-    // Log the request/response
-    void logRequest(
-      env,
-      requestId,
-      request.method,
-      path,
-      requestUrl.searchParams,
-      request.headers,
-      null,
-      response.status,
-      response.headers,
-      responseBody,
-      undefined
+    // Log the request/response (use waitUntil so the promise survives
+    // after the response is returned — `void` alone drops it in Workers)
+    ctx.waitUntil(
+      logRequest(
+        env,
+        requestId,
+        request.method,
+        path,
+        requestUrl.searchParams,
+        request.headers,
+        null,
+        response.status,
+        response.headers,
+        responseBody,
+        undefined
+      )
     );
 
     console.log(`[${requestId}] ${response.status} ${path}`);
