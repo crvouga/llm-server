@@ -40,6 +40,7 @@ def _print_atlas_summary(cfg):
   {B}Target:{X}   ~130-140 tok/s single-stream (GB10 memory-bandwidth ceiling)
  
   {B}Local API (OpenAI + Anthropic):{X}
+    http://localhost:{cfg.atlas_port}/       (status page)
     http://localhost:{cfg.atlas_port}/v1
  
   {B}Public API (Cloudflare):{X}

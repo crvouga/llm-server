@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+"""
+lm-studio tunnel — Cloudflare Tunnel for local LM Studio (port 1234)
+
+Thin entrypoint. Logic lives in the `lmstudio/` package.
+
+Tunnels LM Studio's OpenAI-compatible API at http://127.0.0.1:1234 to
+https://llm.chrisvouga.dev. Mutually exclusive with the Atlas/vLLM server
+(both share the same hostname).
+
+Idempotent. Manages its own process group. Ctrl+C or `make lm-studio-stop`
+stops the tunnel only (LM Studio keeps running).
+
+Usage:
+    python3 lm-studio/tunnel                  # run the tunnel
+    python3 lm-studio/tunnel --stop           # stop tunnel connector
+    python3 lm-studio/tunnel --setup-tunnel   # configure DNS/ingress only
+
+Secrets via Doppler CLI (`doppler login` + `doppler setup`) or DOPPLER_TOKEN.
+Doppler secrets (project=personal, config=dev):
+    CLOUDFLARE_API_TOKEN   — Cloudflare API token (required)
+    CLOUDFLARE_ACCOUNT_ID  — Cloudflare account ID (required)
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "server"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from lmstudio.app import dispatch  # noqa: E402
+
+if __name__ == "__main__":
+    dispatch(sys.argv[1:])

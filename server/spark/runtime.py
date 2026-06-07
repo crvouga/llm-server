@@ -5,6 +5,7 @@ state through the accessor functions here (never by importing the booleans), so
 reassignment stays visible across modules.
 """
 
+import json
 import os
 import signal
 import subprocess
@@ -12,8 +13,11 @@ import sys
 import time
 
 from .config import _should_remove_container, engine_label
-from .console import B, X, Y, info, ok
-from .containers import _container_status
+from .console import B, X, Y, info, ok, warn
+from .containers import _container_status, _named_container_status
+from .local_proxy import stop_local_proxy
+
+_RUNTIME_STATE = "runtime.json"
 
 _managed: list = []
 _managed_containers: list = []
@@ -35,6 +39,76 @@ def register(proc):
     _runtime_active = True
     _managed.append(proc)
     return proc
+
+
+def write_runtime_state(cfg) -> None:
+    cfg.helper_dir.mkdir(parents=True, exist_ok=True)
+    (cfg.helper_dir / _RUNTIME_STATE).write_text(
+        json.dumps(
+            {
+                "container_name": cfg.container_name,
+                "docker_cmd": cfg.docker_cmd,
+                "engine": cfg.engine,
+            }
+        )
+    )
+
+
+def load_runtime_state(cfg) -> bool:
+    path = cfg.helper_dir / _RUNTIME_STATE
+    if not path.exists():
+        return False
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    if name := data.get("container_name"):
+        cfg.container_name = name
+    if isinstance(cmd := data.get("docker_cmd"), list) and cmd:
+        cfg.docker_cmd = cmd
+    if engine := data.get("engine"):
+        cfg.engine = engine
+    return True
+
+
+def clear_runtime_state(cfg) -> None:
+    (cfg.helper_dir / _RUNTIME_STATE).unlink(missing_ok=True)
+
+
+def _containers_to_stop(cfg) -> list[str]:
+    names = list(dict.fromkeys(_managed_containers + [cfg.container_name]))
+    if not (cfg.helper_dir / _RUNTIME_STATE).exists():
+        from .config import Config
+
+        defaults = Config()
+        for name in (defaults.atlas_container, defaults.container_name):
+            if name not in names:
+                names.append(name)
+    return names
+
+
+def _stop_engine_containers(cfg) -> None:
+    for name in _containers_to_stop(cfg):
+        status = _named_container_status(cfg.docker_cmd, name)
+        if status != "running":
+            continue
+        info(f"Stopping container '{name}'...")
+        r = subprocess.run(
+            [*cfg.docker_cmd, "stop", name],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if r.returncode != 0:
+            err = (r.stderr or r.stdout or "").strip()
+            warn(f"Failed to stop container '{name}': {err or 'unknown error'}")
+            continue
+        if _should_remove_container(cfg):
+            subprocess.run(
+                [*cfg.docker_cmd, "rm", name],
+                capture_output=True,
+                timeout=30,
+            )
 
 
 def register_container(name):
@@ -109,25 +183,10 @@ def _kill_pid(pid: int, label: str, timeout: float = 5) -> None:
 
 
 def _stop_spark_tunnel(cfg):
-    """Stop the vLLM tunnel started by this server (never touches lm-studio)."""
-    pid_file = cfg.helper_dir / "cloudflared.pid"
-    if pid_file.exists():
-        try:
-            pid = int(pid_file.read_text().strip())
-            _kill_pid(pid, "Cloudflare tunnel")
-        except (OSError, ValueError):
-            pass
-        pid_file.unlink(missing_ok=True)
+    """Stop the spark tunnel (uses ~/.spark-serve; never touches lm-studio)."""
+    from .cloudflare import stop_tunnel_connector
 
-    for proc in list(_managed):
-        if proc.poll() is not None:
-            continue
-        try:
-            with open(f"/proc/{proc.pid}/cmdline", "rb") as fh:
-                if b"cloudflared" in fh.read():
-                    _kill_pid(proc.pid, "Cloudflare tunnel")
-        except OSError:
-            pass
+    stop_tunnel_connector(cfg, managed_procs=_managed)
 
 
 def cleanup(cfg, *, stop_vllm: bool = False):
@@ -136,20 +195,14 @@ def cleanup(cfg, *, stop_vllm: bool = False):
         return
     _cleanup_done = True
     print(f"\n{B}━━━  Shutting down  ━━━{X}", flush=True)
+    stop_local_proxy()
     _stop_spark_tunnel(cfg)
     for proc in _managed:
         if proc.poll() is None:
             _kill_pid(proc.pid, f"process {proc.pid}")
     if stop_vllm:
-        for name in _managed_containers:
-            info(f"Stopping container '{name}'...")
-            subprocess.run(
-                [*cfg.docker_cmd, "stop", name], capture_output=True, timeout=30
-            )
-            if _should_remove_container(cfg):
-                subprocess.run(
-                    [*cfg.docker_cmd, "rm", name], capture_output=True, timeout=30
-                )
+        _stop_engine_containers(cfg)
+        clear_runtime_state(cfg)
     elif _managed_containers or _container_status(cfg) == "running":
         names = _managed_containers or [cfg.container_name]
         ok(f"Leaving {engine_label(cfg)} container running: {', '.join(names)}")

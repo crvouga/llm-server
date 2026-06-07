@@ -4,6 +4,7 @@ from pathlib import Path
 
 from .cloudflare import _cf_public_url
 from .console import ok, section
+from .runtime import write_runtime_state
 
 
 def write_helpers(cfg):
@@ -13,13 +14,14 @@ def write_helpers(cfg):
     d.mkdir(parents=True, exist_ok=True)
 
     label = "Atlas" if cfg.engine == "atlas" else "vLLM"
+    docker = " ".join(cfg.docker_cmd)
     # Atlas serves the OpenAI API but has no dedicated /health route.
-    health_path = "/v1/models" if cfg.engine == "atlas" else "/health"
+    health_path = "/" if cfg.engine == "atlas" else "/health"
 
     (d / "logs.sh").write_text(
         f"#!/usr/bin/env bash\n"
         f'echo "=== {label} (last 50 lines) ==="\n'
-        f"docker logs --tail 50 {cfg.container_name}\n"
+        f"{docker} logs --tail 50 {cfg.container_name}\n"
         f'echo ""\n'
         f'echo "=== Cloudflare tunnel (last 20 lines) ==="\n'
         f"tail -20 {cf_log}\n"
@@ -34,7 +36,7 @@ def write_helpers(cfg):
     (d / "status.sh").write_text(
         f"#!/usr/bin/env bash\n"
         f"G='\\033[0;32m'; R='\\033[0;31m'; Y='\\033[1;33m'; X='\\033[0m'\n"
-        f"docker ps --filter name={cfg.container_name} --format 'table {{{{.Names}}}}\\t{{{{.Status}}}}'\n"
+        f"{docker} ps --filter name={cfg.container_name} --format 'table {{{{.Names}}}}\\t{{{{.Status}}}}'\n"
         f"curl -sf http://localhost:{cfg.vllm_port}{health_path} >/dev/null 2>&1 "
         f'&& echo -e "${{G}}● {label} healthy:{cfg.vllm_port}${{X}}" '
         f'|| echo -e "${{R}}✗ {label} not responding${{X}}"\n'
@@ -52,4 +54,5 @@ def write_helpers(cfg):
     )
     for f in d.glob("*.sh"):
         f.chmod(0o755)
+    write_runtime_state(cfg)
     ok(f"Helpers written to {d}/")

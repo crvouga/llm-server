@@ -37,6 +37,7 @@ from .engine_atlas import ensure_atlas_model, pull_atlas_image, start_atlas
 from .engine_vllm import pull_vllm_image, start_vllm, warmup_vllm
 from .health import _gpu_oom_hint, wait_for_vllm
 from .helpers import write_helpers
+from .local_proxy import start_local_proxy, stop_local_proxy
 from .models import _resolve_model_dir, ensure_models
 from .prechecks import run_prechecks
 from .runtime import (
@@ -45,6 +46,7 @@ from .runtime import (
     _handle_sigterm,
     _request_shutdown,
     cleanup,
+    load_runtime_state,
     register_container,
 )
 from .summary import print_summary
@@ -57,6 +59,7 @@ def _boot_engine(cfg, docker_cmd) -> str:
         boot_mode = start_atlas(cfg, docker_cmd)
         if boot_mode != "ready":
             wait_for_vllm(cfg)
+        start_local_proxy(cfg.service_port, cfg.atlas_internal_port)
         return boot_mode
     boot_mode = start_vllm(cfg, docker_cmd)
     if boot_mode != "ready":
@@ -109,7 +112,9 @@ def main():
 
         tunnel_token = resolve_cf_tunnel_token(cfg)
         _exit_on_shutdown(cfg)
-        cf_url = start_cf_tunnel(cfg, tunnel_token)
+        cf_url = start_cf_tunnel(
+            cfg, tunnel_token, register_proc=runtime.register
+        )
 
         write_helpers(cfg)
         (cfg.helper_dir / "server.pid").write_text(str(os.getpid()))
@@ -140,6 +145,7 @@ def main():
                         f"{oom_hint}\nRecent logs:\n{logs}"
                     )
                 warn("Container exited unexpectedly — restarting...")
+                stop_local_proxy()
                 _boot_engine(cfg, docker_cmd)
             if not runtime._sleep(30):
                 break
@@ -167,7 +173,8 @@ def stop():
     cfg = Config()
     cfg.model_dir = _resolve_model_dir()
     _apply_env_overrides(cfg)
-    cfg.docker_cmd = _resolve_docker_cmd() or ["docker"]
+    if not load_runtime_state(cfg):
+        cfg.docker_cmd = _resolve_docker_cmd() or ["docker"]
     register_container(cfg.container_name)
     cleanup(cfg, stop_vllm=True)
 

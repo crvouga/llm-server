@@ -7,6 +7,7 @@ REMOTE_USER ?=
 REMOTE_HOST ?=
 
 .PHONY: help server-start server-stop server-free server-metrics server-clear-compile-cache server-tune server-install server-check run start stop kill logs status ssh \
+	lm-studio-tunnel lm-studio-stop \
 	proxy-install proxy-dev proxy-check proxy-deploy proxy-db bench \
 	remote-setup-mac remote-verify pull push gh
 
@@ -26,6 +27,10 @@ help:
 	@echo "  make server-check  -> lint + typecheck server code (ruff + pyright)"
 	@echo "  make logs          -> tail engine Docker container logs"
 	@echo "  make status        -> check server process + container"
+	@echo ""
+	@echo "LM Studio tunnel:"
+	@echo "  make lm-studio-tunnel -> tunnel LM Studio :1234 to llm.chrisvouga.dev"
+	@echo "  make lm-studio-stop   -> stop tunnel only (LM Studio keeps running)"
 	@echo ""
 	@echo "Proxy (Cloudflare Worker):"
 	@echo "  make proxy-install -> bun install in proxy/"
@@ -57,11 +62,27 @@ server-start run start:
 server-stop stop kill:
 	@set -euo pipefail; \
 	server_pattern='python3 .*/server/server\.py'; \
-	if pgrep -f "$$server_pattern" >/dev/null 2>&1; then \
+	launcher_pids=$$(pgrep -f "$$server_pattern" 2>/dev/null || true); \
+	if [ -n "$$launcher_pids" ]; then \
 		echo "Stopping llm server launcher..."; \
-		pkill -TERM -f "$$server_pattern" || true; \
+		for pid in $$launcher_pids; do \
+			cmd=$$(tr '\0' ' ' < "/proc/$$pid/cmdline" 2>/dev/null || true); \
+			case "$$cmd" in \
+				*"server/server.py --"*) continue ;; \
+			esac; \
+			kill -TERM "$$pid" 2>/dev/null || true; \
+		done; \
 		for _ in $$(seq 1 10); do \
-			pgrep -f "$$server_pattern" >/dev/null 2>&1 || break; \
+			still_running=false; \
+			for pid in $$(pgrep -f "$$server_pattern" 2>/dev/null || true); do \
+				cmd=$$(tr '\0' ' ' < "/proc/$$pid/cmdline" 2>/dev/null || true); \
+				case "$$cmd" in \
+					*"server/server.py --"*) continue ;; \
+				esac; \
+				still_running=true; \
+				break; \
+			done; \
+			[ "$$still_running" = false ] && break; \
 			sleep 1; \
 		done; \
 	fi; \
@@ -84,6 +105,16 @@ server-clear-compile-cache:
 	@set -euo pipefail; \
 	python3 "$(CURDIR)/server/server.py" --clear-compile-cache
 
+lm-studio-tunnel:
+	@set -euo pipefail; \
+	command -v python3 >/dev/null || { echo "Missing: python3"; exit 1; }; \
+	echo "Starting LM Studio Cloudflare tunnel..."; \
+	PYTHONUNBUFFERED=1 python3 "$(CURDIR)/lm-studio/tunnel"
+
+lm-studio-stop:
+	@set -euo pipefail; \
+	python3 "$(CURDIR)/lm-studio/tunnel" --stop
+
 server-install:
 	@set -euo pipefail; \
 	python3 -m pip install -e ".[dev]"; \
@@ -93,13 +124,15 @@ server-check:
 	@set -euo pipefail; \
 	command -v ruff >/dev/null || { echo "Missing ruff — run: make server-install"; exit 1; }; \
 	command -v pyright >/dev/null || { echo "Missing pyright — run: make server-install"; exit 1; }; \
-	ruff check server tests; \
+	ruff check server lm-studio tests; \
 	pyright
 
 logs:
 	@set -euo pipefail; \
 	docker_cmd="docker"; \
-	if ! docker info >/dev/null 2>&1; then docker_cmd="sudo docker"; fi; \
+	if [ -f "$(HOME)/.spark-serve/runtime.json" ]; then \
+		docker_cmd="$$(python3 -c "import json; print(' '.join(json.load(open('$(HOME)/.spark-serve/runtime.json'))['docker_cmd']))")"; \
+	elif ! docker info >/dev/null 2>&1; then docker_cmd="sudo docker"; fi; \
 	if ! $$docker_cmd ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$(VLLM_CONTAINER)"; then \
 		echo "Container $(VLLM_CONTAINER) not found. Run: make server-start"; \
 		exit 1; \
@@ -115,7 +148,9 @@ status:
 		echo " server process: stopped"; \
 	fi; \
 	docker_cmd="docker"; \
-	if ! docker info >/dev/null 2>&1; then docker_cmd="sudo docker"; fi; \
+	if [ -f "$(HOME)/.spark-serve/runtime.json" ]; then \
+		docker_cmd="$$(python3 -c "import json; print(' '.join(json.load(open('$(HOME)/.spark-serve/runtime.json'))['docker_cmd']))")"; \
+	elif ! docker info >/dev/null 2>&1; then docker_cmd="sudo docker"; fi; \
 	if $$docker_cmd ps --format '{{.Names}}' 2>/dev/null | grep -qx "$(VLLM_CONTAINER)"; then \
 		echo "Container $(VLLM_CONTAINER): running"; \
 	elif $$docker_cmd ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$(VLLM_CONTAINER)"; then \

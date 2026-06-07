@@ -8,7 +8,6 @@ import subprocess
 import time
 
 from .console import die, info, ok, section
-from .runtime import _stop_spark_tunnel, register
 from .webapi import CloudflareAPIError, http_get, http_post, http_put
 
 # Hostnames retired in favour of cfg.cf_tunnel_hostname; dropped from ingress on
@@ -251,12 +250,36 @@ def resolve_cf_tunnel_token(cfg) -> str:
         )
 
 
-def start_cf_tunnel(cfg, tunnel_token):
+def stop_tunnel_connector(cfg, managed_procs=None):
+    """Stop cloudflared for cfg.helper_dir (pid file + optional managed procs)."""
+    from .runtime import _kill_pid
+
+    pid_file = cfg.helper_dir / "cloudflared.pid"
+    if pid_file.exists():
+        try:
+            pid = int(pid_file.read_text().strip())
+            _kill_pid(pid, "Cloudflare tunnel")
+        except (OSError, ValueError):
+            pass
+        pid_file.unlink(missing_ok=True)
+
+    for proc in list(managed_procs or ()):
+        if proc.poll() is not None:
+            continue
+        try:
+            with open(f"/proc/{proc.pid}/cmdline", "rb") as fh:
+                if b"cloudflared" in fh.read():
+                    _kill_pid(proc.pid, "Cloudflare tunnel")
+        except OSError:
+            pass
+
+
+def start_cf_tunnel(cfg, tunnel_token, *, register_proc=None, stop_hint="make server-stop"):
     section("Starting Cloudflare tunnel")
     cf_log = cfg.helper_dir / "cloudflare-tunnel.log"
     cfg.helper_dir.mkdir(parents=True, exist_ok=True)
 
-    _stop_spark_tunnel(cfg)
+    stop_tunnel_connector(cfg, managed_procs=())
     time.sleep(1)
 
     log_file = open(cf_log, "w")
@@ -267,9 +290,10 @@ def start_cf_tunnel(cfg, tunnel_token):
         start_new_session=True,
     )
     (cfg.helper_dir / "cloudflared.pid").write_text(str(proc.pid))
-    register(proc)
+    if register_proc:
+        register_proc(proc)
     info(
-        f"Tunnel managed by this process — stops on Ctrl+C / make server-stop "
+        f"Tunnel managed by this process — stops on Ctrl+C / {stop_hint} "
         f"({cfg.cf_tunnel_hostname})"
     )
 
