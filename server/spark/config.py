@@ -22,7 +22,7 @@ class Config:
     hf_token: str = ""
 
     # Cloudflare tunnel — connector token fetched via CLOUDFLARE_API_TOKEN at runtime
-    cf_tunnel_name: str = "spark-serve"
+    cf_tunnel_name: str = "llm"
     cf_tunnel_hostname: str = "llm.chrisvouga.dev"
 
     # Models
