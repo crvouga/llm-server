@@ -63,6 +63,9 @@ jobs:
         run: |
           doppler run -- bash database/setup.sh
 
+      - name: Install wrangler CLI
+        run: npm install -g wrangler
+
       - name: Install proxy dependencies
         working-directory: proxy
         run: bun install
