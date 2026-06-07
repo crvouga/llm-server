@@ -80,4 +80,4 @@ jobs:
           # Upload runtime secrets from Doppler (wrangler deploy does not auto-upload env vars).
           # wrangler secret put reads the value from stdin, not a positional arg.
           doppler run -- sh -c 'printf "%s" "$DATABASE_URL" | wrangler secret put DATABASE_URL'
-          wrangler deploy
+          doppler run -- wrangler deploy
