@@ -6,7 +6,7 @@ REMOTE_ACCESS_MD ?= remote-access/REMOTE-ACCESS.md
 REMOTE_USER ?=
 REMOTE_HOST ?=
 
-.PHONY: help server-start server-stop server-stop-hard server-free server-metrics server-clear-compile-cache run start stop kill logs status ssh \
+.PHONY: help server-start server-stop server-stop-hard server-free server-metrics server-bench server-clear-compile-cache run start stop kill logs status ssh \
 	proxy-install proxy-dev proxy-check proxy-deploy proxy-db \
 	remote-setup-mac remote-verify pull push gh
 
@@ -19,6 +19,8 @@ help:
 	@echo "  make server-free -> reclaim RAM/GPU before starting (./server/free.sh)"
 	@echo "  make server-metrics -> CPU/RAM/GPU/disk + LLM health snapshot"
 	@echo "                         METRICS_ARGS='--json' or '--watch 5' for options"
+	@echo "  make server-bench   -> benchmark llm-proxy (model + tokens/sec)"
+	@echo "                         BENCH_ARGS='--json' or BENCH_RUNS=3 for options"
 	@echo "  make server-clear-compile-cache -> wipe torch/Triton cache (fixes missing cubin errors)"
 	@echo "  make logs          -> tail vLLM Docker container logs"
 	@echo "  make status        -> check server process + container"
@@ -83,6 +85,10 @@ server-free:
 server-metrics:
 	@set -euo pipefail; \
 	"$(CURDIR)/server/metrics.sh" $(METRICS_ARGS)
+
+server-bench:
+	@set -euo pipefail; \
+	"$(CURDIR)/server/bench.sh" $(BENCH_ARGS)
 
 server-clear-compile-cache:
 	@set -euo pipefail; \
