@@ -65,7 +65,10 @@ else
 fi
 
 # Verify NVIDIA container toolkit
-if ! $DOCKER run --rm --gpus all nvidia/cuda:12.0-base-ubuntu22.04 nvidia-smi &>/dev/null; then
+if ! $DOCKER run --rm --runtime nvidia \
+  -e NVIDIA_VISIBLE_DEVICES=all \
+  -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+  nvidia/cuda:12.0.0-base-ubuntu22.04 nvidia-smi &>/dev/null; then
   info "NVIDIA container toolkit not found — installing..."
   curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
   curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
@@ -74,6 +77,8 @@ if ! $DOCKER run --rm --gpus all nvidia/cuda:12.0-base-ubuntu22.04 nvidia-smi &>
   sudo apt-get update -qq
   sudo apt-get install -y -q nvidia-container-toolkit
   sudo nvidia-ctk runtime configure --runtime=docker
+  sudo mkdir -p /etc/cdi
+  sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml 2>/dev/null || true
   sudo systemctl restart docker
   ok "NVIDIA container toolkit installed"
 else
@@ -176,7 +181,9 @@ info "Starting container (first request after boot takes ~30 s for CUDA graph ca
 
 $DOCKER run -d \
   --name "$CONTAINER_NAME" \
-  --gpus all \
+  --runtime nvidia \
+  -e NVIDIA_VISIBLE_DEVICES=all \
+  -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
   --network host \
   --ipc host \
   --ulimit memlock=-1:-1 \
@@ -236,7 +243,7 @@ ok "Warmup done — server is at full speed"
 section "Starting Cloudflare tunnel"
 
 # Kill any existing tunnel for this token
-pkill -f "cloudflared tunnel run" 2>/dev/null || true
+pkill -f "cloudflared tunnel --no-autoupdate run --token" 2>/dev/null || true
 sleep 1
 
 # Run tunnel in background, redirect output to log file
@@ -295,7 +302,7 @@ echo "Stopping vLLM container..."
 docker stop ${CONTAINER_NAME} 2>/dev/null || true
 docker rm ${CONTAINER_NAME} 2>/dev/null || true
 echo "Stopping Cloudflare tunnel..."
-pkill -f "cloudflared tunnel run" 2>/dev/null || true
+pkill -f "cloudflared tunnel --no-autoupdate run --token" 2>/dev/null || true
 echo "Done."
 EOF
 chmod +x "$HELPER_DIR/stop.sh"

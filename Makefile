@@ -27,7 +27,7 @@ GITHUB_REPO ?=
 .PHONY: help venv install setup doctor ensure-system-deps plan apply apply-auto status destroy destroy-auto \
 	start stop restart logs logs-cloudflared \
 	service-status shell clean-venv ssh-target target-tmux pull push gh \
-	check test doppler-seed-github-secrets setup-tunnel run
+	check test doppler-seed-github-secrets setup-tunnel run kill
 
 help:
 	@echo "Targets:"
@@ -57,6 +57,7 @@ help:
 	@echo "  make doppler-seed-github-secrets -> seed DOPPLER_SERVICE_TOKEN in GitHub secrets"
 	@echo "  make setup-tunnel   -> one-shot Cloudflare tunnel for LM Studio (port 1234 → lm-studio.chrisvouga.dev)"
 	@echo "  make run            -> start vLLM + DFlash server (requires Docker, NVIDIA toolkit, Doppler login)"
+	@echo "  make kill           -> stop the llm server started by make run"
 	@echo ""
 	@echo "Overrides:"
 	@echo "  SPEC=<path> STATE=<path> make plan"
@@ -117,11 +118,26 @@ ensure-system-deps:
 		install -m 0755 "$$tmp_dir/doppler" "$(LOCAL_BIN)/doppler"; \
 		rm -rf "$$tmp_dir"; \
 	fi; \
+	if ! command -v aichat >/dev/null; then \
+		echo "Installing aichat to $(LOCAL_BIN)..."; \
+		arch="$$(uname -m)"; \
+		case "$$arch" in \
+			x86_64) aichat_arch="x86_64-unknown-linux-musl" ;; \
+			aarch64|arm64) aichat_arch="aarch64-unknown-linux-musl" ;; \
+			*) echo "Unsupported architecture for aichat: $$arch"; exit 1 ;; \
+		esac; \
+		version="$$(python3 -c 'import json,urllib.request; print(json.load(urllib.request.urlopen("https://api.github.com/repos/sigoden/aichat/releases/latest"))["tag_name"].lstrip("v"))')"; \
+		tmp_dir="$$(mktemp -d)"; \
+		curl -fsSL "https://github.com/sigoden/aichat/releases/download/v$$version/aichat-v$${version}-$${aichat_arch}.tar.gz" -o "$$tmp_dir/aichat.tar.gz"; \
+		tar -xzf "$$tmp_dir/aichat.tar.gz" -C "$$tmp_dir"; \
+		install -m 0755 "$$tmp_dir/aichat" "$(LOCAL_BIN)/aichat"; \
+		rm -rf "$$tmp_dir"; \
+	fi; \
 	echo "System dependencies ensured."
 
 doctor:
 	@echo "Checking required binaries..."
-	@for cmd in python3 curl rg doppler cloudflared; do \
+	@for cmd in python3 curl rg doppler cloudflared aichat; do \
 		command -v "$$cmd" >/dev/null || { echo "Missing: $$cmd"; exit 1; }; \
 		echo "  - $$cmd: OK"; \
 	done
@@ -301,4 +317,35 @@ run:
 	command -v docker >/dev/null || { echo "Missing: docker"; exit 1; }; \
 	echo "Starting vLLM + DFlash server..."; \
 	PYTHONUNBUFFERED=1 python3 "$(CURDIR)/server/server.py"
+
+kill:
+	@set -euo pipefail; \
+	server_pattern='python3 .*/server/server\.py'; \
+	container_name="vllm-qwen36-dflash"; \
+	helper_dir="$(HOME)/.spark-serve"; \
+	if pgrep -f "$$server_pattern" >/dev/null 2>&1; then \
+		echo "Stopping llm server (server/server.py)..."; \
+		pkill -TERM -f "$$server_pattern" || true; \
+		for _ in $$(seq 1 10); do \
+			pgrep -f "$$server_pattern" >/dev/null 2>&1 || break; \
+			sleep 1; \
+		done; \
+		pkill -KILL -f "$$server_pattern" 2>/dev/null || true; \
+	else \
+		echo "No running server/server.py process found."; \
+	fi; \
+	docker_cmd="docker"; \
+	if ! docker info >/dev/null 2>&1; then docker_cmd="sudo docker"; fi; \
+	if $$docker_cmd ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$$container_name"; then \
+		echo "Stopping container $$container_name..."; \
+		$$docker_cmd stop "$$container_name" 2>/dev/null || true; \
+		$$docker_cmd rm "$$container_name" 2>/dev/null || true; \
+	fi; \
+	if [ -f "$$helper_dir/cloudflared.pid" ]; then \
+		echo "Stopping Cloudflare tunnel..."; \
+		kill "$$(cat "$$helper_dir/cloudflared.pid")" 2>/dev/null || true; \
+		rm -f "$$helper_dir/cloudflared.pid"; \
+	fi; \
+	pkill -TERM -f '^cloudflared tunnel --no-autoupdate run --token ' 2>/dev/null || true; \
+	echo "Done."
 
