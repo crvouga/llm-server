@@ -47,7 +47,7 @@ async function logRequest(
   statusCode: number,
   responseHeaders: Headers,
   responseBody: unknown | null,
-  errorMessage?: string
+  errorMessage?: string,
 ): Promise<void> {
   if (!env.DATABASE_URL) {
     console.warn('DATABASE_URL not configured, skipping request logging');
@@ -145,23 +145,25 @@ export default {
       response = await fetch(targetUrl, init);
     } catch (error) {
       // Log the error and return 503
-      ctx.waitUntil(logRequest(
-        env,
-        requestId,
-        request.method,
-        path,
-        requestUrl.searchParams,
-        request.headers,
-        null,
-        503,
-        new Headers(),
-        { error: 'Backend unavailable', details: String(error) },
-        error instanceof Error ? error.message : String(error)
-      ));
+      ctx.waitUntil(
+        logRequest(
+          env,
+          requestId,
+          request.method,
+          path,
+          requestUrl.searchParams,
+          request.headers,
+          null,
+          503,
+          new Headers(),
+          { error: 'Backend unavailable', details: String(error) },
+          error instanceof Error ? error.message : String(error),
+        ),
+      );
 
       return new Response(
         JSON.stringify({ error: 'Backend unavailable', details: String(error) }),
-        { status: 503 }
+        { status: 503 },
       );
     }
 
@@ -190,8 +192,8 @@ export default {
         response.status,
         response.headers,
         responseBody,
-        undefined
-      )
+        undefined,
+      ),
     );
 
     console.log(`[${requestId}] ${response.status} ${path}`);
