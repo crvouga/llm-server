@@ -112,6 +112,8 @@ def _apply_env_overrides(cfg: "Config") -> None:
         cfg.rope_scaling_enabled = rope.lower() not in ("0", "false", "no", "off")
     if native := os.environ.get("VLLM_NATIVE_CONTEXT_LEN"):
         cfg.native_context_len = int(native)
+    if backend := os.environ.get("VLLM_ATTENTION_BACKEND"):
+        cfg.attention_backend = backend
 
 
 def _boot_time_hint(cfg: "Config") -> str:
@@ -158,6 +160,7 @@ def _vllm_launch_fingerprint(cfg: "Config") -> str:
             "speculative": _speculative_config_json(cfg),
             "rope_scaling": _rope_scaling_json(cfg),
             "kv_cache_dtype": cfg.kv_cache_dtype,
+            "attention_backend": cfg.attention_backend,
             "native_context_len": _model_native_context(cfg),
             "port": cfg.vllm_port,
         },
@@ -375,6 +378,10 @@ class Config:
     kv_cache_dtype: str = "auto"
     rope_scaling_enabled: bool = True
     native_context_len: int = 0  # 0 = auto-detect from model config.json
+    # flash_attn handles both the main model (causal) and the DFlash drafter /
+    # vision encoder (non-causal). flashinfer raises "non-causal attention not
+    # supported" for the diffusion drafter, so do not switch without testing.
+    attention_backend: str = "flash_attn"
     gpu_mem_util: float = 0.85
     max_num_seqs: int = 16  # hard ceiling on GB10
     max_batched_tokens: int = 16384
@@ -1601,7 +1608,7 @@ def start_vllm(cfg, docker_cmd) -> str:
             "--reasoning-parser",
             "qwen3",
             "--attention-backend",
-            "flashinfer",
+            str(cfg.attention_backend),
             "--speculative-config",
             spec_config,
     ]
