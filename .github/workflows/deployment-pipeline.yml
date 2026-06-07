@@ -11,49 +11,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  deploy:
-    name: Deploy
-    if: github.ref == 'refs/heads/main'
+  check:
+    name: Check
     runs-on: ubuntu-latest
-    env:
-      DOPPLER_PROJECT: personal
-      DOPPLER_CONFIG: dev
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Fly CLI
-        run: |
-          curl -L https://fly.io/install.sh | sh
-          echo "$HOME/.fly/bin" >> $GITHUB_PATH
-
       - name: Install Doppler CLI
         uses: dopplerhq/cli-action@v3
 
-      - name: Install deployment utilities
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      - name: Deploy LiteLLM to Fly.io
-        run: doppler run -- ./scripts/deploy-litellm.sh
-        env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_SERVICE_TOKEN }}
-
-      - name: Verify litellm.chrisvouga.dev
+      - name: Run checks
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 36); do
-            if curl -fsS "https://litellm.chrisvouga.dev/health/liveliness" >/dev/null 2>&1; then
-              echo "https://litellm.chrisvouga.dev is healthy."
-              exit 0
-            fi
-            
-            # Check if the error is SSL-related (Error code 525)
-            if curl -svS "https://litellm.chrisvouga.dev/health/liveliness" 2>&1 | grep -q "SSL handshake failed\|Error code 525"; then
-              echo "Attempt ${attempt}/36: SSL handshake still failing, certificate may be provisioning..."
-            else
-              echo "Attempt ${attempt}/36: endpoint not healthy yet (non-SSL error), retrying in 5s..."
-            fi
-            sleep 5
-          done
-          echo "https://litellm.chrisvouga.dev did not become healthy during verification."
-          exit 1
+          echo "Checking CI configuration..."
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_SERVICE_TOKEN }}

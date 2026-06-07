@@ -23,13 +23,11 @@ COMMIT_MSG ?=
 DOPPLER_PROJECT ?= personal
 DOPPLER_CONFIG ?= dev
 GITHUB_REPO ?=
-LITELLM_DIR := litellm
-LITELLM_APP := litellm-chrisvouga
 
 .PHONY: help venv install setup doctor ensure-system-deps plan apply apply-auto status destroy destroy-auto \
 	start stop restart logs logs-cloudflared \
 	service-status shell clean-venv ssh-target target-tmux pull push gh \
-	check test deploy-litellm litellm-status doppler-seed-github-secrets setup-tunnel
+	check test doppler-seed-github-secrets setup-tunnel
 
 help:
 	@echo "Targets:"
@@ -56,8 +54,6 @@ help:
 	@echo "  make gh             -> open GitHub webpage for this repo"
 	@echo "  make check          -> run all CI checks (Python tests)"
 	@echo "  make test           -> run Python tests"
-	@echo "  make deploy-litellm -> deploy LiteLLM proxy to Fly.io (requires Doppler secrets)"
-	@echo "  make litellm-status -> show Fly.io app status for LiteLLM"
 	@echo "  make doppler-seed-github-secrets -> seed DOPPLER_SERVICE_TOKEN in GitHub secrets"
 	@echo "  make setup-tunnel   -> one-shot Cloudflare tunnel for LM Studio (port 1234 → lm-studio.chrisvouga.dev)"
 	@echo ""
@@ -145,13 +141,6 @@ check: test
 
 test: install
 	@"$(VENV)/bin/pytest" -q
-
-deploy-litellm:
-	@doppler run --project "$(DOPPLER_PROJECT)" --config "$(DOPPLER_CONFIG)" -- ./scripts/deploy-litellm.sh
-
-litellm-status:
-	@fly status -a "$(LITELLM_APP)"
-
 
 doppler-seed-github-secrets:
 	@set -euo pipefail; \
