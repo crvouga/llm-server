@@ -11,8 +11,7 @@ venv/
 
 # Build artifacts
 build/
-dist/
-*.egg-info/
+dist/*.egg-info/
 
 # Local secrets/config
 .env
@@ -22,8 +21,11 @@ dist/
 # Local runtime state
 state/*.json
 
+# Proxy project
+proxy/node_modules/
+proxy/.wrangler/
+
 # IDE/editor noise
 .DS_Store
 .idea/
 .vscode/
-
