@@ -28,7 +28,9 @@ Client → llm-proxy.chrisvouga.dev → Cloudflare Worker → lm-studio.chrisvou
 
    Or manually run:
    ```sql
-   CREATE TABLE IF NOT EXISTS http_log (
+   CREATE SCHEMA IF NOT EXISTS llm_proxy;
+
+   CREATE TABLE IF NOT EXISTS llm_proxy.http_log (
      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
      request_method VARCHAR(16) NOT NULL,
@@ -42,9 +44,9 @@ Client → llm-proxy.chrisvouga.dev → Cloudflare Worker → lm-studio.chrisvou
      response_error_message TEXT
    );
 
-   CREATE INDEX IF NOT EXISTS idx_http_log_created_at ON http_log(created_at DESC);
-   CREATE INDEX IF NOT EXISTS idx_http_log_request_method ON http_log(request_method);
-   CREATE INDEX IF NOT EXISTS idx_http_log_request_path ON http_log(request_path);
+   CREATE INDEX IF NOT EXISTS idx_http_log_created_at ON llm_proxy.http_log(created_at DESC);
+   CREATE INDEX IF NOT EXISTS idx_http_log_request_method ON llm_proxy.http_log(request_method);
+   CREATE INDEX IF NOT EXISTS idx_http_log_request_path ON llm_proxy.http_log(request_path);
    ```
 
 2. **Install dependencies**:
@@ -89,7 +91,7 @@ SELECT
   request_method,
   request_path,
   response_status_code
-FROM http_log
+FROM llm_proxy.http_log
 ORDER BY created_at DESC
 LIMIT 10;
 ```
@@ -97,7 +99,7 @@ LIMIT 10;
 ### Find all requests to a specific endpoint
 ```sql
 SELECT id, created_at, request_query_params, request_body, response_body
-FROM http_log
+FROM llm_proxy.http_log
 WHERE request_path = '/v1/chat/completions'
   AND created_at > NOW() - INTERVAL '24 hours'
 ORDER BY created_at DESC;
@@ -111,7 +113,7 @@ SELECT
   response_status_code,
   COUNT(*) as count,
   JSONB_AGG(id) as request_ids
-FROM http_log
+FROM llm_proxy.http_log
 WHERE response_status_code >= 400
 GROUP BY request_method, request_path, response_status_code
 ORDER BY count DESC;
@@ -125,7 +127,7 @@ SELECT
   (response_body->'usage'->>'prompt_tokens')::int as prompt_tokens,
   (response_body->'usage'->>'completion_tokens')::int as completion_tokens,
   response_body->'choices' as choices
-FROM http_log
+FROM llm_proxy.http_log
 WHERE request_path = '/v1/chat/completions'
   AND response_body ? 'usage'
 ORDER BY created_at DESC
@@ -138,7 +140,7 @@ SELECT
   id,
   response_status_code,
   length(CAST(response_body AS TEXT)) as response_size_bytes
-FROM http_log
+FROM llm_proxy.http_log
 WHERE request_path = '/v1/chat/completions'
 ORDER BY response_size_bytes DESC
 LIMIT 10;

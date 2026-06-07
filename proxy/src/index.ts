@@ -90,7 +90,7 @@ async function logRequest(
     ];
 
     const queryText = `
-      INSERT INTO http_log (${columns.join(', ')})
+      INSERT INTO llm_proxy.http_log (${columns.join(', ')})
       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7, $8::jsonb, $9::jsonb, $10::jsonb, $11)
     `;
 

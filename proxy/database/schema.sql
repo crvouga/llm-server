@@ -4,7 +4,10 @@
 -- Neon: UUID extension is pre-installed, but this ensures compatibility
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
-CREATE TABLE IF NOT EXISTS http_log (
+-- Create the schema if it doesn't exist
+CREATE SCHEMA IF NOT EXISTS llm_proxy;
+
+CREATE TABLE IF NOT EXISTS llm_proxy.http_log (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   request_method VARCHAR(16) NOT NULL,
@@ -19,6 +22,6 @@ CREATE TABLE IF NOT EXISTS http_log (
 );
 
 -- Indexes for common queries
-CREATE INDEX IF NOT EXISTS idx_http_log_created_at ON http_log(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_http_log_request_method ON http_log(request_method);
-CREATE INDEX IF NOT EXISTS idx_http_log_request_path ON http_log(request_path);
+CREATE INDEX IF NOT EXISTS idx_http_log_created_at ON llm_proxy.http_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_http_log_request_method ON llm_proxy.http_log(request_method);
+CREATE INDEX IF NOT EXISTS idx_http_log_request_path ON llm_proxy.http_log(request_path);
