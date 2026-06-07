@@ -24,8 +24,10 @@ DOPPLER_PROJECT ?= personal
 DOPPLER_CONFIG ?= dev
 GITHUB_REPO ?=
 
+VLLM_CONTAINER ?= vllm-qwen36-dflash
+
 .PHONY: help venv install setup doctor ensure-system-deps plan apply apply-auto status destroy destroy-auto \
-	start stop restart logs logs-cloudflared \
+	start stop restart logs logs-cloudflared logs-vllm \
 	service-status shell clean-venv ssh-target target-tmux pull push gh \
 	check test doppler-seed-github-secrets setup-tunnel run kill
 
@@ -58,6 +60,7 @@ help:
 	@echo "  make setup-tunnel   -> one-shot Cloudflare tunnel for LM Studio (port 1234 → lm-studio.chrisvouga.dev)"
 	@echo "  make run            -> start vLLM + DFlash server (requires Docker, NVIDIA toolkit, Doppler login)"
 	@echo "  make kill           -> stop the llm server started by make run"
+	@echo "  make logs-vllm      -> tail vLLM Docker container logs (make run)"
 	@echo ""
 	@echo "Overrides:"
 	@echo "  SPEC=<path> STATE=<path> make plan"
@@ -318,10 +321,20 @@ run:
 	echo "Starting vLLM + DFlash server..."; \
 	PYTHONUNBUFFERED=1 python3 "$(CURDIR)/server/server.py"
 
+logs-vllm:
+	@set -euo pipefail; \
+	docker_cmd="docker"; \
+	if ! docker info >/dev/null 2>&1; then docker_cmd="sudo docker"; fi; \
+	if ! $$docker_cmd ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$(VLLM_CONTAINER)"; then \
+		echo "Container $(VLLM_CONTAINER) not found. Run: make run"; \
+		exit 1; \
+	fi; \
+	$$docker_cmd logs -f "$(VLLM_CONTAINER)"
+
 kill:
 	@set -euo pipefail; \
 	server_pattern='python3 .*/server/server\.py'; \
-	container_name="vllm-qwen36-dflash"; \
+	container_name="$(VLLM_CONTAINER)"; \
 	helper_dir="$(HOME)/.spark-serve"; \
 	if pgrep -f "$$server_pattern" >/dev/null 2>&1; then \
 		echo "Stopping llm server (server/server.py)..."; \
