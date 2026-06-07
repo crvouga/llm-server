@@ -1177,9 +1177,11 @@ def _rope_scaling_json(cfg: "Config") -> str:
     factor = math.ceil(cfg.max_model_len / native)
     return json.dumps(
         {
-            "rope_type": "yarn",
-            "factor": factor,
-            "original_max_position_embeddings": native,
+            "rope_parameters": {
+                "rope_type": "yarn",
+                "factor": factor,
+                "original_max_position_embeddings": native,
+            }
         },
         sort_keys=True,
     )
@@ -1537,7 +1539,7 @@ def start_vllm(cfg, docker_cmd) -> str:
     if rope_config:
         info(
             f"Context window: {cfg.max_model_len} tokens "
-            f"(YaRN {json.loads(rope_config)['factor']}x over native {native_ctx})"
+            f"(YaRN {json.loads(rope_config)['rope_parameters']['factor']}x over native {native_ctx})"
         )
     else:
         info(f"Context window: {cfg.max_model_len} tokens (native {native_ctx})")
@@ -1588,7 +1590,7 @@ def start_vllm(cfg, docker_cmd) -> str:
             spec_config,
     ]
     if rope_config:
-        vllm_serve_args.extend(["--rope-scaling", rope_config])
+        vllm_serve_args.extend(["--hf-overrides", rope_config])
 
     run(
         [
@@ -1867,7 +1869,7 @@ def _context_summary(cfg) -> str:
     rope = _rope_scaling_json(cfg)
     if rope:
         native = _model_native_context(cfg)
-        factor = json.loads(rope)["factor"]
+        factor = json.loads(rope)["rope_parameters"]["factor"]
         return (
             f"{cfg.max_model_len} tokens (YaRN {factor}x over {native}, "
             f"KV {cfg.kv_cache_dtype})"
