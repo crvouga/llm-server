@@ -77,7 +77,6 @@ jobs:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_SERVICE_TOKEN }}
           DOPPLER_CONFIG: dev
         run: |
-          # Upload runtime secrets from Doppler (wrangler deploy does not auto-upload env vars).
-          # wrangler secret put reads the value from stdin, not a positional arg.
+          # Wrangler authenticates with CLOUDFLARE_API_TOKEN from Doppler.
           doppler run -- sh -c 'printf "%s" "$DATABASE_URL" | wrangler secret put DATABASE_URL'
-          doppler run -- wrangler deploy
+          doppler run -- sh -c 'test -n "$CLOUDFLARE_API_TOKEN" && wrangler deploy'

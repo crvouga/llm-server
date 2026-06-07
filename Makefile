@@ -29,7 +29,7 @@ VLLM_CONTAINER ?= vllm-qwen36-dflash
 .PHONY: help venv install setup doctor ensure-system-deps plan apply apply-auto status destroy destroy-auto \
 	start stop restart logs logs-cloudflared logs-vllm \
 	service-status shell clean-venv ssh-target target-tmux pull push gh \
-	check test doppler-seed-github-secrets setup-tunnel run kill
+	check test doppler-seed-github-secrets setup-tunnel run kill configure-always-on monitor
 
 help:
 	@echo "Targets:"
@@ -57,10 +57,18 @@ help:
 	@echo "  make check          -> run all CI checks (Python tests)"
 	@echo "  make test           -> run Python tests"
 	@echo "  make doppler-seed-github-secrets -> seed DOPPLER_SERVICE_TOKEN in GitHub secrets"
-	@echo "  make setup-tunnel   -> one-shot Cloudflare tunnel for LM Studio (port 1234 → lm-studio.chrisvouga.dev)"
+	@echo "  make setup-tunnel       -> Cloudflare tunnel for LM Studio (port 1234 → lm-studio.chrisvouga.dev)"
+	@echo "  make setup-vllm-tunnel  -> Cloudflare tunnel routes for vLLM (port 8000 → vllm.chrisvouga.dev)"
 	@echo "  make run            -> start vLLM + DFlash server (requires Docker, NVIDIA toolkit, Doppler login)"
+	@echo "                         Doppler must have CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID"
+	@echo "                         Reuses booting/healthy/stopped containers. Auto-O2 when compile cache warm + exclusive GPU"
+	@echo "                         VLLM_PRODUCTION=1 for max throughput. VLLM_OPTIMIZATION_LEVEL=0 for fastest boot"
+	@echo "                         VLLM_FORCE_RESTART=1 or VLLM_REMOVE_CONTAINER=1 to recreate container on stop"
+	@echo "                         VLLM_PULL=always to force image pull. VLLM_ALLOW_GPU_SHARING=1 to share GPU with LM Studio"
 	@echo "  make kill           -> stop the llm server started by make run"
 	@echo "  make logs-vllm      -> tail vLLM Docker container logs (make run)"
+	@echo "  make configure-always-on -> disable suspend/hibernate (server-like uptime)"
+	@echo "  make monitor            -> real-time system metrics (Ctrl+C to exit)"
 	@echo ""
 	@echo "Overrides:"
 	@echo "  SPEC=<path> STATE=<path> make plan"
@@ -314,12 +322,23 @@ setup-tunnel:
 	command -v cloudflared >/dev/null || { echo "cloudflared not found. Run: make ensure-system-deps"; exit 1; }; \
 	bash "$(CURDIR)/scripts/setup-tunnel.sh"
 
+setup-vllm-tunnel:
+	@set -euo pipefail; \
+	command -v python3 >/dev/null || { echo "Missing: python3"; exit 1; }; \
+	bash "$(CURDIR)/scripts/setup-vllm-tunnel.sh"
+
 run:
 	@set -euo pipefail; \
 	command -v python3 >/dev/null || { echo "Missing: python3"; exit 1; }; \
 	command -v docker >/dev/null || { echo "Missing: docker"; exit 1; }; \
 	echo "Starting vLLM + DFlash server..."; \
 	PYTHONUNBUFFERED=1 python3 "$(CURDIR)/server/server.py"
+
+configure-always-on:
+	@sudo bash "$(CURDIR)/scripts/configure-always-on.sh"
+
+monitor:
+	@bash "$(CURDIR)/scripts/monitor.sh"
 
 logs-vllm:
 	@set -euo pipefail; \
@@ -334,8 +353,6 @@ logs-vllm:
 kill:
 	@set -euo pipefail; \
 	server_pattern='python3 .*/server/server\.py'; \
-	container_name="$(VLLM_CONTAINER)"; \
-	helper_dir="$(HOME)/.spark-serve"; \
 	if pgrep -f "$$server_pattern" >/dev/null 2>&1; then \
 		echo "Stopping llm server (server/server.py)..."; \
 		pkill -TERM -f "$$server_pattern" || true; \
@@ -343,22 +360,7 @@ kill:
 			pgrep -f "$$server_pattern" >/dev/null 2>&1 || break; \
 			sleep 1; \
 		done; \
-		pkill -KILL -f "$$server_pattern" 2>/dev/null || true; \
-	else \
-		echo "No running server/server.py process found."; \
 	fi; \
-	docker_cmd="docker"; \
-	if ! docker info >/dev/null 2>&1; then docker_cmd="sudo docker"; fi; \
-	if $$docker_cmd ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$$container_name"; then \
-		echo "Stopping container $$container_name..."; \
-		$$docker_cmd stop "$$container_name" 2>/dev/null || true; \
-		$$docker_cmd rm "$$container_name" 2>/dev/null || true; \
-	fi; \
-	if [ -f "$$helper_dir/cloudflared.pid" ]; then \
-		echo "Stopping Cloudflare tunnel..."; \
-		kill "$$(cat "$$helper_dir/cloudflared.pid")" 2>/dev/null || true; \
-		rm -f "$$helper_dir/cloudflared.pid"; \
-	fi; \
-	pkill -TERM -f '^cloudflared tunnel --no-autoupdate run --token ' 2>/dev/null || true; \
-	echo "Done."
+	echo "Stopping vLLM + tunnel..."; \
+	python3 "$(CURDIR)/server/server.py" --stop
 

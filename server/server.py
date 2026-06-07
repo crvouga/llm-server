@@ -14,11 +14,14 @@ Usage:
 
 Secrets via Doppler CLI (`doppler login` + `doppler setup`) or DOPPLER_TOKEN.
 Doppler secrets (project=personal, config=dev):
-    CLOUDFLARE_API_TOKEN   — Cloudflare API token
-    CLOUDFLARE_ACCOUNT_ID  — Cloudflare account ID
+    CLOUDFLARE_API_TOKEN   — Cloudflare API token (required; tunnels, WAF, Workers)
+    CLOUDFLARE_ACCOUNT_ID  — Cloudflare account ID (required)
     HF_TOKEN               — Hugging Face token (optional)
+
+All prechecks run before vLLM starts so config errors fail in seconds, not minutes.
 """
 
+import hashlib
 import json
 import os
 import platform
@@ -33,6 +36,16 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+
+_CONFIG_HASH_LABEL = "spark-serve.config-hash"
+_SERVED_MODEL = "qwen3.6-35b"
+_WARMUP_PROMPT = (
+    "def fibonacci(n: int) -> int:\n"
+    "    if n <= 1:\n"
+    "        return n\n"
+    "    return fibonacci(n - 1) + fibonacci(n - 2)\n"
+)
+_gpu_probe_cache: Optional[tuple[int, int]] = None
 
 # ── ANSI colours ──────────────────────────────────────────────────────────────
 R = "\033[0;31m"
@@ -68,6 +81,122 @@ def die(msg):
     sys.exit(1)
 
 
+def _apply_env_overrides(cfg: "Config") -> None:
+    """Tune boot time vs throughput via env vars (see `make run` help)."""
+    if os.environ.get("VLLM_PRODUCTION", "").lower() in ("1", "true", "yes"):
+        cfg.optimization_level = 2
+        cfg.max_batched_tokens = 32768
+    elif level := os.environ.get("VLLM_OPTIMIZATION_LEVEL"):
+        cfg.optimization_level = int(level)
+    if os.environ.get("VLLM_FAST_BOOT", "").lower() in ("1", "true", "yes"):
+        cfg.optimization_level = 0
+        cfg.max_cudagraph_capture_size = min(cfg.max_cudagraph_capture_size, cfg.max_num_seqs)
+        cfg.max_batched_tokens = min(cfg.max_batched_tokens, 16384)
+    if size := os.environ.get("VLLM_MAX_CUDAGRAPH_CAPTURE_SIZE"):
+        cfg.max_cudagraph_capture_size = int(size)
+    if tokens := os.environ.get("VLLM_MAX_BATCHED_TOKENS"):
+        cfg.max_batched_tokens = int(tokens)
+    if cache := os.environ.get("VLLM_COMPILE_CACHE_DIR"):
+        cfg.compile_cache_dir = Path(cache).expanduser()
+    if hostname := os.environ.get("CF_TUNNEL_HOSTNAME"):
+        cfg.cf_tunnel_hostname = hostname
+    if name := os.environ.get("CF_TUNNEL_NAME"):
+        cfg.cf_tunnel_name = name
+
+
+def _boot_time_hint(cfg: "Config") -> str:
+    if cfg.optimization_level <= 0:
+        return "~1-2 min first boot (O0, no CUDA graphs)"
+    if cfg.optimization_level == 1:
+        return "~3-5 min first boot (O1); restarts faster with compile cache"
+    if cfg.max_cudagraph_capture_size <= cfg.max_num_seqs:
+        return "~4-7 min first boot; restarts ~1-3 min with compile cache"
+    return "~7-10 min first boot (full CUDA graph capture)"
+
+
+def _should_remove_container(cfg: "Config") -> bool:
+    return os.environ.get("VLLM_REMOVE_CONTAINER", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    ) or os.environ.get("VLLM_FORCE_RESTART", "").lower() in ("1", "true", "yes")
+
+
+def _speculative_config_json(cfg: "Config") -> str:
+    return json.dumps(
+        {
+            "method": "dflash",
+            "model": "/models/drafter",
+            "num_speculative_tokens": cfg.dflash_num_spec_tokens,
+        },
+        sort_keys=True,
+    )
+
+
+def _vllm_launch_fingerprint(cfg: "Config") -> str:
+    payload = json.dumps(
+        {
+            "image": cfg.vllm_image,
+            "model": str(_model_path(cfg)),
+            "drafter": str(_drafter_path(cfg)),
+            "optimization_level": cfg.optimization_level,
+            "gpu_mem_util": cfg.gpu_mem_util,
+            "max_model_len": cfg.max_model_len,
+            "max_num_seqs": cfg.max_num_seqs,
+            "max_batched_tokens": cfg.max_batched_tokens,
+            "max_cudagraph_capture_size": cfg.max_cudagraph_capture_size,
+            "speculative": _speculative_config_json(cfg),
+            "port": cfg.vllm_port,
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def _compile_cache_populated(cfg: "Config") -> bool:
+    if not cfg.compile_cache_dir.is_dir():
+        return False
+    for sub in ("torchinductor", "triton"):
+        d = cfg.compile_cache_dir / sub
+        if d.is_dir() and any(d.rglob("*")):
+            return True
+    return False
+
+
+def _resolve_optimization_profile(cfg: "Config") -> None:
+    """Pick optimization level after GPU preflight (env overrides win)."""
+    fast_boot = os.environ.get("VLLM_FAST_BOOT", "").lower() in ("1", "true", "yes")
+    explicit_production = os.environ.get("VLLM_PRODUCTION", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    explicit_level = os.environ.get("VLLM_OPTIMIZATION_LEVEL")
+
+    if fast_boot:
+        cfg.optimization_level = 0
+        cfg.boot_profile = "fast boot (O0)"
+    elif explicit_production:
+        cfg.optimization_level = 2
+        cfg.max_batched_tokens = 32768
+        cfg.boot_profile = "production (O2, VLLM_PRODUCTION=1)"
+    elif explicit_level:
+        cfg.boot_profile = (
+            f"explicit (O{cfg.optimization_level}, VLLM_OPTIMIZATION_LEVEL)"
+        )
+    elif _compile_cache_populated(cfg) and cfg.gpu_exclusive:
+        cfg.optimization_level = 2
+        cfg.max_batched_tokens = 32768
+        cfg.boot_profile = "O2 (warm cache + exclusive GPU)"
+    elif _compile_cache_populated(cfg):
+        cfg.optimization_level = 1
+        cfg.boot_profile = "O1 (warm cache, shared GPU budget)"
+    else:
+        cfg.optimization_level = 1
+        cfg.boot_profile = "O1 (cold cache — building compile cache)"
+    info(f"Auto profile: {cfg.boot_profile}")
+
+
 # ── Config ────────────────────────────────────────────────────────────────────
 @dataclass
 class Config:
@@ -79,10 +208,12 @@ class Config:
     # Secrets — populated from Doppler
     cf_api_token: str = ""
     cf_account_id: str = ""
+    cf_tunnel_token: str = ""
     hf_token: str = ""
 
-    # Cloudflare tunnel
+    # Cloudflare tunnel — connector token fetched via CLOUDFLARE_API_TOKEN at runtime
     cf_tunnel_name: str = "spark-serve"
+    cf_tunnel_hostname: str = "vllm.chrisvouga.dev"
 
     # Models
     # Main:    AEON-7 heretic-NVFP4 — production-stable, correct vLLM key layout
@@ -99,10 +230,20 @@ class Config:
     max_model_len: int = 65536  # 65K: best tradeoff for agentic coding
     gpu_mem_util: float = 0.85
     max_num_seqs: int = 16  # hard ceiling on GB10
+    max_batched_tokens: int = 16384
     dflash_num_spec_tokens: int = 15  # k=15 optimal for code (~78% acceptance)
+    # vLLM defaults capture CUDA graphs up to 512 batch slots; we only run 16 seqs.
+    max_cudagraph_capture_size: int = 16
+    # 0=eager (~1-2 min), 1=balanced (default), 2=production. VLLM_PRODUCTION=1 for O2.
+    optimization_level: int = 1
     container_name: str = "vllm-qwen36-dflash"
     vllm_image: str = "ghcr.io/aeon-7/vllm-spark-omni-q36:v1.2"
+    compile_cache_dir: Path = field(
+        default_factory=lambda: Path.home() / ".cache" / "vllm-spark-compile"
+    )
     docker_cmd: list = field(default_factory=lambda: ["docker"])
+    gpu_exclusive: bool = True
+    boot_profile: str = ""
 
     # Runtime
     helper_dir: Path = field(default_factory=lambda: Path.home() / ".spark-serve")
@@ -113,14 +254,19 @@ _managed: list = []
 _managed_containers: list = []
 _shutdown_requested = False
 _cleanup_done = False
+_runtime_active = False
 
 
 def register(proc):
+    global _runtime_active
+    _runtime_active = True
     _managed.append(proc)
     return proc
 
 
 def register_container(name):
+    global _runtime_active
+    _runtime_active = True
     _managed_containers.append(name)
 
 
@@ -160,36 +306,79 @@ def _exit_on_shutdown(cfg) -> None:
         sys.exit(130)
 
 
+def _kill_pid(pid: int, label: str, timeout: float = 5) -> None:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return
+    info(f"Stopping {label} (PID {pid})...")
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGTERM)
+    except ProcessLookupError:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return
+        time.sleep(0.2)
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGKILL)
+    except ProcessLookupError:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
+def _stop_spark_tunnel(cfg):
+    """Stop the vLLM tunnel started by this server (never touches lm-studio)."""
+    pid_file = cfg.helper_dir / "cloudflared.pid"
+    if pid_file.exists():
+        try:
+            pid = int(pid_file.read_text().strip())
+            _kill_pid(pid, "Cloudflare tunnel")
+        except (OSError, ValueError):
+            pass
+        pid_file.unlink(missing_ok=True)
+
+    for proc in list(_managed):
+        if proc.poll() is not None:
+            continue
+        try:
+            with open(f"/proc/{proc.pid}/cmdline", "rb") as fh:
+                if b"cloudflared" in fh.read():
+                    _kill_pid(proc.pid, "Cloudflare tunnel")
+        except OSError:
+            pass
+
+
 def cleanup(cfg):
-    global _cleanup_done
+    global _cleanup_done, _runtime_active
     if _cleanup_done:
         return
     _cleanup_done = True
     print(f"\n{B}━━━  Shutting down  ━━━{X}", flush=True)
+    _stop_spark_tunnel(cfg)
     for proc in _managed:
         if proc.poll() is None:
-            info(f"Terminating PID {proc.pid}...")
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+            _kill_pid(proc.pid, f"process {proc.pid}")
     for name in _managed_containers:
         info(f"Stopping container '{name}'...")
         subprocess.run(
             [*cfg.docker_cmd, "stop", name], capture_output=True, timeout=30
         )
-        subprocess.run(
-            [*cfg.docker_cmd, "rm", name], capture_output=True, timeout=30
-        )
-    (cfg.helper_dir / "cloudflared.pid").unlink(missing_ok=True)
-    ok("Clean shutdown complete.")
+        if _should_remove_container(cfg):
+            subprocess.run(
+                [*cfg.docker_cmd, "rm", name], capture_output=True, timeout=30
+            )
+    (cfg.helper_dir / "server.pid").unlink(missing_ok=True)
+    _runtime_active = False
+    ok("Clean shutdown complete (vLLM + tunnel stopped).")
 
 
 # ── Doppler ───────────────────────────────────────────────────────────────────
@@ -202,11 +391,27 @@ def _apply_doppler_secrets(cfg, secrets: dict, source: str) -> None:
             )
         return val
 
-    cfg.cf_api_token = require("CLOUDFLARE_API_TOKEN")
-    cfg.cf_account_id = require("CLOUDFLARE_ACCOUNT_ID")
+    cfg.cf_api_token = secrets.get("CLOUDFLARE_API_TOKEN", "").strip()
+    cfg.cf_account_id = secrets.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
+    cfg.cf_tunnel_token = (
+        secrets.get("CF_TUNNEL_TOKEN", "")
+        or secrets.get("CLOUDFLARE_TUNNEL_TOKEN", "")
+    ).strip()
     cfg.hf_token = secrets.get("HF_TOKEN", "")
 
     ok(f"Secrets loaded from {source} ({cfg.doppler_project}/{cfg.doppler_config})")
+    if not cfg.cf_api_token:
+        die(
+            f"Missing CLOUDFLARE_API_TOKEN in Doppler ({cfg.doppler_project}/{cfg.doppler_config}).\n"
+            "  Token needs Account → Cloudflare Tunnel → Edit."
+        )
+    if not cfg.cf_account_id:
+        die(
+            f"Missing CLOUDFLARE_ACCOUNT_ID in Doppler ({cfg.doppler_project}/{cfg.doppler_config})."
+        )
+    ok("CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID loaded")
+    if cfg.cf_tunnel_token:
+        warn("Using CF_TUNNEL_TOKEN override instead of fetching connector token via API")
     if not cfg.hf_token:
         warn("HF_TOKEN not in Doppler — fine for public models")
 
@@ -289,24 +494,49 @@ def fetch_doppler_secrets(cfg):
 
 
 # ── HTTP helpers ──────────────────────────────────────────────────────────────
-def http_get(url, headers=None):
-    req = urllib.request.Request(url)
-    if headers:
-        for k, v in headers.items():
-            req.add_header(k, v)
-    with urllib.request.urlopen(req, timeout=10) as r:
-        return json.loads(r.read())
+class CloudflareAPIError(Exception):
+    def __init__(self, code: int, message: str, body: str = ""):
+        self.code = code
+        self.message = message
+        self.body = body
+        super().__init__(f"HTTP {code}: {message}")
 
 
-def http_post(url, data, headers=None):
-    body = json.dumps(data).encode()
-    req = urllib.request.Request(url, data=body, method="POST")
+def _http_request(method: str, url: str, headers=None, data=None, timeout: int = 10):
+    body = json.dumps(data).encode() if data is not None else None
+    req = urllib.request.Request(url, data=body, method=method)
     req.add_header("Content-Type", "application/json")
     if headers:
         for k, v in headers.items():
             req.add_header(k, v)
-    with urllib.request.urlopen(req, timeout=10) as r:
-        return json.loads(r.read())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode(errors="replace")
+        message = raw
+        try:
+            payload = json.loads(raw)
+            errors = payload.get("errors") or []
+            if errors:
+                message = errors[0].get("message", raw)
+        except json.JSONDecodeError:
+            pass
+        raise CloudflareAPIError(e.code, message, raw) from e
+    except urllib.error.URLError as e:
+        die(f"HTTP request failed for {url}: {e.reason}")
+
+
+def http_get(url, headers=None):
+    return _http_request("GET", url, headers=headers)
+
+
+def http_post(url, data, headers=None):
+    return _http_request("POST", url, headers=headers, data=data)
+
+
+def http_put(url, data, headers=None):
+    return _http_request("PUT", url, headers=headers, data=data)
 
 
 def cf_headers(cfg):
@@ -314,6 +544,19 @@ def cf_headers(cfg):
         "Authorization": f"Bearer {cfg.cf_api_token}",
         "Content-Type": "application/json",
     }
+
+
+def _cf_tunnel_api_base(cfg) -> str:
+    return (
+        f"https://api.cloudflare.com/client/v4/accounts/{cfg.cf_account_id}/cfd_tunnel"
+    )
+
+
+def _cf_api_token_help(cfg) -> str:
+    return (
+        f"Grant CLOUDFLARE_API_TOKEN Account → Cloudflare Tunnel → Edit "
+        f"({cfg.doppler_project}/{cfg.doppler_config})."
+    )
 
 
 def run(cmd, **kwargs):
@@ -517,32 +760,211 @@ def ensure_git_lfs():
     ok("git-lfs installed")
 
 
-# ── Cloudflare tunnel (API-managed) ───────────────────────────────────────────
-def ensure_cf_tunnel(cfg):
-    section("Cloudflare tunnel (API)")
-    base = (
-        f"https://api.cloudflare.com/client/v4/accounts/{cfg.cf_account_id}/cfd_tunnel"
-    )
-    hdrs = cf_headers(cfg)
+# ── Cloudflare tunnel ─────────────────────────────────────────────────────────
+def precheck_cf_tunnel(cfg):
+    section("Precheck: Cloudflare tunnel")
+    if not shutil.which("cloudflared"):
+        die("cloudflared not found — install it or run: make ensure-system-deps")
 
+    if cfg.cf_tunnel_token and len(cfg.cf_tunnel_token) < 40:
+        die(
+            "CF_TUNNEL_TOKEN looks too short — copy the full Docker connector token "
+            "from the Cloudflare Zero Trust dashboard."
+        )
+
+    if not cfg.cf_api_token or not cfg.cf_account_id:
+        die(
+            "Cloudflare API credentials missing from Doppler.\n"
+            + _cf_api_token_help(cfg)
+        )
+
+    info(f"Checking API access for tunnel '{cfg.cf_tunnel_name}'...")
+    try:
+        resp = http_get(
+            f"{_cf_tunnel_api_base(cfg)}?name={cfg.cf_tunnel_name}&is_deleted=false",
+            cf_headers(cfg),
+        )
+    except CloudflareAPIError as e:
+        die(
+            "Cloudflare tunnel precheck failed — refusing to start vLLM.\n\n"
+            f"  API error: HTTP {e.code}: {e.message}\n\n"
+            "  Your CLOUDFLARE_API_TOKEN is valid but lacks tunnel permissions.\n"
+            f"  Fix: {_cf_api_token_help(cfg)}"
+        )
+
+    if not resp.get("success", True):
+        die(f"Cloudflare API returned success=false: {resp}")
+    ok("Cloudflare API can list tunnels")
+
+
+def _cf_public_url(cfg) -> str:
+    return f"https://{cfg.cf_tunnel_hostname}"
+
+
+def _cf_service_url(cfg) -> str:
+    return f"http://127.0.0.1:{cfg.vllm_port}"
+
+
+def merge_tunnel_ingress(
+    existing: list[dict], hostname: str, service: str
+) -> list[dict]:
+    """Merge a public hostname route into tunnel ingress (catch-all last)."""
+    merged: list[dict] = []
+    replaced = False
+    for rule in existing:
+        svc = rule.get("service", "")
+        if rule.get("hostname") == hostname:
+            merged.append(
+                {"hostname": hostname, "service": service, "originRequest": {}}
+            )
+            replaced = True
+        elif "http_status" in str(svc):
+            continue
+        else:
+            merged.append(rule)
+    if not replaced:
+        merged.append(
+            {"hostname": hostname, "service": service, "originRequest": {}}
+        )
+    merged.append({"service": "http_status:404"})
+    return merged
+
+
+def _cf_zone_id_for_hostname(cfg, hostname: str, hdrs: dict) -> str:
+    zone_name = hostname.split(".", 1)[1]
+    resp = http_get(
+        f"https://api.cloudflare.com/client/v4/zones?name={zone_name}", hdrs
+    )
+    zones = resp.get("result", [])
+    if not zones:
+        die(f"Cloudflare zone not found for hostname '{hostname}' (zone: {zone_name})")
+    return zones[0]["id"]
+
+
+def _cf_ensure_tunnel_dns(cfg, tunnel_id: str, hdrs: dict) -> None:
+    hostname = cfg.cf_tunnel_hostname
+    zone_id = _cf_zone_id_for_hostname(cfg, hostname, hdrs)
+    record_name = hostname.split(".", 1)[0]
+    content = f"{tunnel_id}.cfargotunnel.com"
+
+    resp = http_get(
+        f"https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records"
+        f"?type=CNAME&name={hostname}",
+        hdrs,
+    )
+    records = resp.get("result", [])
+    if records:
+        rec = records[0]
+        if rec.get("content") == content and rec.get("proxied"):
+            ok(f"DNS already routed: {hostname} → {content}")
+            return
+        http_put(
+            f"https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records/{rec['id']}",
+            {
+                "type": "CNAME",
+                "name": record_name,
+                "content": content,
+                "proxied": True,
+            },
+            hdrs,
+        )
+    else:
+        http_post(
+            f"https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records",
+            {
+                "type": "CNAME",
+                "name": record_name,
+                "content": content,
+                "proxied": True,
+            },
+            hdrs,
+        )
+    ok(f"DNS routed: {hostname} → {content}")
+
+
+def _ingress_already_routed(
+    existing: list[dict], hostname: str, service: str
+) -> bool:
+    for rule in existing:
+        if rule.get("hostname") == hostname and rule.get("service") == service:
+            return True
+    return False
+
+
+def _cf_ensure_tunnel_ingress(cfg, tunnel_id: str, hdrs: dict) -> None:
+    base = _cf_tunnel_api_base(cfg)
+    service = _cf_service_url(cfg)
+    hostname = cfg.cf_tunnel_hostname
+
+    existing: list[dict] = []
+    try:
+        resp = http_get(f"{base}/{tunnel_id}/configurations", hdrs)
+        existing = resp.get("result", {}).get("config", {}).get("ingress", []) or []
+    except CloudflareAPIError as e:
+        if e.code != 404:
+            raise
+
+    if _ingress_already_routed(existing, hostname, service):
+        ok(f"Tunnel ingress already set: {hostname} → {service}")
+        return
+
+    ingress = merge_tunnel_ingress(existing, hostname, service)
+    http_put(
+        f"{base}/{tunnel_id}/configurations",
+        {"config": {"ingress": ingress}},
+        hdrs,
+    )
+    ok(f"Tunnel ingress: {hostname} → {service}")
+
+
+def _cf_get_or_create_tunnel_id(cfg, hdrs: dict) -> str:
+    base = _cf_tunnel_api_base(cfg)
     resp = http_get(f"{base}?name={cfg.cf_tunnel_name}&is_deleted=false", hdrs)
     tunnels = resp.get("result", [])
-
     if tunnels:
         tunnel_id = tunnels[0]["id"]
         ok(f"Reusing tunnel '{cfg.cf_tunnel_name}' ({tunnel_id})")
-    else:
-        info(f"Creating tunnel '{cfg.cf_tunnel_name}'...")
-        resp = http_post(
-            base,
-            {"name": cfg.cf_tunnel_name, "tunnel_secret": os.urandom(32).hex()},
-            hdrs,
-        )
-        tunnel_id = resp["result"]["id"]
-        ok(f"Created tunnel '{cfg.cf_tunnel_name}' ({tunnel_id})")
+        return tunnel_id
 
-    tok = http_get(f"{base}/{tunnel_id}/token", hdrs)
-    return tok["result"]
+    info(f"Creating tunnel '{cfg.cf_tunnel_name}'...")
+    resp = http_post(
+        base,
+        {
+            "name": cfg.cf_tunnel_name,
+            "tunnel_secret": os.urandom(32).hex(),
+            "config_src": "cloudflare",
+        },
+        hdrs,
+    )
+    tunnel_id = resp["result"]["id"]
+    ok(f"Created tunnel '{cfg.cf_tunnel_name}' ({tunnel_id})")
+    return tunnel_id
+
+
+def resolve_cf_tunnel_token(cfg) -> str:
+    """Return connector token; ensure DNS + ingress for cfg.cf_tunnel_hostname."""
+    section("Resolving Cloudflare tunnel token (API)")
+    base = _cf_tunnel_api_base(cfg)
+    hdrs = cf_headers(cfg)
+
+    try:
+        tunnel_id = _cf_get_or_create_tunnel_id(cfg, hdrs)
+        section(f"Routing tunnel to {_cf_public_url(cfg)}")
+        _cf_ensure_tunnel_ingress(cfg, tunnel_id, hdrs)
+        _cf_ensure_tunnel_dns(cfg, tunnel_id, hdrs)
+
+        if cfg.cf_tunnel_token:
+            ok("Using connector token from secrets (routes updated via API)")
+            return cfg.cf_tunnel_token
+
+        tok = http_get(f"{base}/{tunnel_id}/token", hdrs)
+        return tok["result"]
+    except CloudflareAPIError as e:
+        die(
+            f"Could not configure Cloudflare tunnel via API: HTTP {e.code}: {e.message}\n"
+            + _cf_api_token_help(cfg)
+            + "\n  DNS setup also needs Zone → DNS → Edit on the API token."
+        )
 
 
 # ── Model download ────────────────────────────────────────────────────────────
@@ -581,13 +1003,64 @@ def _drafter_path(cfg):
     return cfg.model_dir / "drafter"
 
 
+def _model_cached(path: Path) -> bool:
+    return path.exists() and any(path.glob("*.safetensors"))
+
+
+def precheck_models(cfg):
+    section("Precheck: models")
+    _ensure_model_dir(cfg)
+    info(f"Model dir: {cfg.model_dir}")
+
+    missing = []
+    if not _model_cached(_model_path(cfg)):
+        missing.append(f"  • {cfg.model} → {_model_path(cfg)}")
+    if not _model_cached(_drafter_path(cfg)):
+        missing.append(f"  • {cfg.dflash_drafter} → {_drafter_path(cfg)}")
+
+    if missing:
+        warn("Models not cached yet — will download after prechecks:")
+        for line in missing:
+            warn(line)
+    else:
+        ok(f"Models cached at {cfg.model_dir}")
+
+
+def precheck_gpu_available(cfg, docker_cmd):
+    section("Precheck: GPU")
+    if shutil.which("nvidia-smi"):
+        r = subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True)
+        if r.returncode == 0:
+            ok(r.stdout.strip().splitlines()[0])
+        else:
+            warn("nvidia-smi failed — continuing, Docker GPU test is authoritative")
+    mem = _probe_gpu(docker_cmd, cfg.vllm_image)
+    if mem is None and not _gpu_test(docker_cmd):
+        die(
+            "GPU not available inside Docker.\n"
+            "  Check: nvidia-smi\n"
+            "  Install: NVIDIA container toolkit"
+        )
+    ok("Docker GPU access OK")
+
+
+def run_prechecks(cfg, docker_cmd):
+    """Validate config and dependencies before the slow vLLM boot."""
+    section("Running prechecks (fail fast)")
+    precheck_cf_tunnel(cfg)
+    precheck_gpu_available(cfg, docker_cmd)
+    precheck_models(cfg)
+    _check_gpu_memory(cfg, docker_cmd)
+    ok("All prechecks passed — starting vLLM")
+
+
 def ensure_models(cfg, docker_cmd):
     section("Checking models")
     info(f"Model dir: {cfg.model_dir}")
     _ensure_model_dir(cfg)
 
     def download_if_missing(repo, local_dir, size_hint):
-        if local_dir.exists() and any(local_dir.glob("*.safetensors")):
+        if _model_cached(local_dir):
             ok(f"Already cached: {repo}")
             return
         local_dir.mkdir(parents=True, exist_ok=True)
@@ -632,15 +1105,46 @@ def ensure_models(cfg, docker_cmd):
 
 
 # ── vLLM container ────────────────────────────────────────────────────────────
+def _image_exists_locally(docker_cmd, image: str) -> bool:
+    return (
+        subprocess.run(
+            [*docker_cmd, "image", "inspect", image],
+            capture_output=True,
+        ).returncode
+        == 0
+    )
+
+
 def pull_vllm_image(cfg, docker_cmd):
     section("Pulling vLLM image")
+    force_pull = os.environ.get("VLLM_PULL", "").lower() in (
+        "always",
+        "1",
+        "true",
+        "yes",
+    )
+    if not force_pull and _image_exists_locally(docker_cmd, cfg.vllm_image):
+        ok(f"Image cached locally: {cfg.vllm_image}")
+        return
+
     info(f"Image: {cfg.vllm_image}  (~9 GB on first pull)")
-    run([*docker_cmd, "pull", cfg.vllm_image])
-    ok("Image ready")
+    try:
+        run([*docker_cmd, "pull", cfg.vllm_image])
+        ok("Image ready")
+    except subprocess.CalledProcessError:
+        if _image_exists_locally(docker_cmd, cfg.vllm_image):
+            warn("Pull failed — using local image")
+            ok(f"Image cached locally: {cfg.vllm_image}")
+        else:
+            raise
 
 
-def _query_cuda_memory(docker_cmd, image: str):
+def _probe_gpu(docker_cmd, image: str) -> Optional[tuple[int, int]]:
     """GB10 reports N/A in nvidia-smi; query CUDA's view from inside a GPU container."""
+    global _gpu_probe_cache
+    if _gpu_probe_cache is not None:
+        return _gpu_probe_cache
+
     r = subprocess.run(
         [
             *docker_cmd,
@@ -662,7 +1166,8 @@ def _query_cuda_memory(docker_cmd, image: str):
         line = line.strip()
         if "," in line and line.split(",", 1)[0].isdigit():
             free_b, total_b = line.split(",", 1)
-            return int(free_b), int(total_b)
+            _gpu_probe_cache = (int(free_b), int(total_b))
+            return _gpu_probe_cache
     return None
 
 
@@ -681,9 +1186,10 @@ def _gpu_compute_processes():
 
 def _check_gpu_memory(cfg, docker_cmd):
     section("Checking GPU memory")
-    mem = _query_cuda_memory(docker_cmd, cfg.vllm_image)
+    mem = _probe_gpu(docker_cmd, cfg.vllm_image)
     if not mem:
         warn("Could not query CUDA memory — skipping preflight check")
+        cfg.gpu_exclusive = False
         return
 
     free_b, total_b = mem
@@ -691,25 +1197,18 @@ def _check_gpu_memory(cfg, docker_cmd):
     total_gib = total_b / (1024**3)
     required_gib = total_gib * cfg.gpu_mem_util
     others = _gpu_compute_processes()
+    allow_sharing = os.environ.get("VLLM_ALLOW_GPU_SHARING", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
     if free_gib >= required_gib:
+        cfg.gpu_exclusive = True
         ok(
             f"GPU memory OK: {free_gib:.1f}/{total_gib:.1f} GiB free "
             f"(budget {required_gib:.1f} GiB at {cfg.gpu_mem_util:.0%})"
         )
-        return
-
-    max_util = (free_gib / total_gib) * 0.98
-    if max_util >= 0.35:
-        warn(
-            f"Only {free_gib:.1f}/{total_gib:.1f} GiB GPU memory free "
-            f"(need {required_gib:.1f} GiB at {cfg.gpu_mem_util:.0%})"
-        )
-        if others:
-            for line in others:
-                warn(f"  GPU process: {line}")
-        cfg.gpu_mem_util = round(max_util - 0.01, 2)
-        warn(f"Lowering --gpu-memory-utilization to {cfg.gpu_mem_util:.2f}")
         return
 
     msg = (
@@ -720,51 +1219,127 @@ def _check_gpu_memory(cfg, docker_cmd):
         msg += "\nStop these GPU processes first:\n  " + "\n  ".join(others)
     msg += (
         "\nDGX Spark has one GPU — only one large model can run at a time. "
-        "Stop LM Studio (or other GPU workloads), then retry."
+        "Stop LM Studio (or other GPU workloads), then run `make run` again."
     )
+
+    if allow_sharing:
+        max_util = (free_gib / total_gib) * 0.98
+        if max_util < 0.35:
+            die(msg)
+        warn(msg)
+        cfg.gpu_exclusive = False
+        cfg.gpu_mem_util = round(max_util - 0.01, 2)
+        warn(
+            f"VLLM_ALLOW_GPU_SHARING=1 — lowering --gpu-memory-utilization "
+            f"to {cfg.gpu_mem_util:.2f}"
+        )
+        return
+
     die(msg)
 
 
-def stop_existing_container(cfg, docker_cmd):
+def _health_ok(cfg) -> bool:
+    url = f"http://localhost:{cfg.vllm_port}/health"
+    try:
+        with urllib.request.urlopen(url, timeout=3) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+def _vllm_ready(cfg) -> bool:
+    if not _health_ok(cfg):
+        return False
+    url = f"http://localhost:{cfg.vllm_port}/v1/models"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as r:
+            data = json.loads(r.read())
+            return any(
+                m.get("id") == _SERVED_MODEL for m in data.get("data", [])
+            )
+    except Exception:
+        return False
+
+
+def _latest_container_log_line(cfg) -> str:
+    logs = _container_logs_tail(cfg, lines=15)
+    for line in reversed(logs.splitlines()):
+        line = line.strip()
+        if line and not line.startswith("["):
+            return line[:120]
+    return ""
+
+
+def _container_config_hash(cfg) -> str:
+    r = subprocess.run(
+        [
+            *cfg.docker_cmd,
+            "inspect",
+            "--format",
+            f"{{{{ index .Config.Labels \"{_CONFIG_HASH_LABEL}\" }}}}",
+            cfg.container_name,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def remove_container(cfg, docker_cmd):
     result = subprocess.run(
         [*docker_cmd, "ps", "-a", "--format", "{{.Names}}"],
         capture_output=True,
         text=True,
     )
-    if cfg.container_name in result.stdout.splitlines():
-        status = subprocess.run(
-            [
-                *docker_cmd,
-                "inspect",
-                "--format",
-                "{{.State.Status}}",
-                cfg.container_name,
-            ],
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-        if status == "running":
-            info(f"Stopping existing container '{cfg.container_name}'...")
-            run([*docker_cmd, "stop", cfg.container_name])
-        run([*docker_cmd, "rm", cfg.container_name])
+    if cfg.container_name not in result.stdout.splitlines():
+        return
+    status = _container_status(cfg)
+    if status == "running":
+        info(f"Stopping existing container '{cfg.container_name}'...")
+        run([*docker_cmd, "stop", cfg.container_name])
+    run([*docker_cmd, "rm", cfg.container_name])
 
 
-def start_vllm(cfg, docker_cmd):
+def start_vllm(cfg, docker_cmd) -> str:
+    """Start or reuse the vLLM container (see return values in main())."""
     section("Starting vLLM + DFlash  [Qwen3.6-35B-A3B NVFP4, k=15]")
     info("Target: 120-150 tok/s on coding workloads via DFlash speculative decoding")
-    info("CUDA graph capture takes 5-10 min on first boot — this is normal")
+    info(f"Boot estimate: {_boot_time_hint(cfg)} (O{cfg.optimization_level})")
+    cfg.compile_cache_dir.mkdir(parents=True, exist_ok=True)
+    if _compile_cache_populated(cfg):
+        info(f"Reusing compile cache at {cfg.compile_cache_dir}")
+    else:
+        info(f"Saving compile cache to {cfg.compile_cache_dir} (speeds up future restarts)")
 
-    stop_existing_container(cfg, docker_cmd)
+    force_restart = _should_remove_container(cfg)
+    status = _container_status(cfg)
+    fingerprint = _vllm_launch_fingerprint(cfg)
+
+    if not force_restart and status == "running":
+        register_container(cfg.container_name)
+        if _vllm_ready(cfg):
+            ok(f"Container '{cfg.container_name}' already healthy — skipping restart")
+            return "ready"
+        info(
+            f"Container '{cfg.container_name}' is still booting — "
+            "waiting without restart (preserves compile progress)"
+        )
+        return "booting"
+
+    if not force_restart and status == "exited":
+        if _container_config_hash(cfg) == fingerprint:
+            info(f"Restarting stopped container '{cfg.container_name}' (docker start)...")
+            run([*docker_cmd, "start", cfg.container_name])
+            register_container(cfg.container_name)
+            ok(f"Container '{cfg.container_name}' started")
+            return "started"
+        warn("Container config changed — recreating")
+        remove_container(cfg, docker_cmd)
+    elif status not in ("missing",):
+        remove_container(cfg, docker_cmd)
+
     register_container(cfg.container_name)
-
-    # DFlash speculative config — drafter at container-internal path
-    spec_config = json.dumps(
-        {
-            "method": "dflash",
-            "model": "/models/drafter",
-            "num_speculative_tokens": cfg.dflash_num_spec_tokens,
-        }
-    )
+    spec_config = _speculative_config_json(cfg)
 
     run(
         [
@@ -773,6 +1348,8 @@ def start_vllm(cfg, docker_cmd):
             "-d",
             "--name",
             cfg.container_name,
+            "--label",
+            f"{_CONFIG_HASH_LABEL}={fingerprint}",
             *_gpu_run_flags(),
             "--network",
             "host",
@@ -787,6 +1364,8 @@ def start_vllm(cfg, docker_cmd):
             str(_model_path(cfg)) + ":/models/main:ro",
             "-v",
             str(_drafter_path(cfg)) + ":/models/drafter:ro",
+            "-v",
+            str(cfg.compile_cache_dir) + ":/root/.cache/vllm",
             "-e",
             "VLLM_ALLOW_LONG_MAX_MODEL_LEN=1",
             "-e",
@@ -797,6 +1376,10 @@ def start_vllm(cfg, docker_cmd):
             "NVIDIA_FORWARD_COMPAT=1",
             "-e",
             "VLLM_TEST_FORCE_FP8_MARLIN=1",
+            "-e",
+            "TORCHINDUCTOR_CACHE_DIR=/root/.cache/vllm/torchinductor",
+            "-e",
+            "TRITON_CACHE_DIR=/root/.cache/vllm/triton",
             "-e",
             "HF_TOKEN=" + cfg.hf_token,
             "-e",
@@ -823,7 +1406,11 @@ def start_vllm(cfg, docker_cmd):
             "--max-num-seqs",
             str(cfg.max_num_seqs),
             "--max-num-batched-tokens",
-            "32768",
+            str(cfg.max_batched_tokens),
+            "--max-cudagraph-capture-size",
+            str(cfg.max_cudagraph_capture_size),
+            "--optimization-level",
+            str(cfg.optimization_level),
             "--gpu-memory-utilization",
             str(cfg.gpu_mem_util),
             "--enable-chunked-prefill",
@@ -843,6 +1430,7 @@ def start_vllm(cfg, docker_cmd):
         ]
     )
     ok(f"Container '{cfg.container_name}' started")
+    return "started"
 
 
 def _container_status(cfg):
@@ -887,63 +1475,99 @@ def _container_logs_tail(cfg, lines=30):
     return (r.stdout + r.stderr).strip()
 
 
+def _health_max_wait(cfg) -> int:
+    return {0: 180, 1: 480, 2: 720}.get(cfg.optimization_level, 480)
+
+
+def _health_poll_interval(elapsed: int) -> int:
+    return 2 if elapsed < 60 else 5
+
+
+def _gpu_oom_hint(logs: str) -> str:
+    lower = logs.lower()
+    if (
+        "less than desired gpu memory utilization" in lower
+        or "out of memory" in lower
+        or "cuda out of memory" in lower
+    ):
+        return (
+            "\nHint: another process (often LM Studio) is using GPU memory. "
+            "Stop it and run `make kill && make run` again.\n"
+        )
+    return ""
+
+
 def wait_for_vllm(cfg):
     section("Waiting for vLLM to be ready")
-    info("Polling /health — CUDA graph capture can take up to 10 min on first boot...")
-    url = f"http://localhost:{cfg.vllm_port}/health"
-    max_wait = 600
+    info(f"Polling /health + /v1/models — {_boot_time_hint(cfg)}")
+    max_wait = _health_max_wait(cfg)
     elapsed = 0
 
     while elapsed < max_wait:
         status = _container_status(cfg)
         if status in ("exited", "dead", "missing"):
+            logs = _container_logs_tail(cfg, lines=80)
             die(
-                f"Container '{cfg.container_name}' is {status}.\n"
-                f"Recent logs:\n{_container_logs_tail(cfg)}"
+                f"Container '{cfg.container_name}' is {status}."
+                f"{_gpu_oom_hint(logs)}\n"
+                f"Recent logs:\n{logs}"
             )
         restarts = _container_restart_count(cfg)
         if (status == "restarting" or restarts >= 2) and elapsed >= 10:
             logs = _container_logs_tail(cfg, lines=80)
-            hint = ""
-            if "less than desired gpu memory utilization" in logs.lower():
-                hint = (
-                    "\nHint: another process (often LM Studio) is using GPU memory. "
-                    "Stop it and run `make kill && make run` again.\n"
-                )
             die(
                 f"Container '{cfg.container_name}' is crash-looping "
-                f"(status={status}, restarts={restarts}).{hint}\n"
+                f"(status={status}, restarts={restarts})."
+                f"{_gpu_oom_hint(logs)}\n"
                 f"Recent logs:\n{logs}"
             )
 
-        try:
-            with urllib.request.urlopen(url, timeout=3) as r:
-                if r.status == 200:
-                    ok(f"vLLM healthy after {elapsed}s")
-                    return
-        except Exception:
-            pass
-        if elapsed > 0 and elapsed % 30 == 0:
-            info(f"Still waiting... ({elapsed}s) [container: {status}]")
+        if _vllm_ready(cfg):
+            ok(f"vLLM ready after {elapsed}s (health + {_SERVED_MODEL})")
+            return
+
+        if elapsed > 0 and elapsed % 15 == 0:
+            hint = _latest_container_log_line(cfg)
+            msg = f"Still waiting... ({elapsed}s) [container: {status}]"
+            if hint:
+                msg += f"\n    latest: {hint}"
+            info(msg)
         _exit_on_shutdown(cfg)
-        if not _sleep(5):
+        interval = _health_poll_interval(elapsed)
+        if not _sleep(interval):
             _exit_on_shutdown(cfg)
-        elapsed += 5
+        elapsed += interval
 
     die(
-        f"vLLM not healthy after {max_wait}s.\n"
+        f"vLLM not ready after {max_wait}s.\n"
         f"Container status: {_container_status(cfg)}\n"
         f"Recent logs:\n{_container_logs_tail(cfg)}"
     )
 
 
 def warmup_vllm(cfg):
-    info("Warming up (2 dummy requests for CUDA graph specialisation)...")
+    if cfg.optimization_level <= 0:
+        ok("Warmup skipped (O0 / eager mode)")
+        return
+    if os.environ.get("VLLM_SKIP_WARMUP", "").lower() in ("1", "true", "yes"):
+        ok("Warmup skipped (VLLM_SKIP_WARMUP)")
+        return
+    if _compile_cache_populated(cfg) and cfg.optimization_level <= 1:
+        ok("Warmup skipped (compile cache present)")
+        return
+    runs = 1 if cfg.optimization_level == 1 else 2
+    info(
+        f"Warming up ({runs} coding-shaped request(s) for CUDA graph specialisation)..."
+    )
     url = f"http://localhost:{cfg.vllm_port}/v1/completions"
     payload = json.dumps(
-        {"model": "qwen3.6-35b", "prompt": "hi", "max_tokens": 1}
+        {
+            "model": _SERVED_MODEL,
+            "prompt": _WARMUP_PROMPT,
+            "max_tokens": 64,
+        }
     ).encode()
-    for _ in range(2):
+    for _ in range(runs):
         try:
             req = urllib.request.Request(url, data=payload)
             req.add_header("Content-Type", "application/json")
@@ -955,23 +1579,6 @@ def warmup_vllm(cfg):
 
 
 # ── Cloudflare tunnel process ─────────────────────────────────────────────────
-def _stop_spark_tunnel(cfg):
-    """Stop only this server's token-based tunnel, not other cloudflared services."""
-    pid_file = cfg.helper_dir / "cloudflared.pid"
-    if pid_file.exists():
-        try:
-            pid = int(pid_file.read_text().strip())
-            os.kill(pid, signal.SIGTERM)
-            time.sleep(1)
-        except (OSError, ValueError):
-            pass
-        pid_file.unlink(missing_ok=True)
-    subprocess.run(
-        ["pkill", "-f", "cloudflared tunnel --no-autoupdate run --token"],
-        capture_output=True,
-    )
-
-
 def start_cf_tunnel(cfg, tunnel_token):
     section("Starting Cloudflare tunnel")
     cf_log = cfg.helper_dir / "cloudflare-tunnel.log"
@@ -989,6 +1596,7 @@ def start_cf_tunnel(cfg, tunnel_token):
     )
     (cfg.helper_dir / "cloudflared.pid").write_text(str(proc.pid))
     register(proc)
+    info(f"Tunnel managed by this process — stops on Ctrl+C / make kill ({cfg.cf_tunnel_hostname})")
 
     info("Waiting for tunnel to connect...")
     time.sleep(6)
@@ -998,13 +1606,7 @@ def start_cf_tunnel(cfg, tunnel_token):
 
     ok(f"Cloudflare tunnel running (PID {proc.pid})")
 
-    log_text = cf_log.read_text()
-    for word in log_text.split():
-        if word.startswith("https://") and (
-            "cloudflare.com" in word or "trycloudflare.com" in word
-        ):
-            return word.strip()
-    return None
+    return _cf_public_url(cfg)
 
 
 # ── Helper scripts ────────────────────────────────────────────────────────────
@@ -1022,16 +1624,10 @@ def write_helpers(cfg):
         f'echo "=== Cloudflare tunnel (last 20 lines) ==="\n'
         f"tail -20 {cf_log}\n"
     )
+    root = Path(__file__).resolve().parent.parent
     (d / "stop.sh").write_text(
         f"#!/usr/bin/env bash\n"
-        f"docker stop {cfg.container_name} 2>/dev/null || true\n"
-        f"docker rm   {cfg.container_name} 2>/dev/null || true\n"
-        f'if [ -f "{d}/cloudflared.pid" ]; then\n'
-        f'  kill "$(cat "{d}/cloudflared.pid")" 2>/dev/null || true\n'
-        f'  rm -f "{d}/cloudflared.pid"\n'
-        f"fi\n"
-        f'pkill -f "cloudflared tunnel --no-autoupdate run --token" 2>/dev/null || true\n'
-        f'echo "Done."\n'
+        f"exec python3 \"{root}/server/server.py\" --stop\n"
     )
     (d / "status.sh").write_text(
         f"#!/usr/bin/env bash\n"
@@ -1048,6 +1644,9 @@ def write_helpers(cfg):
         f"else\n"
         f'  echo -e "${{R}}✗ tunnel not running${{X}}"\n'
         f"fi\n"
+        f"curl -sf {_cf_public_url(cfg)}/health >/dev/null 2>&1 "
+        f'&& echo -e "${{G}}● public: {_cf_public_url(cfg)}${{X}}" '
+        f'|| echo -e "${{Y}}! public: {_cf_public_url(cfg)} (not reachable yet)${{X}}"\n'
     )
     for f in d.glob("*.sh"):
         f.chmod(0o755)
@@ -1062,6 +1661,8 @@ def print_summary(cfg, cf_url):
         f"""
   {B}Model:{X}    {cfg.model}
   {B}DFlash:{X}   {cfg.dflash_drafter} (k={cfg.dflash_num_spec_tokens})
+  {B}Profile:{X}  O{cfg.optimization_level} — {cfg.boot_profile or "default"}
+  {B}GPU budget:{X} {cfg.gpu_mem_util:.0%}  |  compile cache: {"warm" if _compile_cache_populated(cfg) else "cold"}
   {B}Target:{X}   120-150 tok/s on coding  |  300+ tok/s aggregate at concurrency 16
   {B}Context:{X}  {cfg.max_model_len} tokens  |  {B}Max seqs:{X} {cfg.max_num_seqs}
  
@@ -1069,10 +1670,15 @@ def print_summary(cfg, cf_url):
     http://localhost:{cfg.vllm_port}/v1
  
   {B}Public API (Cloudflare):{X}
-    {G}{cf_url + "/v1" if cf_url else "— check Cloudflare Zero Trust dashboard"}{X}
+    {G}{_cf_public_url(cfg)}/v1{X}
  
-  {B}Agent config:{X}
+  {B}Agent config (local):{X}
     base_url  = http://localhost:{cfg.vllm_port}/v1
+    api_key   = not-required
+    model     = qwen3.6-35b
+ 
+  {B}Agent config (public):{X}
+    base_url  = {_cf_public_url(cfg)}/v1
     api_key   = not-required
     model     = qwen3.6-35b
  
@@ -1083,7 +1689,7 @@ def print_summary(cfg, cf_url):
     docker logs -f {cfg.container_name}
 """
     )
-    warn("Keep this process running — Ctrl+C stops tunnel + container cleanly.")
+    warn("Keep this process running — Ctrl+C or `make kill` stops vLLM + tunnel.")
     warn("First novel request shape takes ~30s for CUDA graph specialisation.")
 
 
@@ -1091,6 +1697,7 @@ def print_summary(cfg, cf_url):
 def main():
     cfg = Config()
     cfg.model_dir = _resolve_model_dir()
+    _apply_env_overrides(cfg)
     cfg.doppler_token = os.environ.get("DOPPLER_TOKEN", "")
 
     if platform.machine() != "aarch64":
@@ -1109,22 +1716,29 @@ def main():
         _exit_on_shutdown(cfg)
         ensure_cloudflared()
         ensure_git_lfs()
+        run_prechecks(cfg, docker_cmd)
+        _exit_on_shutdown(cfg)
+
+        _resolve_optimization_profile(cfg)
+
         pull_vllm_image(cfg, docker_cmd)
         _exit_on_shutdown(cfg)
         ensure_models(cfg, docker_cmd)
-        _check_gpu_memory(cfg, docker_cmd)
-        start_vllm(cfg, docker_cmd)
-        wait_for_vllm(cfg)
-        warmup_vllm(cfg)
+        boot_mode = start_vllm(cfg, docker_cmd)
+        if boot_mode != "ready":
+            wait_for_vllm(cfg)
+            warmup_vllm(cfg)
         _exit_on_shutdown(cfg)
 
-        tunnel_token = ensure_cf_tunnel(cfg)
+        tunnel_token = resolve_cf_tunnel_token(cfg)
+        _exit_on_shutdown(cfg)
         cf_url = start_cf_tunnel(cfg, tunnel_token)
 
         write_helpers(cfg)
+        (cfg.helper_dir / "server.pid").write_text(str(os.getpid()))
         print_summary(cfg, cf_url)
 
-        info("Running. Press Ctrl+C to stop everything.")
+        info("Running. Press Ctrl+C or `make kill` to stop vLLM + tunnel.")
         while not _shutdown_requested:
             # Watchdog: restart container if it exits unexpectedly
             r = subprocess.run(
@@ -1139,10 +1753,18 @@ def main():
                 text=True,
             )
             if r.stdout.strip() not in ("running", ""):
+                logs = _container_logs_tail(cfg, lines=80)
+                oom_hint = _gpu_oom_hint(logs)
+                if oom_hint:
+                    die(
+                        f"Container '{cfg.container_name}' exited (likely GPU memory)."
+                        f"{oom_hint}\nRecent logs:\n{logs}"
+                    )
                 warn("Container exited unexpectedly — restarting...")
-                start_vllm(cfg, docker_cmd)
-                wait_for_vllm(cfg)
-                warmup_vllm(cfg)
+                boot_mode = start_vllm(cfg, docker_cmd)
+                if boot_mode != "ready":
+                    wait_for_vllm(cfg)
+                    warmup_vllm(cfg)
             if not _sleep(30):
                 break
 
@@ -1150,14 +1772,49 @@ def main():
         _request_shutdown()
     except SystemExit:
         raise
+    except CloudflareAPIError as e:
+        err(f"Cloudflare API error: HTTP {e.code}: {e.message}")
+        if e.body:
+            err(e.body[:500])
+        raise SystemExit(1) from e
     except Exception as e:
         err(f"Unexpected error: {e}")
         cleanup(cfg)
+        # If vLLM survived cleanup stop failure, say so.
+        if _container_status(cfg) == "running":
+            warn("vLLM container may still be running — run: make kill")
         raise
     finally:
-        if _shutdown_requested:
+        if _shutdown_requested or _runtime_active:
             cleanup(cfg)
 
 
+def stop_managed():
+    """Stop vLLM container + Cloudflare tunnel started by make run."""
+    cfg = Config()
+    cfg.model_dir = _resolve_model_dir()
+    _apply_env_overrides(cfg)
+    cfg.docker_cmd = _resolve_docker_cmd() or ["docker"]
+    register_container(cfg.container_name)
+    cleanup(cfg)
+
+
+def setup_tunnel_only():
+    """Configure DNS + ingress for vLLM without starting the server."""
+    cfg = Config()
+    cfg.model_dir = _resolve_model_dir()
+    _apply_env_overrides(cfg)
+    fetch_doppler_secrets(cfg)
+    ensure_cloudflared()
+    precheck_cf_tunnel(cfg)
+    resolve_cf_tunnel_token(cfg)
+    ok(f"Public API will be at {_cf_public_url(cfg)}/v1 (start with: make run)")
+
+
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] in ("--setup-tunnel", "setup-tunnel"):
+        setup_tunnel_only()
+    elif len(sys.argv) > 1 and sys.argv[1] in ("--stop", "stop"):
+        stop_managed()
+    else:
+        main()
