@@ -1601,7 +1601,7 @@ def start_vllm(cfg, docker_cmd) -> str:
             "--reasoning-parser",
             "qwen3",
             "--attention-backend",
-            "flash_attn",
+            "flashinfer",
             "--speculative-config",
             spec_config,
     ]
