@@ -1535,15 +1535,26 @@ def start_vllm(cfg, docker_cmd) -> str:
     fingerprint = _vllm_launch_fingerprint(cfg)
 
     if not force_restart and status == "running":
-        register_container(cfg.container_name)
         if _vllm_ready(cfg):
+            register_container(cfg.container_name)
             ok(f"Container '{cfg.container_name}' already healthy — skipping restart")
             return "ready"
-        info(
-            f"Container '{cfg.container_name}' is still booting — "
-            "waiting without restart (preserves compile progress)"
-        )
-        return "booting"
+        if _container_config_hash(cfg) != fingerprint:
+            warn("Running container has stale config — recreating")
+            remove_container(cfg, docker_cmd)
+        elif _container_restart_count(cfg) >= 2:
+            warn(
+                f"Running container '{cfg.container_name}' is crash-looping "
+                f"(restarts={_container_restart_count(cfg)}) — recreating"
+            )
+            remove_container(cfg, docker_cmd)
+        else:
+            register_container(cfg.container_name)
+            info(
+                f"Container '{cfg.container_name}' is still booting — "
+                "waiting without restart (preserves compile progress)"
+            )
+            return "booting"
 
     if not force_restart and status == "exited":
         if _container_config_hash(cfg) == fingerprint:

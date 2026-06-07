@@ -6,7 +6,7 @@ REMOTE_ACCESS_MD ?= remote-access/REMOTE-ACCESS.md
 REMOTE_USER ?=
 REMOTE_HOST ?=
 
-.PHONY: help server-start server-stop server-stop-hard server-free-ram server-metrics server-clear-compile-cache run start stop kill logs status ssh \
+.PHONY: help server-start server-stop server-stop-hard server-free server-metrics server-clear-compile-cache run start stop kill logs status ssh \
 	proxy-install proxy-dev proxy-check proxy-deploy proxy-db \
 	remote-setup-mac remote-verify pull push gh
 
@@ -16,7 +16,7 @@ help:
 	@echo "                         VLLM_ALLOW_GPU_SHARING=1 to share GPU with LM Studio"
 	@echo "  make server-stop       -> stop tunnel + launcher (vLLM container stays warm)"
 	@echo "  make server-stop-hard  -> stop everything including vLLM container"
-	@echo "  make server-free-ram -> reclaim RAM/GPU before starting (./server/free-ram.sh)"
+	@echo "  make server-free -> reclaim RAM/GPU before starting (./server/free.sh)"
 	@echo "  make server-metrics -> CPU/RAM/GPU/disk + LLM health snapshot"
 	@echo "                         METRICS_ARGS='--json' or '--watch 5' for options"
 	@echo "  make server-clear-compile-cache -> wipe torch/Triton cache (fixes missing cubin errors)"
@@ -76,9 +76,9 @@ server-stop-hard kill:
 	echo "Stopping vLLM + tunnel..."; \
 	python3 "$(CURDIR)/server/server.py" --stop-hard
 
-server-free-ram:
+server-free:
 	@set -euo pipefail; \
-	"$(CURDIR)/server/free-ram.sh" $(FREE_RAM_ARGS)
+	"$(CURDIR)/server/free.sh" $(FREE_RAM_ARGS)
 
 server-metrics:
 	@set -euo pipefail; \
