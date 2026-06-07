@@ -15,12 +15,13 @@ Local vLLM inference server with Cloudflare tunnel exposure, plus a Cloudflare W
 Requires Docker, NVIDIA container toolkit, and Doppler (`doppler login` + `doppler setup`).
 
 ```bash
-make server-start   # start vLLM + tunnel
-make server-stop    # stop everything
-make server-free-ram   # reclaim RAM/GPU (LM Studio, Docker, page cache)
-make server-metrics    # CPU/RAM/GPU/disk + LLM health snapshot
-make logs     # tail container logs
-make status   # check process + container
+make server-start        # start vLLM + tunnel
+make server-stop         # stop tunnel only (vLLM stays warm for fast restart)
+make server-stop-hard    # stop vLLM container + tunnel
+make server-free-ram     # reclaim RAM/GPU (LM Studio, Docker, page cache)
+make server-metrics      # CPU/RAM/GPU/disk + LLM health snapshot
+make logs                # tail container logs
+make status              # check process + container
 ```
 
 ## Proxy

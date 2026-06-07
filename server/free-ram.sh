@@ -135,8 +135,8 @@ stop_server_managed() {
     info "No server/server.py process running"
   fi
   if [[ -f "${REPO_ROOT}/server/server.py" ]]; then
-    info "Running server/server.py --stop..."
-    run python3 "${REPO_ROOT}/server/server.py" --stop || true
+    info "Running server/server.py --stop-hard..."
+    run python3 "${REPO_ROOT}/server/server.py" --stop-hard || true
   fi
   ok "llm-server stopped"
 }

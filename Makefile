@@ -6,7 +6,7 @@ REMOTE_ACCESS_MD ?= remote-access/REMOTE-ACCESS.md
 REMOTE_USER ?=
 REMOTE_HOST ?=
 
-.PHONY: help server-start server-stop server-free-ram server-metrics server-clear-compile-cache run start stop kill logs status ssh \
+.PHONY: help server-start server-stop server-stop-hard server-free-ram server-metrics server-clear-compile-cache run start stop kill logs status ssh \
 	proxy-install proxy-dev proxy-check proxy-deploy proxy-db \
 	remote-setup-mac remote-verify pull push gh
 
@@ -14,7 +14,8 @@ help:
 	@echo "Server (vLLM):"
 	@echo "  make server-start  -> start LLM server (python3 server/server.py)"
 	@echo "                         VLLM_ALLOW_GPU_SHARING=1 to share GPU with LM Studio"
-	@echo "  make server-stop   -> stop LLM server"
+	@echo "  make server-stop       -> stop tunnel + launcher (vLLM container stays warm)"
+	@echo "  make server-stop-hard  -> stop everything including vLLM container"
 	@echo "  make server-free-ram -> reclaim RAM/GPU before starting (./server/free-ram.sh)"
 	@echo "  make server-metrics -> CPU/RAM/GPU/disk + LLM health snapshot"
 	@echo "                         METRICS_ARGS='--json' or '--watch 5' for options"
@@ -47,11 +48,25 @@ server-start run start:
 	echo "Starting vLLM + DFlash server..."; \
 	PYTHONUNBUFFERED=1 python3 "$(CURDIR)/server/server.py"
 
-server-stop stop kill:
+server-stop stop:
 	@set -euo pipefail; \
 	server_pattern='python3 .*/server/server\.py'; \
 	if pgrep -f "$$server_pattern" >/dev/null 2>&1; then \
-		echo "Stopping llm server (server/server.py)..."; \
+		echo "Stopping llm server launcher (tunnel only; vLLM stays warm)..."; \
+		pkill -TERM -f "$$server_pattern" || true; \
+		for _ in $$(seq 1 10); do \
+			pgrep -f "$$server_pattern" >/dev/null 2>&1 || break; \
+			sleep 1; \
+		done; \
+	fi; \
+	echo "Stopping tunnel (leaving vLLM container running)..."; \
+	python3 "$(CURDIR)/server/server.py" --stop
+
+server-stop-hard kill:
+	@set -euo pipefail; \
+	server_pattern='python3 .*/server/server\.py'; \
+	if pgrep -f "$$server_pattern" >/dev/null 2>&1; then \
+		echo "Stopping llm server launcher..."; \
 		pkill -TERM -f "$$server_pattern" || true; \
 		for _ in $$(seq 1 10); do \
 			pgrep -f "$$server_pattern" >/dev/null 2>&1 || break; \
@@ -59,7 +74,7 @@ server-stop stop kill:
 		done; \
 	fi; \
 	echo "Stopping vLLM + tunnel..."; \
-	python3 "$(CURDIR)/server/server.py" --stop
+	python3 "$(CURDIR)/server/server.py" --stop-hard
 
 server-free-ram:
 	@set -euo pipefail; \

@@ -5,8 +5,9 @@ spark_serve.py — vLLM + DFlash + Cloudflare Tunnel for DGX Spark / GB10
 Model:   Qwen3.6-35B-A3B (NVFP4, GB10-optimised) + DFlash speculative decoding
 Target:  120-150 tok/s single-stream on coding workloads
 
-Idempotent. Manages its own process group. Kill the script (Ctrl+C or
-SIGTERM) and it cleans up everything it started: container + tunnel.
+Idempotent. Manages its own process group. Ctrl+C or `make server-stop` stops
+the tunnel and launcher but leaves the vLLM container running for fast restart.
+Use `make server-stop-hard` to stop the container too.
 
 Usage:
     python3 server/server.py
@@ -445,7 +446,7 @@ def _sleep(seconds: float) -> bool:
 
 def _exit_on_shutdown(cfg) -> None:
     if _shutdown_requested:
-        cleanup(cfg)
+        cleanup(cfg, stop_vllm=False)
         sys.exit(130)
 
 
@@ -500,7 +501,7 @@ def _stop_spark_tunnel(cfg):
             pass
 
 
-def cleanup(cfg):
+def cleanup(cfg, *, stop_vllm: bool = False):
     global _cleanup_done, _runtime_active
     if _cleanup_done:
         return
@@ -510,18 +511,25 @@ def cleanup(cfg):
     for proc in _managed:
         if proc.poll() is None:
             _kill_pid(proc.pid, f"process {proc.pid}")
-    for name in _managed_containers:
-        info(f"Stopping container '{name}'...")
-        subprocess.run(
-            [*cfg.docker_cmd, "stop", name], capture_output=True, timeout=30
-        )
-        if _should_remove_container(cfg):
+    if stop_vllm:
+        for name in _managed_containers:
+            info(f"Stopping container '{name}'...")
             subprocess.run(
-                [*cfg.docker_cmd, "rm", name], capture_output=True, timeout=30
+                [*cfg.docker_cmd, "stop", name], capture_output=True, timeout=30
             )
+            if _should_remove_container(cfg):
+                subprocess.run(
+                    [*cfg.docker_cmd, "rm", name], capture_output=True, timeout=30
+                )
+    elif _managed_containers or _container_status(cfg) == "running":
+        names = _managed_containers or [cfg.container_name]
+        ok(f"Leaving vLLM container running: {', '.join(names)}")
     (cfg.helper_dir / "server.pid").unlink(missing_ok=True)
     _runtime_active = False
-    ok("Clean shutdown complete (vLLM + tunnel stopped).")
+    if stop_vllm:
+        ok("Clean shutdown complete (vLLM + tunnel stopped).")
+    else:
+        ok("Clean shutdown complete (tunnel stopped; vLLM container left running).")
 
 
 # ── Doppler ───────────────────────────────────────────────────────────────────
@@ -1374,6 +1382,13 @@ def _gpu_compute_processes():
 
 def _check_gpu_memory(cfg, docker_cmd):
     section("Checking GPU memory")
+    if _container_status(cfg) == "running":
+        ok(
+            f"GPU in use by warm container '{cfg.container_name}' — reusing "
+            "(skip memory preflight)"
+        )
+        cfg.gpu_exclusive = False
+        return
     mem = _probe_gpu(docker_cmd, cfg.vllm_image)
     if not mem:
         warn("Could not query CUDA memory — skipping preflight check")
@@ -1703,7 +1718,7 @@ def _gpu_oom_hint(logs: str) -> str:
     ):
         return (
             "\nHint: another process (often LM Studio) is using GPU memory. "
-            "Stop it and run `make kill && make run` again.\n"
+            "Stop it and run `make server-stop-hard && make server-start` again.\n"
         )
     return ""
 
@@ -1807,7 +1822,10 @@ def start_cf_tunnel(cfg, tunnel_token):
     )
     (cfg.helper_dir / "cloudflared.pid").write_text(str(proc.pid))
     register(proc)
-    info(f"Tunnel managed by this process — stops on Ctrl+C / make kill ({cfg.cf_tunnel_hostname})")
+    info(
+        f"Tunnel managed by this process — stops on Ctrl+C / make server-stop "
+        f"({cfg.cf_tunnel_hostname})"
+    )
 
     info("Waiting for tunnel to connect...")
     time.sleep(6)
@@ -1839,6 +1857,10 @@ def write_helpers(cfg):
     (d / "stop.sh").write_text(
         f"#!/usr/bin/env bash\n"
         f"exec python3 \"{root}/server/server.py\" --stop\n"
+    )
+    (d / "stop-hard.sh").write_text(
+        f"#!/usr/bin/env bash\n"
+        f"exec python3 \"{root}/server/server.py\" --stop-hard\n"
     )
     (d / "status.sh").write_text(
         f"#!/usr/bin/env bash\n"
@@ -1908,11 +1930,15 @@ def print_summary(cfg, cf_url):
   {B}Commands:{X}
     {d}/status.sh
     {d}/logs.sh
-    {d}/stop.sh
+    {d}/stop.sh          (tunnel only; vLLM stays warm)
+    {d}/stop-hard.sh     (stop vLLM + tunnel)
     docker logs -f {cfg.container_name}
 """
     )
-    warn("Keep this process running — Ctrl+C or `make kill` stops vLLM + tunnel.")
+    warn(
+        "Keep this process running — Ctrl+C or `make server-stop` stops tunnel only "
+        "(vLLM stays warm). `make server-stop-hard` stops everything."
+    )
     warn("First novel request shape takes ~30s for CUDA graph specialisation.")
 
 
@@ -1963,7 +1989,10 @@ def main():
         (cfg.helper_dir / "server.pid").write_text(str(os.getpid()))
         print_summary(cfg, cf_url)
 
-        info("Running. Press Ctrl+C or `make kill` to stop vLLM + tunnel.")
+        info(
+            "Running. Ctrl+C or `make server-stop` stops tunnel (vLLM stays warm). "
+            "`make server-stop-hard` stops everything."
+        )
         while not _shutdown_requested:
             # Watchdog: restart container if it exits unexpectedly
             r = subprocess.run(
@@ -2004,24 +2033,32 @@ def main():
         raise SystemExit(1) from e
     except Exception as e:
         err(f"Unexpected error: {e}")
-        cleanup(cfg)
-        # If vLLM survived cleanup stop failure, say so.
+        cleanup(cfg, stop_vllm=False)
         if _container_status(cfg) == "running":
-            warn("vLLM container may still be running — run: make kill")
+            warn("vLLM container still running — use: make server-stop-hard")
         raise
     finally:
         if _shutdown_requested or _runtime_active:
-            cleanup(cfg)
+            cleanup(cfg, stop_vllm=False)
 
 
-def stop_managed():
-    """Stop vLLM container + Cloudflare tunnel started by make run."""
+def stop_soft():
+    """Stop tunnel + launcher; leave vLLM container running for fast restart."""
+    cfg = Config()
+    cfg.model_dir = _resolve_model_dir()
+    _apply_env_overrides(cfg)
+    cfg.docker_cmd = _resolve_docker_cmd() or ["docker"]
+    cleanup(cfg, stop_vllm=False)
+
+
+def stop_hard():
+    """Stop tunnel, launcher, and vLLM container."""
     cfg = Config()
     cfg.model_dir = _resolve_model_dir()
     _apply_env_overrides(cfg)
     cfg.docker_cmd = _resolve_docker_cmd() or ["docker"]
     register_container(cfg.container_name)
-    cleanup(cfg)
+    cleanup(cfg, stop_vllm=True)
 
 
 def setup_tunnel_only():
@@ -2051,7 +2088,9 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] in ("--setup-tunnel", "setup-tunnel"):
         setup_tunnel_only()
     elif len(sys.argv) > 1 and sys.argv[1] in ("--stop", "stop"):
-        stop_managed()
+        stop_soft()
+    elif len(sys.argv) > 1 and sys.argv[1] in ("--stop-hard", "stop-hard"):
+        stop_hard()
     elif len(sys.argv) > 1 and sys.argv[1] in (
         "--clear-compile-cache",
         "clear-compile-cache",
