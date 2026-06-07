@@ -5,7 +5,10 @@
   "compatibility_date": "2025-06-03",
 
   "routes": [
-    "llm-proxy.chrisvouga.dev/*"
+    {
+      "pattern": "llm-proxy.chrisvouga.dev",
+      "custom_domain": true
+    }
   ],
 
   "observability": {
