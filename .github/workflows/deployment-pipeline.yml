@@ -61,6 +61,13 @@ jobs:
           echo "${{ secrets.DOPPLER_SERVICE_TOKEN }}" | doppler login --token-only
           doppler setup --project personal --config prod --no-interactive
 
+      - name: Run database migrations
+        working-directory: proxy
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_SERVICE_TOKEN }}
+        run: |
+          doppler run -- bash database/setup.sh
+
       - name: Install proxy dependencies
         working-directory: proxy
         run: bun install
