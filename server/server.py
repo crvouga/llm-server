@@ -369,7 +369,10 @@ class Config:
     # ⚠️  max_num_seqs > 16 causes system freeze during torch.compile on GB10
     vllm_port: int = 8000
     max_model_len: int = 262144  # 256K + YaRN for long agentic-coding sessions
-    kv_cache_dtype: str = "fp8"
+    # "auto" (bf16) KV cache — the flash_attn backend on this SM121 build rejects
+    # fp8 ("kv_cache_dtype not supported"), and 256K bf16 KV fits in 128GB anyway.
+    # Override with VLLM_KV_CACHE_DTYPE=fp8 only if also switching attention backend.
+    kv_cache_dtype: str = "auto"
     rope_scaling_enabled: bool = True
     native_context_len: int = 0  # 0 = auto-detect from model config.json
     gpu_mem_util: float = 0.85
@@ -1577,8 +1580,6 @@ def start_vllm(cfg, docker_cmd) -> str:
             "compressed-tensors",
             "--max-model-len",
             str(cfg.max_model_len),
-            "--kv-cache-dtype",
-            str(cfg.kv_cache_dtype),
             "--max-num-seqs",
             str(cfg.max_num_seqs),
             "--max-num-batched-tokens",
@@ -1606,6 +1607,8 @@ def start_vllm(cfg, docker_cmd) -> str:
     ]
     if rope_config:
         vllm_serve_args.extend(["--hf-overrides", rope_config])
+    if cfg.kv_cache_dtype and cfg.kv_cache_dtype != "auto":
+        vllm_serve_args.extend(["--kv-cache-dtype", str(cfg.kv_cache_dtype)])
 
     run(
         [
@@ -1888,15 +1891,16 @@ def write_helpers(cfg):
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 def _context_summary(cfg) -> str:
+    kv = "bf16" if cfg.kv_cache_dtype == "auto" else cfg.kv_cache_dtype
     rope = _rope_scaling_json(cfg)
     if rope:
         native = _model_native_context(cfg)
         factor = json.loads(rope)["rope_parameters"]["factor"]
         return (
             f"{cfg.max_model_len} tokens (YaRN {factor}x over {native}, "
-            f"KV {cfg.kv_cache_dtype})"
+            f"KV {kv})"
         )
-    return f"{cfg.max_model_len} tokens (KV {cfg.kv_cache_dtype})"
+    return f"{cfg.max_model_len} tokens (KV {kv})"
 
 
 def print_summary(cfg, cf_url):
