@@ -77,6 +77,7 @@ jobs:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_SERVICE_TOKEN }}
           DOPPLER_CONFIG: dev
         run: |
-          # Upload runtime secrets from Doppler (wrangler deploy does not auto-upload env vars)
-          doppler run -- sh -c 'wrangler secret put DATABASE_URL $DATABASE_URL'
+          # Upload runtime secrets from Doppler (wrangler deploy does not auto-upload env vars).
+          # wrangler secret put reads the value from stdin, not a positional arg.
+          doppler run -- sh -c 'printf "%s" "$DATABASE_URL" | wrangler secret put DATABASE_URL'
           wrangler deploy
