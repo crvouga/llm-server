@@ -30,10 +30,7 @@ def write_helpers(cfg):
         f"#!/usr/bin/env bash\n"
         f"exec python3 \"{root}/server/server.py\" --stop\n"
     )
-    (d / "stop-hard.sh").write_text(
-        f"#!/usr/bin/env bash\n"
-        f"exec python3 \"{root}/server/server.py\" --stop-hard\n"
-    )
+    (d / "stop-hard.sh").unlink(missing_ok=True)
     (d / "status.sh").write_text(
         f"#!/usr/bin/env bash\n"
         f"G='\\033[0;32m'; R='\\033[0;31m'; Y='\\033[1;33m'; X='\\033[0m'\n"

@@ -21,8 +21,7 @@ context window. The legacy **vLLM + DFlash** path is kept as a one-env-var fallb
 
 ```bash
 make server-start        # start the engine + tunnel (Atlas by default)
-make server-stop         # stop tunnel only (engine stays warm for fast restart)
-make server-stop-hard    # stop engine container + tunnel
+make server-stop         # stop engine container + tunnel
 make server-free-ram     # reclaim RAM/GPU (LM Studio, Docker, page cache)
 make server-metrics      # CPU/RAM/GPU/disk + LLM health snapshot
 make server-tune         # sweep Atlas KV dtype x num-drafts x context for best decode tok/s

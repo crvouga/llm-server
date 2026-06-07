@@ -75,7 +75,7 @@ def _sleep(seconds: float) -> bool:
 
 def _exit_on_shutdown(cfg) -> None:
     if _shutdown_requested:
-        cleanup(cfg, stop_vllm=False)
+        cleanup(cfg, stop_vllm=True)
         sys.exit(130)
 
 

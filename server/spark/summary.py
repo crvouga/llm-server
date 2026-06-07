@@ -53,14 +53,12 @@ def _print_atlas_summary(cfg):
   {B}Commands:{X}
     {d}/status.sh
     {d}/logs.sh
-    {d}/stop.sh          (tunnel only; Atlas stays warm)
-    {d}/stop-hard.sh     (stop Atlas + tunnel)
+    {d}/stop.sh          (stop Atlas + tunnel)
     docker logs -f {cfg.container_name}
 """
     )
     warn(
-        "Keep this process running — Ctrl+C or `make server-stop` stops tunnel only "
-        "(Atlas stays warm). `make server-stop-hard` stops everything."
+        "Keep this process running — Ctrl+C or `make server-stop` stops Atlas + tunnel."
     )
 
 
@@ -98,13 +96,11 @@ def print_summary(cfg, cf_url):
   {B}Commands:{X}
     {d}/status.sh
     {d}/logs.sh
-    {d}/stop.sh          (tunnel only; vLLM stays warm)
-    {d}/stop-hard.sh     (stop vLLM + tunnel)
+    {d}/stop.sh          (stop vLLM + tunnel)
     docker logs -f {cfg.container_name}
 """
     )
     warn(
-        "Keep this process running — Ctrl+C or `make server-stop` stops tunnel only "
-        "(vLLM stays warm). `make server-stop-hard` stops everything."
+        "Keep this process running — Ctrl+C or `make server-stop` stops vLLM + tunnel."
     )
     warn("First novel request shape takes ~30s for CUDA graph specialisation.")
