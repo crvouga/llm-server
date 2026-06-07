@@ -13,9 +13,13 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 JSON=false
 WATCH_INTERVAL=""
-VLLM_CONTAINER="${VLLM_CONTAINER:-vllm-qwen36-dflash}"
-VLLM_PORT="${VLLM_PORT:-8000}"
-MODEL_CACHE="${MODEL_CACHE:-${HOME}/.cache/qwen36}"
+# Defaults target the Atlas engine; override for the vLLM fallback:
+#   VLLM_CONTAINER=vllm-qwen36-dflash VLLM_PORT=8000 HEALTH_PATH=/health make server-metrics
+VLLM_CONTAINER="${VLLM_CONTAINER:-atlas}"
+VLLM_PORT="${VLLM_PORT:-8888}"
+# Atlas has no dedicated /health route; /v1/models works for both engines.
+HEALTH_PATH="${HEALTH_PATH:-/v1/models}"
+MODEL_CACHE="${MODEL_CACHE:-${HOME}/.cache/huggingface}"
 COMPILE_CACHE="${COMPILE_CACHE:-${HOME}/.cache/vllm-spark-compile}"
 HELPER_DIR="${HELPER_DIR:-${HOME}/.spark-serve}"
 
@@ -39,10 +43,11 @@ Options:
   -h, --help        Show this help
 
 Environment:
-  VLLM_CONTAINER    Docker container name (default: vllm-qwen36-dflash)
-  VLLM_PORT         vLLM HTTP port (default: 8000)
-  MODEL_CACHE       Model weights cache directory
-  COMPILE_CACHE     vLLM compile cache directory
+  VLLM_CONTAINER    Docker container name (default: atlas; vLLM: vllm-qwen36-dflash)
+  VLLM_PORT         Server HTTP port (default: 8888; vLLM: 8000)
+  HEALTH_PATH       Health probe path (default: /v1/models; vLLM also has /health)
+  MODEL_CACHE       Model weights cache directory (default: ~/.cache/huggingface)
+  COMPILE_CACHE     vLLM compile cache directory (vLLM only)
   HELPER_DIR        Runtime state dir (~/.spark-serve)
 EOF
 }
@@ -290,7 +295,7 @@ collect_metrics() {
     [[ -n "${server_pid}" ]] && server_running="yes"
   fi
 
-  health_code="$(http_code "http://127.0.0.1:${VLLM_PORT}/health")"
+  health_code="$(http_code "http://127.0.0.1:${VLLM_PORT}${HEALTH_PATH}")"
   models_code="$(http_code "http://127.0.0.1:${VLLM_PORT}/v1/models")"
 
   tunnel_running="no"

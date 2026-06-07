@@ -1,26 +1,29 @@
 SHELL := /usr/bin/env bash
 
-VLLM_CONTAINER ?= vllm-qwen36-dflash
+VLLM_CONTAINER ?= atlas
 COMMIT_MSG ?=
 REMOTE_ACCESS_MD ?= remote-access/REMOTE-ACCESS.md
 REMOTE_USER ?=
 REMOTE_HOST ?=
 
-.PHONY: help server-start server-stop server-stop-hard server-free server-metrics server-clear-compile-cache run start stop kill logs status ssh \
+.PHONY: help server-start server-stop server-stop-hard server-free server-metrics server-clear-compile-cache server-tune run start stop kill logs status ssh \
 	proxy-install proxy-dev proxy-check proxy-deploy proxy-db bench \
 	remote-setup-mac remote-verify pull push gh
 
 help:
-	@echo "Server (vLLM):"
+	@echo "Server (Atlas engine by default; ENGINE=vllm for the legacy vLLM+DFlash path):"
 	@echo "  make server-start  -> start LLM server (python3 server/server.py)"
-	@echo "                         VLLM_ALLOW_GPU_SHARING=1 to share GPU with LM Studio"
-	@echo "  make server-stop       -> stop tunnel + launcher (vLLM container stays warm)"
-	@echo "  make server-stop-hard  -> stop everything including vLLM container"
-	@echo "  make server-free -> reclaim RAM/GPU before starting (.//server/free.sh)"
+	@echo "                         ENGINE=vllm to use the vLLM+DFlash fallback"
+	@echo "                         ATLAS_MAX_SEQ_LEN / ATLAS_KV_CACHE_DTYPE / ATLAS_NUM_DRAFTS to tune Atlas"
+	@echo "  make server-stop       -> stop tunnel + launcher (engine container stays warm)"
+	@echo "  make server-stop-hard  -> stop everything including the engine container"
+	@echo "  make server-free -> reclaim RAM/GPU before starting (./server/free.sh)"
 	@echo "  make server-metrics -> CPU/RAM/GPU/disk + LLM health snapshot"
 	@echo "                         METRICS_ARGS='--json' or '--watch 5' for options"
-	@echo "  make server-clear-compile-cache -> wipe torch/Triton cache (fixes missing cubin errors)"
-	@echo "  make logs          -> tail vLLM Docker container logs"
+	@echo "  make server-tune -> sweep Atlas KV dtype x num-drafts x context, report decode tok/s"
+	@echo "                         TUNE_ARGS='--quick' for a faster sweep"
+	@echo "  make server-clear-compile-cache -> wipe torch/Triton cache (vLLM only)"
+	@echo "  make logs          -> tail engine Docker container logs"
 	@echo "  make status        -> check server process + container"
 	@echo ""
 	@echo "Proxy (Cloudflare Worker):"
@@ -85,6 +88,10 @@ server-free:
 server-metrics:
 	@set -euo pipefail; \
 	"$(CURDIR)/server/metrics.sh" $(METRICS_ARGS)
+
+server-tune:
+	@set -euo pipefail; \
+	"$(CURDIR)/server/tune.sh" $(TUNE_ARGS)
 
 server-clear-compile-cache:
 	@set -euo pipefail; \

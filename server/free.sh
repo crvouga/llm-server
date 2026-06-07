@@ -16,7 +16,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 DRY_RUN=false
 RESET_SWAP=true
-VLLM_CONTAINER="${VLLM_CONTAINER:-vllm-qwen36-dflash}"
+VLLM_CONTAINER="${VLLM_CONTAINER:-atlas}"
 
 R=$'\033[0;31m'
 G=$'\033[0;32m'
@@ -37,7 +37,7 @@ Options:
   -h, --help      Show this help
 
 Environment:
-  VLLM_CONTAINER  Docker container name (default: vllm-qwen36-dflash)
+  VLLM_CONTAINER  Docker container name (default: atlas; vLLM: vllm-qwen36-dflash)
 EOF
 }
 
