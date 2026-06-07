@@ -91,17 +91,11 @@ async function logRequest(
     `;
   } catch (error) {
     // Non-blocking: don't fail the request if logging fails.
-    // Use NeonDbError fields (never the raw error/connection string) to avoid
-    // leaking the DATABASE_URL password into logs.
-    if (error instanceof NeonDbError) {
-      console.error('Request logging failed:', {
-        code: error.code,
-        detail: error.detail,
-        severity: error.severity,
-      });
-    } else {
-      console.warn('Request logging failed with a non-database error');
-    }
+    // NEVER log the error message or object — driver errors (and Workers'
+    // "Fetch API cannot load: <url>" TypeError) embed the DATABASE_URL
+    // (with password) in the message. Only emit the Postgres error code.
+    const code = error instanceof NeonDbError ? error.code : 'unknown';
+    console.error(`Request logging failed (code: ${code ?? 'unknown'})`);
   }
 }
 
