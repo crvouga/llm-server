@@ -84,6 +84,10 @@ def die(msg):
     sys.exit(1)
 
 
+def engine_label(cfg) -> str:
+    return "Atlas" if getattr(cfg, "engine", "vllm") == "atlas" else "vLLM"
+
+
 def _apply_env_overrides(cfg: "Config") -> None:
     """Tune boot time vs throughput via env vars (see `make run` help)."""
     if os.environ.get("VLLM_PRODUCTION", "").lower() in ("1", "true", "yes"):
@@ -124,6 +128,53 @@ def _apply_env_overrides(cfg: "Config") -> None:
         cfg.flashinfer_moe_fp4 = True
     if moe_backend := os.environ.get("VLLM_FLASHINFER_MOE_BACKEND"):
         cfg.flashinfer_moe_backend = moe_backend
+
+    # ── Engine selection + Atlas overrides ──────────────────────────────────────
+    if engine := (os.environ.get("ENGINE") or os.environ.get("LLM_ENGINE")):
+        cfg.engine = engine.strip().lower()
+    if img := os.environ.get("ATLAS_IMAGE"):
+        cfg.atlas_image = img
+    if model := os.environ.get("ATLAS_MODEL"):
+        cfg.atlas_model = model
+    if port := os.environ.get("ATLAS_PORT"):
+        cfg.atlas_port = int(port)
+    if seq := (os.environ.get("ATLAS_MAX_SEQ_LEN") or os.environ.get("MAX_SEQ_LEN")):
+        cfg.atlas_max_seq_len = int(seq)
+    if kv := (os.environ.get("ATLAS_KV_CACHE_DTYPE") or os.environ.get("KV_CACHE_DTYPE")):
+        cfg.atlas_kv_cache_dtype = kv
+    if hp := os.environ.get("ATLAS_KV_HIGH_PRECISION_LAYERS"):
+        cfg.atlas_kv_high_precision_layers = hp
+    if os.environ.get("ATLAS_NO_SPECULATIVE", "").lower() in ("1", "true", "yes"):
+        cfg.atlas_speculative = False
+    if drafts := os.environ.get("ATLAS_NUM_DRAFTS"):
+        cfg.atlas_num_drafts = int(drafts)
+    if policy := os.environ.get("ATLAS_SCHEDULING_POLICY"):
+        cfg.atlas_scheduling_policy = policy
+    if os.environ.get("ATLAS_DISABLE_PREFIX_CACHING", "").lower() in ("1", "true", "yes"):
+        cfg.atlas_enable_prefix_caching = False
+    if parser := os.environ.get("ATLAS_TOOL_CALL_PARSER"):
+        cfg.atlas_tool_call_parser = parser
+    if gmu := (os.environ.get("ATLAS_GPU_MEM_UTIL") or os.environ.get("GPU_MEMORY_UTILIZATION")):
+        cfg.atlas_gpu_mem_util = float(gmu)
+    if seqs := os.environ.get("ATLAS_MAX_NUM_SEQS"):
+        cfg.atlas_max_num_seqs = int(seqs)
+    if oom := os.environ.get("ATLAS_OOM_GUARD_MB"):
+        cfg.atlas_oom_guard_mb = int(oom)
+    if hss_dir := os.environ.get("ATLAS_HIGH_SPEED_SWAP_DIR"):
+        cfg.atlas_high_speed_swap_dir = hss_dir
+        cfg.atlas_high_speed_swap = True
+    if os.environ.get("ATLAS_HIGH_SPEED_SWAP", "").lower() in ("1", "true", "yes"):
+        cfg.atlas_high_speed_swap = True
+    if hss_blocks := os.environ.get("ATLAS_HSS_CACHE_BLOCKS_PER_SEQ"):
+        cfg.atlas_hss_cache_blocks_per_seq = int(hss_blocks)
+
+    # When running Atlas, unify the shared service handles so all the lifecycle,
+    # tunnel, health, helper, and metrics code targets the Atlas container/port.
+    if cfg.engine == "atlas":
+        cfg.container_name = cfg.atlas_container
+        cfg.vllm_port = cfg.atlas_port
+        cfg.vllm_image = cfg.atlas_image
+        cfg.gpu_mem_util = cfg.atlas_gpu_mem_util
 
 
 def _boot_time_hint(cfg: "Config") -> str:
@@ -425,8 +476,54 @@ class Config:
     gpu_exclusive: bool = True
     boot_profile: str = ""
 
+    # ── Engine selection ────────────────────────────────────────────────────────
+    # "atlas" (default) — Atlas, a Rust/CUDA engine purpose-built for GB10/SM121:
+    #   native fp8/nvfp4 KV cache, MTP speculative decoding, <2 min cold start, and
+    #   an OpenAI + Anthropic API. "vllm" — the legacy vLLM + DFlash path (fallback).
+    # Override with ENGINE=vllm (or LLM_ENGINE=vllm).
+    engine: str = "atlas"
+
+    # ── Atlas engine ──────────────────────────────────────────────────────────────
+    # One multi-model binary; the right hand-tuned kernels are picked from the
+    # model's config.json at startup. Model auto-downloads to the mounted HF cache.
+    atlas_image: str = "avarok/atlas-gb10:latest"
+    atlas_model: str = "Qwen/Qwen3.6-35B-A3B-FP8"
+    atlas_container: str = "atlas"
+    atlas_port: int = 8888
+    # 128K default. fp8 KV keeps this affordable; nvfp4/turbo4 (4x compression) or
+    # NVMe High-Speed-Swap push to 256K. Override with ATLAS_MAX_SEQ_LEN.
+    atlas_max_seq_len: int = 131072
+    # KV cache dtype: bf16 | fp8 (default) | turbo8 | nvfp4 | turbo4 | turbo3.
+    atlas_kv_cache_dtype: str = "fp8"
+    # "auto" keeps boundary attention layers at BF16 where routing is most sensitive.
+    atlas_kv_high_precision_layers: str = "auto"
+    # MTP (Multi-Token Prediction) speculative decoding; K = drafts per step.
+    atlas_speculative: bool = True
+    atlas_num_drafts: int = 2
+    # SLAi scheduler keeps MTP verify batches dense.
+    atlas_scheduling_policy: str = "slai"
+    atlas_enable_prefix_caching: bool = True
+    atlas_tool_call_parser: str = "qwen3_coder"
+    atlas_gpu_mem_util: float = 0.90
+    # 0 = let Atlas pick its default concurrency.
+    atlas_max_num_seqs: int = 0
+    atlas_oom_guard_mb: int = 0
+    # NVMe KV offload (High-Speed Swap) for very long context on a single Spark.
+    atlas_high_speed_swap: bool = False
+    atlas_high_speed_swap_dir: str = ""
+    atlas_hss_cache_blocks_per_seq: int = 64
+
     # Runtime
     helper_dir: Path = field(default_factory=lambda: Path.home() / ".spark-serve")
+
+    # ── Engine-aware service handles (shared lifecycle/tunnel/health code) ──────────
+    @property
+    def service_port(self) -> int:
+        return self.atlas_port if self.engine == "atlas" else self.vllm_port
+
+    @property
+    def served_model_name(self) -> str:
+        return self.atlas_model if self.engine == "atlas" else _SERVED_MODEL
 
 
 # ── Process registry ──────────────────────────────────────────────────────────
@@ -559,13 +656,13 @@ def cleanup(cfg, *, stop_vllm: bool = False):
                 )
     elif _managed_containers or _container_status(cfg) == "running":
         names = _managed_containers or [cfg.container_name]
-        ok(f"Leaving vLLM container running: {', '.join(names)}")
+        ok(f"Leaving {engine_label(cfg)} container running: {', '.join(names)}")
     (cfg.helper_dir / "server.pid").unlink(missing_ok=True)
     _runtime_active = False
     if stop_vllm:
-        ok("Clean shutdown complete (vLLM + tunnel stopped).")
+        ok(f"Clean shutdown complete ({engine_label(cfg)} + tunnel stopped).")
     else:
-        ok("Clean shutdown complete (tunnel stopped; vLLM container left running).")
+        ok(f"Clean shutdown complete (tunnel stopped; {engine_label(cfg)} container left running).")
 
 
 # ── Doppler ───────────────────────────────────────────────────────────────────
@@ -1266,6 +1363,16 @@ def precheck_gpu_available(cfg, docker_cmd):
             ok(r.stdout.strip().splitlines()[0])
         else:
             warn("nvidia-smi failed — continuing, Docker GPU test is authoritative")
+    if cfg.engine == "atlas":
+        # Atlas image has no torch for the CUDA probe; a plain GPU test is enough.
+        if not _gpu_test(docker_cmd):
+            die(
+                "GPU not available inside Docker.\n"
+                "  Check: nvidia-smi\n"
+                "  Install: NVIDIA container toolkit"
+            )
+        ok("Docker GPU access OK")
+        return
     mem = _probe_gpu(docker_cmd, cfg.vllm_image)
     if mem is None and not _gpu_test(docker_cmd):
         die(
@@ -1277,13 +1384,16 @@ def precheck_gpu_available(cfg, docker_cmd):
 
 
 def run_prechecks(cfg, docker_cmd):
-    """Validate config and dependencies before the slow vLLM boot."""
+    """Validate config and dependencies before the (slow) engine boot."""
     section("Running prechecks (fail fast)")
     precheck_cf_tunnel(cfg)
     precheck_gpu_available(cfg, docker_cmd)
-    precheck_models(cfg)
-    _check_gpu_memory(cfg, docker_cmd)
-    ok("All prechecks passed — starting vLLM")
+    if cfg.engine != "atlas":
+        # Atlas auto-downloads the checkpoint into the HF cache on first serve, and
+        # its image has no torch for the CUDA memory probe — skip the vLLM-only checks.
+        precheck_models(cfg)
+        _check_gpu_memory(cfg, docker_cmd)
+    ok(f"All prechecks passed — starting {'Atlas' if cfg.engine == 'atlas' else 'vLLM'}")
 
 
 def ensure_models(cfg, docker_cmd):
@@ -1506,6 +1616,23 @@ def _vllm_ready(cfg) -> bool:
         return False
 
 
+def _atlas_ready(cfg) -> bool:
+    """Atlas serves the OpenAI API on its port; readiness = /v1/models with models."""
+    url = f"http://localhost:{cfg.service_port}/v1/models"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as r:
+            if r.status != 200:
+                return False
+            data = json.loads(r.read())
+            return bool(data.get("data"))
+    except Exception:
+        return False
+
+
+def _server_ready(cfg) -> bool:
+    return _atlas_ready(cfg) if cfg.engine == "atlas" else _vllm_ready(cfg)
+
+
 def _latest_container_log_line(cfg) -> str:
     logs = _container_logs_tail(cfg, lines=15)
     for line in reversed(logs.splitlines()):
@@ -1722,6 +1849,173 @@ def start_vllm(cfg, docker_cmd) -> str:
     return "started"
 
 
+# ── Atlas engine ──────────────────────────────────────────────────────────────
+def pull_atlas_image(cfg, docker_cmd):
+    section("Pulling Atlas image")
+    force_pull = os.environ.get("ATLAS_PULL", "").lower() in (
+        "always",
+        "1",
+        "true",
+        "yes",
+    )
+    if not force_pull and _image_exists_locally(docker_cmd, cfg.atlas_image):
+        ok(f"Image cached locally: {cfg.atlas_image}")
+        return
+
+    info(f"Image: {cfg.atlas_image}  (~2.5 GB on first pull)")
+    try:
+        run([*docker_cmd, "pull", cfg.atlas_image])
+        ok("Image ready")
+    except subprocess.CalledProcessError:
+        if _image_exists_locally(docker_cmd, cfg.atlas_image):
+            warn("Pull failed — using local image")
+            ok(f"Image cached locally: {cfg.atlas_image}")
+        else:
+            raise
+
+
+def _atlas_serve_args(cfg) -> list:
+    args = [
+        "serve",
+        cfg.atlas_model,
+        "--port",
+        str(cfg.atlas_port),
+        "--max-seq-len",
+        str(cfg.atlas_max_seq_len),
+        "--kv-cache-dtype",
+        str(cfg.atlas_kv_cache_dtype),
+        "--gpu-memory-utilization",
+        str(cfg.atlas_gpu_mem_util),
+        "--scheduling-policy",
+        str(cfg.atlas_scheduling_policy),
+        "--tool-call-parser",
+        str(cfg.atlas_tool_call_parser),
+    ]
+    if cfg.atlas_kv_cache_dtype != "bf16":
+        args.extend(["--kv-high-precision-layers", str(cfg.atlas_kv_high_precision_layers)])
+    if cfg.atlas_enable_prefix_caching:
+        args.append("--enable-prefix-caching")
+    if cfg.atlas_speculative:
+        args.extend(["--speculative", "--num-drafts", str(cfg.atlas_num_drafts)])
+    if cfg.atlas_max_num_seqs > 0:
+        args.extend(["--max-num-seqs", str(cfg.atlas_max_num_seqs)])
+    if cfg.atlas_oom_guard_mb > 0:
+        args.extend(["--oom-guard-mb", str(cfg.atlas_oom_guard_mb)])
+    if cfg.atlas_high_speed_swap and cfg.atlas_high_speed_swap_dir:
+        args.extend(
+            [
+                "--high-speed-swap",
+                "--high-speed-swap-dir",
+                cfg.atlas_high_speed_swap_dir,
+                "--high-speed-swap-cache-blocks-per-seq",
+                str(cfg.atlas_hss_cache_blocks_per_seq),
+            ]
+        )
+    return args
+
+
+def _atlas_launch_fingerprint(cfg) -> str:
+    payload = json.dumps(
+        {
+            "image": cfg.atlas_image,
+            "model": cfg.atlas_model,
+            "port": cfg.atlas_port,
+            "serve": _atlas_serve_args(cfg),
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def start_atlas(cfg, docker_cmd) -> str:
+    """Start or reuse the Atlas container (return values mirror start_vllm)."""
+    spec = (
+        f"MTP K={cfg.atlas_num_drafts}" if cfg.atlas_speculative else "no speculative"
+    )
+    section(f"Starting Atlas  [{cfg.atlas_model}, {spec}]")
+    info(
+        f"Context: {cfg.atlas_max_seq_len} tokens  |  KV: {cfg.atlas_kv_cache_dtype}  |  "
+        f"GPU budget: {cfg.atlas_gpu_mem_util:.0%}"
+    )
+    info("Atlas cold-starts in <2 min (no torch.compile); first run downloads the model")
+
+    force_restart = _should_remove_container(cfg)
+    status = _container_status(cfg)
+    fingerprint = _atlas_launch_fingerprint(cfg)
+
+    if not force_restart and status == "running":
+        if _atlas_ready(cfg):
+            register_container(cfg.container_name)
+            ok(f"Container '{cfg.container_name}' already healthy — skipping restart")
+            return "ready"
+        if _container_config_hash(cfg) != fingerprint:
+            warn("Running container has stale config — recreating")
+            remove_container(cfg, docker_cmd)
+        elif _container_restart_count(cfg) >= 2:
+            warn(
+                f"Running container '{cfg.container_name}' is crash-looping "
+                f"(restarts={_container_restart_count(cfg)}) — recreating"
+            )
+            remove_container(cfg, docker_cmd)
+        else:
+            register_container(cfg.container_name)
+            info(f"Container '{cfg.container_name}' is still booting — waiting")
+            return "booting"
+
+    if not force_restart and status == "exited":
+        if _container_config_hash(cfg) == fingerprint:
+            info(f"Restarting stopped container '{cfg.container_name}' (docker start)...")
+            run([*docker_cmd, "start", cfg.container_name])
+            register_container(cfg.container_name)
+            ok(f"Container '{cfg.container_name}' started")
+            return "started"
+        warn("Container config changed — recreating")
+        remove_container(cfg, docker_cmd)
+    elif status not in ("missing",):
+        remove_container(cfg, docker_cmd)
+
+    register_container(cfg.container_name)
+    hf_cache = Path.home() / ".cache" / "huggingface"
+    hf_cache.mkdir(parents=True, exist_ok=True)
+
+    extra_flags: list = []
+    if cfg.atlas_high_speed_swap and cfg.atlas_high_speed_swap_dir:
+        # io_uring NVMe offload needs an unconfined seccomp profile.
+        extra_flags = ["--security-opt", "seccomp=unconfined"]
+
+    run(
+        [
+            *docker_cmd,
+            "run",
+            "-d",
+            "--name",
+            cfg.container_name,
+            "--label",
+            f"{_CONFIG_HASH_LABEL}={fingerprint}",
+            *_gpu_run_flags(),
+            "--network",
+            "host",
+            "--ipc",
+            "host",
+            "--ulimit",
+            "memlock=-1:-1",
+            "--restart",
+            "unless-stopped",
+            *extra_flags,
+            "-v",
+            f"{hf_cache}:/root/.cache/huggingface",
+            "-e",
+            "HF_TOKEN=" + cfg.hf_token,
+            "-e",
+            "HUGGING_FACE_HUB_TOKEN=" + cfg.hf_token,
+            cfg.atlas_image,
+            *_atlas_serve_args(cfg),
+        ]
+    )
+    ok(f"Container '{cfg.container_name}' started")
+    return "started"
+
+
 def _container_status(cfg):
     r = subprocess.run(
         [
@@ -1765,6 +2059,10 @@ def _container_logs_tail(cfg, lines=30):
 
 
 def _health_max_wait(cfg) -> int:
+    if cfg.engine == "atlas":
+        # Atlas cold-starts in <2 min once cached, but the first run downloads the
+        # ~35 GB FP8 checkpoint into the HF cache — allow generous headroom.
+        return int(os.environ.get("ATLAS_READY_TIMEOUT", "3600"))
     return {0: 180, 1: 480, 2: 720}.get(cfg.optimization_level, 480)
 
 
@@ -1787,8 +2085,12 @@ def _gpu_oom_hint(logs: str) -> str:
 
 
 def wait_for_vllm(cfg):
-    section("Waiting for vLLM to be ready")
-    info(f"Polling /health + /v1/models — {_boot_time_hint(cfg)}")
+    label = "Atlas" if cfg.engine == "atlas" else "vLLM"
+    section(f"Waiting for {label} to be ready")
+    if cfg.engine == "atlas":
+        info("Polling /v1/models — Atlas boots in <2 min (longer on first model download)")
+    else:
+        info(f"Polling /health + /v1/models — {_boot_time_hint(cfg)}")
     max_wait = _health_max_wait(cfg)
     elapsed = 0
 
@@ -1811,8 +2113,9 @@ def wait_for_vllm(cfg):
                 f"Recent logs:\n{logs}"
             )
 
-        if _vllm_ready(cfg):
-            ok(f"vLLM ready after {elapsed}s (health + {_SERVED_MODEL})")
+        if _server_ready(cfg):
+            label = "Atlas" if cfg.engine == "atlas" else "vLLM"
+            ok(f"{label} ready after {elapsed}s")
             return
 
         if elapsed > 0 and elapsed % 15 == 0:
@@ -1828,7 +2131,7 @@ def wait_for_vllm(cfg):
         elapsed += interval
 
     die(
-        f"vLLM not ready after {max_wait}s.\n"
+        f"{label} not ready after {max_wait}s.\n"
         f"Container status: {_container_status(cfg)}\n"
         f"Recent logs:\n{_container_logs_tail(cfg)}"
     )
@@ -1908,9 +2211,13 @@ def write_helpers(cfg):
     cf_log = d / "cloudflare-tunnel.log"
     d.mkdir(parents=True, exist_ok=True)
 
+    label = "Atlas" if cfg.engine == "atlas" else "vLLM"
+    # Atlas serves the OpenAI API but has no dedicated /health route.
+    health_path = "/v1/models" if cfg.engine == "atlas" else "/health"
+
     (d / "logs.sh").write_text(
         f"#!/usr/bin/env bash\n"
-        f'echo "=== vLLM (last 50 lines) ==="\n'
+        f'echo "=== {label} (last 50 lines) ==="\n'
         f"docker logs --tail 50 {cfg.container_name}\n"
         f'echo ""\n'
         f'echo "=== Cloudflare tunnel (last 20 lines) ==="\n'
@@ -1927,11 +2234,11 @@ def write_helpers(cfg):
     )
     (d / "status.sh").write_text(
         f"#!/usr/bin/env bash\n"
-        f"G='\\033[0;32m'; R='\\033[0;31m'; X='\\033[0m'\n"
+        f"G='\\033[0;32m'; R='\\033[0;31m'; Y='\\033[1;33m'; X='\\033[0m'\n"
         f"docker ps --filter name={cfg.container_name} --format 'table {{{{.Names}}}}\\t{{{{.Status}}}}'\n"
-        f"curl -sf http://localhost:{cfg.vllm_port}/health >/dev/null 2>&1 "
-        f'&& echo -e "${{G}}● vLLM healthy:{cfg.vllm_port}${{X}}" '
-        f'|| echo -e "${{R}}✗ vLLM not responding${{X}}"\n'
+        f"curl -sf http://localhost:{cfg.vllm_port}{health_path} >/dev/null 2>&1 "
+        f'&& echo -e "${{G}}● {label} healthy:{cfg.vllm_port}${{X}}" '
+        f'|| echo -e "${{R}}✗ {label} not responding${{X}}"\n'
         f"curl -s http://localhost:{cfg.vllm_port}/v1/models "
         f"| python3 -c \"import sys,json; [print('  •', m['id']) for m in json.load(sys.stdin).get('data',[])]\" "
         f"2>/dev/null || echo '(not ready)'\n"
@@ -1940,7 +2247,7 @@ def write_helpers(cfg):
         f"else\n"
         f'  echo -e "${{R}}✗ tunnel not running${{X}}"\n'
         f"fi\n"
-        f"curl -sf {_cf_public_url(cfg)}/health >/dev/null 2>&1 "
+        f"curl -sf {_cf_public_url(cfg)}{health_path} >/dev/null 2>&1 "
         f'&& echo -e "${{G}}● public: {_cf_public_url(cfg)}${{X}}" '
         f'|| echo -e "${{Y}}! public: {_cf_public_url(cfg)} (not reachable yet)${{X}}"\n'
     )
@@ -1963,7 +2270,53 @@ def _context_summary(cfg) -> str:
     return f"{cfg.max_model_len} tokens (KV {kv})"
 
 
+def _print_atlas_summary(cfg):
+    section("🚀 Server is live")
+    d = cfg.helper_dir
+    spec = (
+        f"MTP K={cfg.atlas_num_drafts}" if cfg.atlas_speculative else "off"
+    )
+    kv = cfg.atlas_kv_cache_dtype
+    if cfg.atlas_kv_cache_dtype != "bf16":
+        kv += f" (hi-prec layers: {cfg.atlas_kv_high_precision_layers})"
+    print(
+        f"""
+  {B}Engine:{X}   Atlas (Rust/CUDA, GB10/SM121)
+  {B}Model:{X}    {cfg.atlas_model}
+  {B}Speculative:{X} {spec}  |  {B}Prefix cache:{X} {"on" if cfg.atlas_enable_prefix_caching else "off"}
+  {B}GPU budget:{X} {cfg.atlas_gpu_mem_util:.0%}  |  {B}Scheduler:{X} {cfg.atlas_scheduling_policy}
+  {B}Context:{X}  {cfg.atlas_max_seq_len} tokens  |  {B}KV cache:{X} {kv}
+  {B}Target:{X}   ~130-140 tok/s single-stream (GB10 memory-bandwidth ceiling)
+ 
+  {B}Local API (OpenAI + Anthropic):{X}
+    http://localhost:{cfg.atlas_port}/v1
+ 
+  {B}Public API (Cloudflare):{X}
+    {G}{_cf_public_url(cfg)}/v1{X}
+ 
+  {B}Agent config (public):{X}
+    base_url  = {_cf_public_url(cfg)}/v1
+    api_key   = not-required
+    model     = atlas
+ 
+  {B}Commands:{X}
+    {d}/status.sh
+    {d}/logs.sh
+    {d}/stop.sh          (tunnel only; Atlas stays warm)
+    {d}/stop-hard.sh     (stop Atlas + tunnel)
+    docker logs -f {cfg.container_name}
+"""
+    )
+    warn(
+        "Keep this process running — Ctrl+C or `make server-stop` stops tunnel only "
+        "(Atlas stays warm). `make server-stop-hard` stops everything."
+    )
+
+
 def print_summary(cfg, cf_url):
+    if cfg.engine == "atlas":
+        _print_atlas_summary(cfg)
+        return
     section("🚀 Server is live")
     d = cfg.helper_dir
     print(
@@ -2007,6 +2360,20 @@ def print_summary(cfg, cf_url):
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+def _boot_engine(cfg, docker_cmd) -> str:
+    """Start the selected engine, wait for readiness, warm up (vLLM only)."""
+    if cfg.engine == "atlas":
+        boot_mode = start_atlas(cfg, docker_cmd)
+        if boot_mode != "ready":
+            wait_for_vllm(cfg)
+        return boot_mode
+    boot_mode = start_vllm(cfg, docker_cmd)
+    if boot_mode != "ready":
+        wait_for_vllm(cfg)
+        warmup_vllm(cfg)
+    return boot_mode
+
+
 def main():
     cfg = Config()
     cfg.model_dir = _resolve_model_dir()
@@ -2028,21 +2395,23 @@ def main():
         docker_cmd = ensure_docker(cfg)
         _exit_on_shutdown(cfg)
         ensure_cloudflared()
-        ensure_git_lfs()
+        if cfg.engine != "atlas":
+            ensure_git_lfs()
         run_prechecks(cfg, docker_cmd)
         _exit_on_shutdown(cfg)
 
-        _ensure_compile_cache(cfg, docker_cmd)
-        _exit_on_shutdown(cfg)
-        _resolve_optimization_profile(cfg)
-
-        pull_vllm_image(cfg, docker_cmd)
-        _exit_on_shutdown(cfg)
-        ensure_models(cfg, docker_cmd)
-        boot_mode = start_vllm(cfg, docker_cmd)
-        if boot_mode != "ready":
-            wait_for_vllm(cfg)
-            warmup_vllm(cfg)
+        if cfg.engine == "atlas":
+            pull_atlas_image(cfg, docker_cmd)
+            _exit_on_shutdown(cfg)
+            _boot_engine(cfg, docker_cmd)
+        else:
+            _ensure_compile_cache(cfg, docker_cmd)
+            _exit_on_shutdown(cfg)
+            _resolve_optimization_profile(cfg)
+            pull_vllm_image(cfg, docker_cmd)
+            _exit_on_shutdown(cfg)
+            ensure_models(cfg, docker_cmd)
+            _boot_engine(cfg, docker_cmd)
         _exit_on_shutdown(cfg)
 
         tunnel_token = resolve_cf_tunnel_token(cfg)
@@ -2054,7 +2423,7 @@ def main():
         print_summary(cfg, cf_url)
 
         info(
-            "Running. Ctrl+C or `make server-stop` stops tunnel (vLLM stays warm). "
+            f"Running. Ctrl+C or `make server-stop` stops tunnel ({engine_label(cfg)} stays warm). "
             "`make server-stop-hard` stops everything."
         )
         while not _shutdown_requested:
@@ -2079,10 +2448,7 @@ def main():
                         f"{oom_hint}\nRecent logs:\n{logs}"
                     )
                 warn("Container exited unexpectedly — restarting...")
-                boot_mode = start_vllm(cfg, docker_cmd)
-                if boot_mode != "ready":
-                    wait_for_vllm(cfg)
-                    warmup_vllm(cfg)
+                _boot_engine(cfg, docker_cmd)
             if not _sleep(30):
                 break
 
@@ -2099,7 +2465,8 @@ def main():
         err(f"Unexpected error: {e}")
         cleanup(cfg, stop_vllm=False)
         if _container_status(cfg) == "running":
-            warn("vLLM container still running — use: make server-stop-hard")
+            label = "Atlas" if cfg.engine == "atlas" else "vLLM"
+            warn(f"{label} container still running — use: make server-stop-hard")
         raise
     finally:
         if _shutdown_requested or _runtime_active:
