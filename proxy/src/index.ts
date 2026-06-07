@@ -2,23 +2,28 @@
 // Forwards all requests to LM Studio and logs raw request/response data to PostgreSQL
 
 import { neon, NeonDbError } from '@neondatabase/serverless';
+import { Hono } from 'hono';
 
-import { handleUsageDashboard, isUsageDashboardPath } from './usage-dashboard';
+import { usageDashboardRoute } from './usage-dashboard';
 
 export interface Env {
   DATABASE_URL: string;
   BACKEND_URL?: string;
 }
 
+type AppEnv = {
+  Bindings: Env;
+  Variables: {
+    requestId: string;
+  };
+};
+
 const DEFAULT_BACKEND = 'https://lm-studio.chrisvouga.dev';
 
-// Generate a unique request ID for correlation (Neon uses gen_random_uuid)
 function generateRequestId(): string {
-  // Use crypto.randomUUID if available, otherwise fallback
   try {
     return crypto.randomUUID();
   } catch {
-    // Fallback: timestamp + random chars
     const chars = '0123456789abcdef';
     let id = Date.now().toString(16);
     for (let i = 0; i < 12; i++) {
@@ -28,7 +33,6 @@ function generateRequestId(): string {
   }
 }
 
-// Convert Headers to plain object
 function headersToObject(headers: Headers): Record<string, string> {
   const obj: Record<string, string> = {};
   headers.forEach((value, key) => {
@@ -37,7 +41,6 @@ function headersToObject(headers: Headers): Record<string, string> {
   return obj;
 }
 
-// Store raw request/response data in PostgreSQL (Neon compatible)
 async function logRequest(
   env: Env,
   requestId: string,
@@ -59,15 +62,11 @@ async function logRequest(
   try {
     const sql = neon(env.DATABASE_URL);
 
-    // Convert query params to object using forEach
     const queryParamsObj: Record<string, string> = {};
     query.forEach((value, key) => {
       queryParamsObj[key] = value;
     });
 
-    // Tagged-template interpolation: the driver parameterizes each ${value}
-    // so it is sent separately from the SQL text (injection-safe, and the
-    // password-bearing connection string is never part of the query).
     const requestBody = body === null ? null : JSON.stringify(body);
     const responseBodyJson = responseBody === null ? null : JSON.stringify(responseBody);
 
@@ -92,66 +91,97 @@ async function logRequest(
       )
     `;
   } catch (error) {
-    // Non-blocking: don't fail the request if logging fails.
-    // NEVER log the error message or object — driver errors (and Workers'
-    // "Fetch API cannot load: <url>" TypeError) embed the DATABASE_URL
-    // (with password) in the message. Only emit the Postgres error code.
     const code = error instanceof NeonDbError ? error.code : 'unknown';
     console.error(`Request logging failed (code: ${code ?? 'unknown'})`);
   }
 }
 
-// Extract endpoint path from request URL
-function getPath(url: URL): string {
-  return url.pathname || '/';
+function buildBackendRequestHeaders(request: Request, requestUrl: URL): Headers {
+  const requestHeaders = new Headers();
+  request.headers.forEach((value, key) => {
+    if (key.toLowerCase() !== 'host') {
+      requestHeaders.set(key, value);
+    }
+  });
+  requestHeaders.set('X-Forwarded-Host', requestUrl.host);
+
+  const cfIp = request.headers.get('CF-Connecting-IP');
+  if (cfIp) {
+    requestHeaders.set('X-Forwarded-For', cfIp);
+  }
+
+  return requestHeaders;
 }
 
-export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const backendUrl = env.BACKEND_URL || DEFAULT_BACKEND;
+async function readJsonResponseBody(response: Response): Promise<unknown | null> {
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    return null;
+  }
 
-    // Parse incoming request
-    const requestUrl = new URL(request.url);
-    const path = getPath(requestUrl);
+  try {
+    return await response.clone().json();
+  } catch {
+    return null;
+  }
+}
+
+export function createApp(): Hono<AppEnv> {
+  const app = new Hono<AppEnv>();
+
+  app.use('*', async (c, next) => {
     const requestId = generateRequestId();
+    c.set('requestId', requestId);
+    console.log(`[${requestId}] ${c.req.method} ${c.req.path}`);
+    await next();
+  });
 
-    console.log(`[${requestId}] ${request.method} ${path}`);
+  app.route('/', usageDashboardRoute);
 
-    if (isUsageDashboardPath(path)) {
-      return handleUsageDashboard(request, env);
-    }
-
-    // Construct backend URL
+  app.all('*', async (c) => {
+    const env = c.env;
+    const request = c.req.raw;
+    const requestId = c.get('requestId');
+    const backendUrl = env.BACKEND_URL || DEFAULT_BACKEND;
+    const requestUrl = new URL(request.url);
+    const path = c.req.path || '/';
     const backendPath = requestUrl.pathname + requestUrl.search;
     const targetUrl = `${backendUrl}${backendPath}`;
 
-    // Build headers (exclude host, add forwarding info)
-    const requestHeaders = new Headers();
-    request.headers.forEach((value, key) => {
-      if (key.toLowerCase() !== 'host') {
-        requestHeaders.set(key, value);
-      }
-    });
-    requestHeaders.set('X-Forwarded-Host', requestUrl.host);
-
-    const cfIp = request.headers.get('CF-Connecting-IP');
-    if (cfIp) {
-      requestHeaders.set('X-Forwarded-For', cfIp);
-    }
-
-    // Forward the request transparently
     const init: RequestInit = {
       method: request.method,
-      headers: requestHeaders,
+      headers: buildBackendRequestHeaders(request, requestUrl),
       body: request.body,
     };
 
-    let response: Response;
     try {
-      response = await fetch(targetUrl, init);
+      const response = await fetch(targetUrl, init);
+      const responseBody = await readJsonResponseBody(response);
+
+      c.executionCtx.waitUntil(
+        logRequest(
+          env,
+          requestId,
+          request.method,
+          path,
+          requestUrl.searchParams,
+          request.headers,
+          null,
+          response.status,
+          response.headers,
+          responseBody,
+        ),
+      );
+
+      console.log(`[${requestId}] ${response.status} ${path}`);
+
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
     } catch (error) {
-      // Log the error and return 503
-      ctx.waitUntil(
+      c.executionCtx.waitUntil(
         logRequest(
           env,
           requestId,
@@ -167,48 +197,11 @@ export default {
         ),
       );
 
-      return new Response(
-        JSON.stringify({ error: 'Backend unavailable', details: String(error) }),
-        { status: 503 },
-      );
+      return c.json({ error: 'Backend unavailable', details: String(error) }, 503);
     }
+  });
 
-    // Read response body for logging
-    let responseBody: unknown = null;
-    const contentType = response.headers.get('content-type') || '';
-    if (contentType.includes('application/json')) {
-      try {
-        responseBody = await response.clone().json();
-      } catch {
-        // Response body is not JSON, skip parsing
-      }
-    }
+  return app;
+}
 
-    // Log the request/response (use waitUntil so the promise survives
-    // after the response is returned — `void` alone drops it in Workers)
-    ctx.waitUntil(
-      logRequest(
-        env,
-        requestId,
-        request.method,
-        path,
-        requestUrl.searchParams,
-        request.headers,
-        null,
-        response.status,
-        response.headers,
-        responseBody,
-        undefined,
-      ),
-    );
-
-    console.log(`[${requestId}] ${response.status} ${path}`);
-
-    // Forward the response transparently
-    return new Response(response.body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-    });
-  },
-};
+export default createApp();
