@@ -6,8 +6,8 @@ REMOTE_ACCESS_MD ?= remote-access/REMOTE-ACCESS.md
 REMOTE_USER ?=
 REMOTE_HOST ?=
 
-.PHONY: help server-start server-stop server-stop-hard server-free server-metrics server-bench server-clear-compile-cache run start stop kill logs status ssh \
-	proxy-install proxy-dev proxy-check proxy-deploy proxy-db \
+.PHONY: help server-start server-stop server-stop-hard server-free server-metrics server-clear-compile-cache run start stop kill logs status ssh \
+	proxy-install proxy-dev proxy-check proxy-deploy proxy-db bench \
 	remote-setup-mac remote-verify pull push gh
 
 help:
@@ -16,11 +16,9 @@ help:
 	@echo "                         VLLM_ALLOW_GPU_SHARING=1 to share GPU with LM Studio"
 	@echo "  make server-stop       -> stop tunnel + launcher (vLLM container stays warm)"
 	@echo "  make server-stop-hard  -> stop everything including vLLM container"
-	@echo "  make server-free -> reclaim RAM/GPU before starting (./server/free.sh)"
+	@echo "  make server-free -> reclaim RAM/GPU before starting (.//server/free.sh)"
 	@echo "  make server-metrics -> CPU/RAM/GPU/disk + LLM health snapshot"
 	@echo "                         METRICS_ARGS='--json' or '--watch 5' for options"
-	@echo "  make server-bench   -> benchmark llm-proxy (model + tokens/sec)"
-	@echo "                         BENCH_ARGS='--json' or BENCH_RUNS=3 for options"
 	@echo "  make server-clear-compile-cache -> wipe torch/Triton cache (fixes missing cubin errors)"
 	@echo "  make logs          -> tail vLLM Docker container logs"
 	@echo "  make status        -> check server process + container"
@@ -29,8 +27,10 @@ help:
 	@echo "  make proxy-install -> bun install in proxy/"
 	@echo "  make proxy-dev     -> wrangler dev"
 	@echo "  make proxy-check   -> type-check proxy"
-	@echo "  make proxy-deploy  -> deploy worker (requires Doppler)"
+	@echo "  make proxy-deploy  -> deploy worker ( requires Doppler)"
 	@echo "  make proxy-db      -> run database migrations"
+	@echo "  make bench         -> benchmark llm-proxy (model + tokens/sec)"
+	@echo "                         BENCH_ARGS='--json' or BENCH_RUNS=3 for options"
 	@echo ""
 	@echo "Remote access (Mac controls Linux):"
 	@echo "  make ssh              -> SSH into Linux target (from REMOTE-ACCESS.md)"
@@ -66,7 +66,7 @@ server-stop stop:
 
 server-stop-hard kill:
 	@set -euo pipefail; \
-	server_pattern='python3 .*/server/server\.py'; \
+	server_pattern=' python3 .*/server/server\.py'; \
 	if pgrep -f "$$server_pattern" >/dev/null 2>&1; then \
 		echo "Stopping llm server launcher..."; \
 		pkill -TERM -f "$$server_pattern" || true; \
@@ -85,10 +85,6 @@ server-free:
 server-metrics:
 	@set -euo pipefail; \
 	"$(CURDIR)/server/metrics.sh" $(METRICS_ARGS)
-
-server-bench:
-	@set -euo pipefail; \
-	"$(CURDIR)/server/bench.sh" $(BENCH_ARGS)
 
 server-clear-compile-cache:
 	@set -euo pipefail; \
@@ -110,7 +106,7 @@ status:
 	if pgrep -f "$$server_pattern" >/dev/null 2>&1; then \
 		echo "Server process: running"; \
 	else \
-		echo "Server process: stopped"; \
+		echo " server process: stopped"; \
 	fi; \
 	docker_cmd="docker"; \
 	if ! docker info >/dev/null 2>&1; then docker_cmd="sudo docker"; fi; \
@@ -136,6 +132,10 @@ proxy-deploy:
 
 proxy-db:
 	@cd "$(CURDIR)/proxy" && doppler run -- bash database/setup.sh
+
+bench:
+	@set -euo pipefail; \
+	"$(CURDIR)/proxy/bench.sh" $(BENCH_ARGS)
 
 remote-setup-mac:
 	@"$(CURDIR)/remote-access/setup-controller.sh"
@@ -167,7 +167,7 @@ pull:
 		exit 1; \
 	fi; \
 	stashed=false; \
-	if ! git diff --quiet || ! git diff --cached --quiet || [ -n "$$(git ls-files --others --exclude-standard)" ]; then \
+	if ! git diff --quiet || ! git diff --cached -- || [ -n "$$(git ls-files --others --exclude-standa")"; then \
 		echo "Stashing local changes before pull..."; \
 		git stash push -u -m "make pull ($$(date -u +%Y-%m-%dT%H:%M:%SZ))"; \
 		stashed=true; \
@@ -194,7 +194,7 @@ push:
 	fi; \
 	has_changes=false; \
 	if ! git diff --quiet || ! git diff --cached --quiet; then has_changes=true; fi; \
-	if [ -n "$$(git ls-files --others --exclude-standard)" ]; then has_changes=true; fi; \
+	if [ -n "$$(git ls-files --others --exclude-standa")"; then has_changes=true; fi; \
 	if [ "$$has_changes" = true ]; then \
 		if [ -z "$(COMMIT_MSG)" ]; then \
 			echo "Changes detected. Set COMMIT_MSG, e.g. COMMIT_MSG='fix tunnel' make push"; \
