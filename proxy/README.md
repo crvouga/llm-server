@@ -15,7 +15,7 @@ The upstream backend URL is stored in `llm_proxy.config` — not in environment 
 ## Prerequisites
 
 - Cloudflare account with Workers access
-- Secret store at `https://secret-store.chrisvouga.dev` with secrets at `secret/personal/<config>`:
+- Secret store at `https://vault.chrisvouga.dev` with secrets at `secret/personal/<config>`:
   - `DATABASE_URL` - PostgreSQL connection string in HTTP API format (Supabase/PlanetScale)
   - `CLOUDFLARE_API_TOKEN` - API token for deployment
   - `CLOUDFLARE_ACCOUNT_ID` - Your Cloudflare account ID
