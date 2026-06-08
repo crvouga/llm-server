@@ -1,5 +1,6 @@
 SHELL := /usr/bin/env bash
 
+VENV ?= $(CURDIR)/.venv
 ATLAS_CONTAINER ?= atlas
 COMMIT_MSG ?=
 REMOTE_ACCESS_MD ?= remote-access/REMOTE-ACCESS.md
@@ -18,7 +19,7 @@ help:
 	@echo "  make server-stop       -> stop tunnel + launcher + Atlas container"
 	@echo "  make server-metrics -> CPU/RAM/GPU/disk + Atlas health snapshot"
 	@echo "                         METRICS_ARGS='--json' or '--watch 5' for options"
-	@echo "  make server-install -> pip install ruff, pyright, pytest (dev deps)"
+	@echo "  make server-install -> create .venv + install ruff, pyright, pytest (dev deps)"
 	@echo "  make server-check  -> lint + typecheck server code (ruff + pyright)"
 	@echo "  make server-test   -> smoke-test OpenAI-compatible API (Cursor/Claude Code compat)"
 	@echo "                         LLM_BASE_URL=... TEST_ARGS='--skip-tools' for options"
@@ -102,15 +103,22 @@ lm-studio-stop:
 
 server-install:
 	@set -euo pipefail; \
-	python3 -m pip install -e ".[dev]"; \
+	command -v python3 >/dev/null || { echo "Missing: python3"; exit 1; }; \
+	if [ ! -d "$(VENV)" ]; then \
+		echo "Creating virtual environment at $(VENV)..."; \
+		python3 -m venv "$(VENV)"; \
+	fi; \
+	"$(VENV)/bin/pip" install -e ".[dev]"; \
 	command -v pyenv >/dev/null && pyenv rehash || true
 
 server-check:
 	@set -euo pipefail; \
-	command -v ruff >/dev/null || { echo "Missing ruff — run: make server-install"; exit 1; }; \
-	command -v pyright >/dev/null || { echo "Missing pyright — run: make server-install"; exit 1; }; \
-	ruff check server lm-studio server_test tests; \
-	pyright
+	if [ ! -x "$(VENV)/bin/ruff" ] || [ ! -x "$(VENV)/bin/pyright" ]; then \
+		echo "Missing dev tools — run: make server-install"; \
+		exit 1; \
+	fi; \
+	"$(VENV)/bin/ruff" check server lm-studio server_test tests; \
+	"$(VENV)/bin/pyright"
 
 server-test:
 	@set -euo pipefail; \
