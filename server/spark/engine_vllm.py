@@ -18,6 +18,7 @@ from .containers import (
 )
 from .gpu import _gpu_run_flags
 from .health import _engine_ready
+from .model_compat import ensure_vllm_quant_config_compat, vllm_quant_config_mount
 from .runtime import register_container
 from .shell import run
 
@@ -109,6 +110,8 @@ def ensure_vllm_model(cfg, docker_cmd):
     else:
         _download_hf_model(cfg, docker_cmd, cfg.vllm_model, "~43 GB NVFP4")
 
+    ensure_vllm_quant_config_compat(cfg)
+
     if cfg.vllm_speculative_method_resolved() != "dflash" or not cfg.vllm_dflash_model:
         return
 
@@ -156,9 +159,9 @@ def _vllm_speculative_config(cfg) -> str | None:
             "model": cfg.vllm_dflash_model,
             "num_speculative_tokens": cfg.vllm_dflash_tokens,
         }
-    elif method == "qwen3_next_mtp":
+    elif method in ("mtp", "qwen3_next_mtp"):
         payload = {
-            "method": "qwen3_next_mtp",
+            "method": "mtp",
             "num_speculative_tokens": cfg.vllm_mtp_tokens,
         }
     else:
@@ -176,7 +179,7 @@ def _vllm_speculative_label(cfg) -> str:
         return "no speculative"
     if method == "dflash" and cfg.vllm_dflash_model:
         return f"DFlash ({cfg.vllm_dflash_model})"
-    if method == "qwen3_next_mtp":
+    if method in ("mtp", "qwen3_next_mtp"):
         return f"MTP K={cfg.vllm_mtp_tokens}"
     return method
 
@@ -199,14 +202,14 @@ def _vllm_serve_args(cfg) -> list:
         str(cfg.vllm_kv_cache_dtype),
         "--attention-backend",
         str(cfg.vllm_attention_backend),
-        "--load-format",
-        str(cfg.vllm_load_format),
         "--enable-auto-tool-choice",
         "--tool-call-parser",
         "qwen3_coder",
         "--enable-prefix-caching",
         "--trust-remote-code",
     ]
+    if cfg.vllm_load_format and cfg.vllm_load_format != "auto":
+        args.extend(["--load-format", str(cfg.vllm_load_format)])
     if spec := _vllm_speculative_config(cfg):
         args.extend(["--speculative-config", spec])
     if cfg.vllm_enforce_eager:
@@ -215,11 +218,13 @@ def _vllm_serve_args(cfg) -> list:
 
 
 def _vllm_launch_fingerprint(cfg) -> str:
+    compat = vllm_quant_config_mount(cfg)
     payload = json.dumps(
         {
             "image": cfg.vllm_image,
             "model": cfg.vllm_model,
             "speculative": cfg.vllm_speculative_method_resolved(),
+            "quant_compat": str(compat[0]) if compat else None,
             "port": cfg.vllm_port,
             "serve": _vllm_serve_args(cfg),
         },
@@ -308,6 +313,11 @@ def start_vllm(cfg, docker_cmd) -> str:
     ]
     for key, value in cfg.vllm_extra_env.items():
         docker_run.extend(["-e", f"{key}={value}"])
+    if mount := vllm_quant_config_mount(cfg):
+        host_config, container_config = mount
+        docker_run.extend(
+            ["-v", f"{host_config}:{container_config}:ro"]
+        )
     # NVIDIA NGC images use ENTRYPOINT ["serve"]; pass "vllm serve <model> ..."
     # explicitly (matches DGX Spark docs).
     docker_run.extend(

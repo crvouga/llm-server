@@ -24,6 +24,9 @@ _LEGACY_MARKER = ".atlas-attn-weight-compat-v1"
 _LEGACY_SIDECAR = "atlas-attn-weight-compat.safetensors"
 _MERGE_SHARD = "model-00010-of-00010.safetensors"
 _COMPAT_MODELS = frozenset({"redhatai/qwen3-coder-next-nvfp4"})
+_VLLM_QUANT_COMPAT_MARKER = ".vllm-quant-config-compat-v1"
+# vLLM 0.13 (NVIDIA 26.01) rejects newer compressed-tensors metadata.
+_VLLM_QUANT_COMPAT_IMAGES = ("nvcr.io/nvidia/vllm:26.01",)
 
 # Runs inside python:3.11-slim (same image family as HF snapshot_download).
 _COMPAT_SCRIPT = textwrap.dedent(
@@ -143,9 +146,9 @@ _COMPAT_SCRIPT = textwrap.dedent(
 )
 
 
-def _snapshot_dir(cfg) -> Path | None:
+def _repo_snapshot_dir(model_id: str) -> Path | None:
     hub = Path.home() / ".cache" / "huggingface" / "hub"
-    repo_dir = hub / ("models--" + cfg.atlas_model.replace("/", "--"))
+    repo_dir = hub / ("models--" + model_id.replace("/", "--"))
     snapshots = repo_dir / "snapshots"
     if not snapshots.is_dir():
         return None
@@ -153,6 +156,108 @@ def _snapshot_dir(cfg) -> Path | None:
     if not candidates:
         return None
     return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
+def _snapshot_dir(cfg) -> Path | None:
+    return _repo_snapshot_dir(cfg.atlas_model)
+
+
+def _strip_unsupported_quant_fields(node: object) -> bool:
+    """Remove scale_dtype/zp_dtype keys vLLM 0.13 rejects. Returns True if changed."""
+    changed = False
+    if isinstance(node, dict):
+        for key in ("scale_dtype", "zp_dtype"):
+            if key in node:
+                del node[key]
+                changed = True
+        for value in node.values():
+            if _strip_unsupported_quant_fields(value):
+                changed = True
+    elif isinstance(node, list):
+        for item in node:
+            if _strip_unsupported_quant_fields(item):
+                changed = True
+    return changed
+
+
+def _config_has_unsupported_quant_fields(node: object) -> bool:
+    if isinstance(node, dict):
+        if "scale_dtype" in node or "zp_dtype" in node:
+            return True
+        return any(_config_has_unsupported_quant_fields(v) for v in node.values())
+    if isinstance(node, list):
+        return any(_config_has_unsupported_quant_fields(item) for item in node)
+    return False
+
+
+def needs_vllm_quant_config_compat(cfg) -> bool:
+    if not any(tag in cfg.vllm_image.lower() for tag in _VLLM_QUANT_COMPAT_IMAGES):
+        return False
+    if cfg.vllm_model.lower() not in _COMPAT_MODELS:
+        return False
+    if _vllm_compat_config_path(cfg).is_file():
+        return False
+    snap = _repo_snapshot_dir(cfg.vllm_model)
+    if snap is None:
+        return False
+    config_path = snap / "config.json"
+    if not config_path.is_file():
+        return False
+    return _config_has_unsupported_quant_fields(json.loads(config_path.read_text()))
+
+
+def _vllm_compat_config_path(cfg) -> Path:
+    return (
+        cfg.helper_dir
+        / "vllm-quant-compat"
+        / cfg.vllm_model.replace("/", "--")
+        / "config.json"
+    )
+
+
+def vllm_quant_config_mount(cfg) -> tuple[Path, Path] | None:
+    """Return host + container config paths when a compat overlay is active."""
+    patched = _vllm_compat_config_path(cfg)
+    if not patched.is_file():
+        return None
+    snap = _repo_snapshot_dir(cfg.vllm_model)
+    if snap is None:
+        return None
+    container = Path("/root/.cache/huggingface/hub") / (
+        "models--" + cfg.vllm_model.replace("/", "--")
+    ) / "snapshots" / snap.name / "config.json"
+    return patched, container
+
+
+def ensure_vllm_quant_config_compat(cfg) -> None:
+    """Materialize a vLLM 0.13-safe config.json overlay for RedHatAI NVFP4."""
+    if not needs_vllm_quant_config_compat(cfg):
+        return
+
+    snap = _repo_snapshot_dir(cfg.vllm_model)
+    if snap is None:
+        return
+
+    patched_path = _vllm_compat_config_path(cfg)
+    if patched_path.is_file():
+        ok("Quant config compat ready")
+        return
+
+    section("Preparing vLLM quant config compat")
+    info(
+        "RedHatAI NVFP4 config includes scale_dtype/zp_dtype metadata; "
+        "writing a vLLM 0.13-safe overlay"
+    )
+
+    config = json.loads((snap / "config.json").read_text())
+    if not _strip_unsupported_quant_fields(config):
+        ok("Quant config compat ready (no changes needed)")
+        (snap / _VLLM_QUANT_COMPAT_MARKER).touch()
+        return
+
+    patched_path.parent.mkdir(parents=True, exist_ok=True)
+    patched_path.write_text(json.dumps(config, indent=2) + "\n")
+    ok(f"Quant config compat ready ({patched_path})")
 
 
 def _index_needs_compat(index: dict) -> bool:

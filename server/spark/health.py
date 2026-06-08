@@ -57,9 +57,24 @@ def _gpu_oom_hint(cfg, logs: str) -> str:
     ) or "unrecognized arguments: --moe-backend" in lower:
         return (
             "\nHint: DFlash needs vLLM 0.20+ — the default NVIDIA 26.01 image "
-            "ships 0.13 and uses built-in MTP instead (`VLLM_SPECULATIVE_METHOD=auto`). "
+            "ships 0.13 and runs without speculative decoding (`VLLM_SPECULATIVE_METHOD=auto`). "
             "For DFlash, use a newer image (`VLLM_IMAGE=...`) with "
             "`VLLM_SPECULATIVE_METHOD=dflash`, or disable with `VLLM_NO_SPECULATIVE=1`.\n"
+        )
+    if "scale_dtype" in lower and "extra inputs are not permitted" in lower:
+        return (
+            "\nHint: RedHatAI NVFP4 metadata is newer than vLLM 0.13 — rerun "
+            "`make server-start` (launcher patches config.json automatically), "
+            "use a newer vLLM image (`VLLM_IMAGE=vllm/vllm-openai:v0.18.0-cu130`), "
+            "or switch engines (`ENGINE=atlas make server-start`).\n"
+        )
+    if "vllm[fastsafetensors]" in lower or (
+        "fastsafetensors" in lower and "install" in lower
+    ):
+        return (
+            "\nHint: the NVIDIA 26.01 image lacks the fastsafetensors extra — "
+            "use the default loader (`VLLM_LOAD_FORMAT=auto`, now the default) "
+            "or install it via a custom image.\n"
         )
     if "not found in store" in lower and cfg.engine == "atlas":
         return (

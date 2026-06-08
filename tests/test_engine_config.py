@@ -1,4 +1,5 @@
 import importlib
+import json
 import os
 import sys
 from pathlib import Path
@@ -34,7 +35,7 @@ def test_engine_atlas_legacy_env():
         os.environ.pop("ENGINE", None)
 
 
-def test_vllm_serve_args_include_tool_parser_and_mtp_on_ngc_image():
+def test_vllm_serve_args_include_tool_parser_no_spec_on_ngc_image():
     mod = _load_spark()
     engine_vllm = importlib.import_module("spark.engine_vllm")
     cfg = mod.config.Config()
@@ -46,9 +47,18 @@ def test_vllm_serve_args_include_tool_parser_and_mtp_on_ngc_image():
     assert args[args.index("--tool-call-parser") + 1] == "qwen3_coder"
     assert "--served-model-name" in args
     assert args[args.index("--served-model-name") + 1] == "atlas"
-    assert "--speculative-config" in args
+    assert "--speculative-config" not in args
+
+
+def test_vllm_serve_args_use_mtp_on_midtier_image():
+    mod = _load_spark()
+    engine_vllm = importlib.import_module("spark.engine_vllm")
+    cfg = mod.config.Config()
+    cfg.vllm_image = "vllm/vllm-openai:v0.18.0-cu130"
+    mod.config._apply_env_overrides(cfg)
+    args = engine_vllm._vllm_serve_args(cfg)
     spec = args[args.index("--speculative-config") + 1]
-    assert "qwen3_next_mtp" in spec
+    assert '"method":"mtp"' in spec.replace(" ", "")
     assert str(cfg.vllm_mtp_tokens) in spec
 
 
@@ -62,6 +72,54 @@ def test_vllm_serve_args_use_dflash_on_newer_image():
     spec = args[args.index("--speculative-config") + 1]
     assert "dflash" in spec
     assert cfg.vllm_dflash_model in spec
+
+
+def test_vllm_quant_config_compat_strips_scale_dtype():
+    mod = _load_spark()
+    model_compat = importlib.import_module("spark.model_compat")
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        snap = (
+            Path(tmp)
+            / "hub"
+            / "models--RedHatAI--Qwen3-Coder-Next-NVFP4"
+            / "snapshots"
+            / "abc123"
+        )
+        snap.mkdir(parents=True)
+        config = {
+            "quantization_config": {
+                "config_groups": {
+                    "group_0": {
+                        "input_activations": {
+                            "scale_dtype": "torch.float8_e4m3fn",
+                            "zp_dtype": None,
+                        }
+                    }
+                }
+            }
+        }
+        (snap / "config.json").write_text(json.dumps(config))
+        original = model_compat._repo_snapshot_dir
+        model_compat._repo_snapshot_dir = lambda _m: snap
+        try:
+            cfg = mod.config.Config()
+            cfg.helper_dir = Path(tmp) / "helper"
+            model_compat.ensure_vllm_quant_config_compat(cfg)
+        finally:
+            model_compat._repo_snapshot_dir = original
+
+        patched_path = model_compat._vllm_compat_config_path(cfg)
+        patched = json.loads(patched_path.read_text())
+        group = patched["quantization_config"]["config_groups"]["group_0"][
+            "input_activations"
+        ]
+        assert "scale_dtype" not in group
+        assert "zp_dtype" not in group
+        mount = model_compat.vllm_quant_config_mount(cfg)
+        assert mount is not None
 
 
 def test_hf_download_failure_hint_gated_repo():
