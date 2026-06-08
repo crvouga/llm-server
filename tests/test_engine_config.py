@@ -18,6 +18,7 @@ def test_default_engine_is_vllm():
     assert cfg.engine == "vllm"
     assert cfg.container_name == "vllm"
     assert cfg.service_port == 8888
+    assert cfg.vllm_model == "RedHatAI/Qwen3-Coder-Next-NVFP4"
 
 
 def test_engine_atlas_legacy_env():
@@ -33,7 +34,7 @@ def test_engine_atlas_legacy_env():
         os.environ.pop("ENGINE", None)
 
 
-def test_vllm_serve_args_include_tool_parser_and_dflash():
+def test_vllm_serve_args_include_tool_parser_and_mtp_on_ngc_image():
     mod = _load_spark()
     engine_vllm = importlib.import_module("spark.engine_vllm")
     cfg = mod.config.Config()
@@ -47,8 +48,35 @@ def test_vllm_serve_args_include_tool_parser_and_dflash():
     assert args[args.index("--served-model-name") + 1] == "atlas"
     assert "--speculative-config" in args
     spec = args[args.index("--speculative-config") + 1]
+    assert "qwen3_next_mtp" in spec
+    assert str(cfg.vllm_mtp_tokens) in spec
+
+
+def test_vllm_serve_args_use_dflash_on_newer_image():
+    mod = _load_spark()
+    engine_vllm = importlib.import_module("spark.engine_vllm")
+    cfg = mod.config.Config()
+    cfg.vllm_image = "vllm/vllm-openai:v0.20.0-cu130"
+    mod.config._apply_env_overrides(cfg)
+    args = engine_vllm._vllm_serve_args(cfg)
+    spec = args[args.index("--speculative-config") + 1]
     assert "dflash" in spec
     assert cfg.vllm_dflash_model in spec
+
+
+def test_hf_download_failure_hint_gated_repo():
+    mod = _load_spark()
+    engine_vllm = importlib.import_module("spark.engine_vllm")
+    output = (
+        "GatedRepoError: 403 Client Error.\n"
+        "you are not in the authorized list."
+    )
+    hint = engine_vllm._hf_download_failure_hint(
+        "saricles/Qwen3-Coder-Next-NVFP4-GB10", output
+    )
+    assert hint is not None
+    assert "gated" in hint.lower()
+    assert "VLLM_MODEL=" in hint
 
 
 def test_vllm_no_speculative_when_disabled():

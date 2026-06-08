@@ -8,7 +8,7 @@ from pathlib import Path
 @dataclass
 class Config:
     vault_token: str = ""
-    vault_addr: str = "https://secret-store.chrisvouga.dev"
+    vault_addr: str = "https://vault.chrisvouga.dev"
     vault_mount: str = "secret"
     vault_project: str = "personal"
     vault_config: str = "dev"

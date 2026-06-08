@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 
 from .config import _CONFIG_HASH_LABEL, _should_remove_container
-from .console import info, ok, section, warn
+from .console import die, info, ok, section, warn
 from .containers import (
     _container_config_hash,
     _container_exit_code,
@@ -34,6 +34,26 @@ def _hf_repo_cached(model_id: str) -> bool:
     )
 
 
+def _hf_download_failure_hint(model_id: str, output: str) -> str | None:
+    lower = output.lower()
+    if "gatedrepoerror" in lower or "gated repo" in lower or (
+        "403" in output and "not in the authorized list" in lower
+    ):
+        return (
+            f"Hugging Face model '{model_id}' is gated and this account is not authorized.\n"
+            f"  1. Request access: https://huggingface.co/{model_id}\n"
+            "  2. Or pick a public model, e.g.\n"
+            "       VLLM_MODEL=unsloth/Qwen3-Coder-Next-FP8-Dynamic make server-start\n"
+            "       VLLM_MODEL=RedHatAI/Qwen3-Coder-Next-NVFP4 make server-start"
+        )
+    if "401" in output and ("unauthorized" in lower or "invalid" in lower):
+        return (
+            f"Could not authenticate with Hugging Face for '{model_id}'.\n"
+            "  Check HF_TOKEN in your secret store (vault) or environment."
+        )
+    return None
+
+
 def _download_hf_model(cfg, docker_cmd, model_id: str, size_hint: str) -> None:
     hf_cache = Path.home() / ".cache" / "huggingface"
     hf_cache.mkdir(parents=True, exist_ok=True)
@@ -46,25 +66,38 @@ def _download_hf_model(cfg, docker_cmd, model_id: str, size_hint: str) -> None:
         "pip install -q huggingface_hub && "
         'HF_XET_HIGH_PERFORMANCE=1 python -c "' + py_cmd + '"'
     )
-    run(
+    env_args: list[str] = ["-e", "HF_XET_HIGH_PERFORMANCE=1"]
+    if cfg.hf_token:
+        env_args.extend(
+            [
+                "-e",
+                "HF_TOKEN=" + cfg.hf_token,
+                "-e",
+                "HUGGING_FACE_HUB_TOKEN=" + cfg.hf_token,
+            ]
+        )
+    result = subprocess.run(
         [
             *docker_cmd,
             "run",
             "--rm",
             "-v",
             f"{hf_cache}:/root/.cache/huggingface",
-            "-e",
-            "HF_TOKEN=" + cfg.hf_token,
-            "-e",
-            "HUGGING_FACE_HUB_TOKEN=" + cfg.hf_token,
-            "-e",
-            "HF_XET_HIGH_PERFORMANCE=1",
+            *env_args,
             "python:3.11-slim",
             "bash",
             "-c",
             bash_cmd,
-        ]
+        ],
+        capture_output=True,
+        text=True,
     )
+    if result.returncode != 0:
+        combined = (result.stdout or "") + (result.stderr or "")
+        if hint := _hf_download_failure_hint(model_id, combined):
+            die(hint)
+        tail = combined.strip()[-2000:] or "(no output)"
+        die(f"Failed to download {model_id}.\n{tail}")
     ok(f"Downloaded: {model_id}")
 
 
@@ -76,7 +109,7 @@ def ensure_vllm_model(cfg, docker_cmd):
     else:
         _download_hf_model(cfg, docker_cmd, cfg.vllm_model, "~43 GB NVFP4")
 
-    if not cfg.vllm_speculative or not cfg.vllm_dflash_model:
+    if cfg.vllm_speculative_method_resolved() != "dflash" or not cfg.vllm_dflash_model:
         return
 
     if _hf_repo_cached(cfg.vllm_dflash_model):
@@ -112,14 +145,40 @@ def pull_vllm_image(cfg, docker_cmd):
 
 
 def _vllm_speculative_config(cfg) -> str | None:
-    if not cfg.vllm_speculative or not cfg.vllm_dflash_model:
+    method = cfg.vllm_speculative_method_resolved()
+    if not method:
         return None
-    payload = {
-        "method": "dflash",
-        "model": cfg.vllm_dflash_model,
-        "num_speculative_tokens": cfg.vllm_dflash_tokens,
-    }
+    if method == "dflash":
+        if not cfg.vllm_dflash_model:
+            return None
+        payload = {
+            "method": "dflash",
+            "model": cfg.vllm_dflash_model,
+            "num_speculative_tokens": cfg.vllm_dflash_tokens,
+        }
+    elif method == "qwen3_next_mtp":
+        payload = {
+            "method": "qwen3_next_mtp",
+            "num_speculative_tokens": cfg.vllm_mtp_tokens,
+        }
+    else:
+        warn(
+            f"Unknown VLLM_SPECULATIVE_METHOD={method!r} — "
+            "starting without speculative decoding"
+        )
+        return None
     return json.dumps(payload, separators=(",", ":"))
+
+
+def _vllm_speculative_label(cfg) -> str:
+    method = cfg.vllm_speculative_method_resolved()
+    if not method:
+        return "no speculative"
+    if method == "dflash" and cfg.vllm_dflash_model:
+        return f"DFlash ({cfg.vllm_dflash_model})"
+    if method == "qwen3_next_mtp":
+        return f"MTP K={cfg.vllm_mtp_tokens}"
+    return method
 
 
 def _vllm_serve_args(cfg) -> list:
@@ -142,8 +201,6 @@ def _vllm_serve_args(cfg) -> list:
         str(cfg.vllm_attention_backend),
         "--load-format",
         str(cfg.vllm_load_format),
-        "--moe-backend",
-        str(cfg.vllm_moe_backend),
         "--enable-auto-tool-choice",
         "--tool-call-parser",
         "qwen3_coder",
@@ -162,7 +219,7 @@ def _vllm_launch_fingerprint(cfg) -> str:
         {
             "image": cfg.vllm_image,
             "model": cfg.vllm_model,
-            "dflash": cfg.vllm_dflash_model if cfg.vllm_speculative else None,
+            "speculative": cfg.vllm_speculative_method_resolved(),
             "port": cfg.vllm_port,
             "serve": _vllm_serve_args(cfg),
         },
@@ -173,12 +230,7 @@ def _vllm_launch_fingerprint(cfg) -> str:
 
 def start_vllm(cfg, docker_cmd) -> str:
     """Start or reuse the vLLM container."""
-    spec = (
-        f"DFlash ({cfg.vllm_dflash_model})"
-        if cfg.vllm_speculative and cfg.vllm_dflash_model
-        else "no speculative"
-    )
-    section(f"Starting vLLM  [{cfg.vllm_model}, {spec}]")
+    section(f"Starting vLLM  [{cfg.vllm_model}, {_vllm_speculative_label(cfg)}]")
     info(
         f"Context: {cfg.vllm_max_model_len} tokens  |  "
         f"KV: {cfg.vllm_kv_cache_dtype}  |  GPU budget: {cfg.vllm_gpu_mem_util:.0%}"
@@ -256,7 +308,11 @@ def start_vllm(cfg, docker_cmd) -> str:
     ]
     for key, value in cfg.vllm_extra_env.items():
         docker_run.extend(["-e", f"{key}={value}"])
-    docker_run.extend([cfg.vllm_image, *_vllm_serve_args(cfg)])
+    # NVIDIA NGC images use ENTRYPOINT ["serve"]; pass "vllm serve <model> ..."
+    # explicitly (matches DGX Spark docs).
+    docker_run.extend(
+        ["--entrypoint", "vllm", cfg.vllm_image, *_vllm_serve_args(cfg)]
+    )
 
     run(docker_run)
     ok(f"Container '{cfg.container_name}' started")

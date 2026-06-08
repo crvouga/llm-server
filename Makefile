@@ -69,7 +69,8 @@ server-start run start:
 	@set -euo pipefail; \
 	command -v python3 >/dev/null || { echo "Missing: python3"; exit 1; }; \
 	command -v docker >/dev/null || { echo "Missing: docker"; exit 1; }; \
-	echo "Starting LLM server (ENGINE=$${ENGINE:-vllm})..."; \
+	echo "Starting LLM server (ENGINE=$${ENGINE:-vllm}, VLLM_MODEL=$${VLLM_MODEL:-RedHatAI/Qwen3-Coder-Next-NVFP4})..."; \
+	VLLM_MODEL="$${VLLM_MODEL:-RedHatAI/Qwen3-Coder-Next-NVFP4}" \
 	PYTHONUNBUFFERED=1 python3 "$(CURDIR)/server/server.py"
 
 server-stop stop kill:
@@ -79,7 +80,10 @@ server-stop stop kill:
 	if [ -n "$$launcher_pids" ]; then \
 		echo "Stopping llm server launcher..."; \
 		for pid in $$launcher_pids; do \
-			cmd=$$(tr '\0' ' ' < "/proc/$$pid/cmdline" 2>/dev/null || true); \
+			cmd=""; \
+			if [ -r "/proc/$$pid/cmdline" ]; then \
+				cmd=$$(tr '\0' ' ' < "/proc/$$pid/cmdline"); \
+			fi; \
 			case "$$cmd" in \
 				*"server/server.py --"*) continue ;; \
 			esac; \
@@ -88,7 +92,10 @@ server-stop stop kill:
 		for _ in $$(seq 1 10); do \
 			still_running=false; \
 			for pid in $$(pgrep -f "$$server_pattern" 2>/dev/null || true); do \
-				cmd=$$(tr '\0' ' ' < "/proc/$$pid/cmdline" 2>/dev/null || true); \
+				cmd=""; \
+				if [ -r "/proc/$$pid/cmdline" ]; then \
+					cmd=$$(tr '\0' ' ' < "/proc/$$pid/cmdline"); \
+				fi; \
 				case "$$cmd" in \
 					*"server/server.py --"*) continue ;; \
 				esac; \

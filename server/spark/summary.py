@@ -3,6 +3,7 @@
 from .cloudflare import _cf_public_url
 from .console import B, G, X, section, warn
 from .engine_dispatch import engine_label
+from .engine_vllm import _vllm_speculative_label
 
 
 def _spec_line(cfg) -> str:
@@ -12,9 +13,8 @@ def _spec_line(cfg) -> str:
             if cfg.atlas_speculative
             else "off"
         )
-    if cfg.vllm_speculative and cfg.vllm_dflash_model:
-        return f"DFlash ({cfg.vllm_dflash_model})"
-    return "off"
+    label = _vllm_speculative_label(cfg)
+    return "off" if label == "no speculative" else label
 
 
 def _model_line(cfg) -> str:
