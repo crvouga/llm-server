@@ -64,6 +64,7 @@ or legacy `BENCH_URL`. Use `CHECK_ARGS='--json'` for machine-readable output.
 | --- | --- | --- |
 | `ATLAS_MODEL` | `RedHatAI/Qwen3-Coder-Next-NVFP4` | HF model id (pre-downloaded to `~/.cache/huggingface` before launch) |
 | `ATLAS_MAX_SEQ_LEN` | `131072` | Context window (128K) |
+| `ATLAS_MAX_BATCH_SIZE` | `6` | Concurrent sequences (128K fp8 KV on GB10; raise only with shorter context) |
 | `ATLAS_KV_CACHE_DTYPE` | `fp8` | `bf16` / `fp8` / `turbo8` / `nvfp4` / `turbo4` / `turbo3` |
 | `ATLAS_NUM_DRAFTS` | `2` | MTP speculative depth (K); `ATLAS_NO_SPECULATIVE=1` to disable |
 | `ATLAS_MTP_QUANTIZATION` | `nvfp4` | MTP draft-head quant (required for qwen3_next MoE + speculative) |

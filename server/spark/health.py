@@ -46,12 +46,19 @@ def _gpu_oom_hint(logs: str) -> str:
         return (
             "\nHint: Atlas failed while mapping NVFP4 weights. For "
             "RedHatAI/Qwen3-Coder-Next-NVFP4 this usually means the attention "
-            "weight-compat sidecar was not built — rerun `make server-start` "
-            "(the launcher materializes missing BF16 Q/K/V tensors automatically). "
+            "weight-compat was not merged into the checkpoint shards — "
+            "rerun `make server-start` (the launcher materializes missing BF16 "
+            "Q/K/V tensors into model-00010-of-00010 automatically). "
             "If it persists after a fresh start, run "
             "`make server-stop && ATLAS_FORCE_RESTART=1 make server-start`, "
             "pull the latest image (`ATLAS_PULL=always make server-start`), "
             "or lower `ATLAS_MAX_SEQ_LEN` / set `ATLAS_NO_SPECULATIVE=1`.\n"
+        )
+    if "kv cache can hold at most" in lower and "max-batch-size" in lower:
+        return (
+            "\nHint: 128K context uses most of the GB10 KV pool — lower "
+            "`ATLAS_MAX_BATCH_SIZE` (default 6) or reduce `ATLAS_MAX_SEQ_LEN`. "
+            "Atlas prints the exact limits in the error above.\n"
         )
     return ""
 

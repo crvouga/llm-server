@@ -20,7 +20,7 @@ CHAT_BIN := $(CURDIR)/.chat/bin/aichat
 help:
 	@echo "Server (Atlas + Qwen3-Coder-Next):"
 	@echo "  make server-start  -> start Atlas + tunnel (python3 server/server.py)"
-	@echo "                         ATLAS_MAX_SEQ_LEN / ATLAS_KV_CACHE_DTYPE / ATLAS_NUM_DRAFTS to tune"
+	@echo "                         ATLAS_MAX_SEQ_LEN / ATLAS_MAX_BATCH_SIZE / ATLAS_KV_CACHE_DTYPE / ATLAS_NUM_DRAFTS to tune"
 	@echo "  make server-stop       -> stop tunnel + launcher + Atlas container"
 	@echo "  make server-metrics -> CPU/RAM/GPU/disk + Atlas health snapshot"
 	@echo "                         METRICS_ARGS='--json' or '--watch 5' for options"

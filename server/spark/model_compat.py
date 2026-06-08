@@ -5,8 +5,9 @@ Q/K/V projections and runtime-quantizes them. RedHatAI/Qwen3-Coder-Next-NVFP4
 ships those projections as on-disk NVFP4 (``.weight_packed`` only), which makes
 Atlas fail at layer 3 with ``Weight '...q_proj.weight' not found in store``.
 
-This module materializes the missing BF16 tensors into a small sidecar shard and
-updates the HF index once per snapshot.
+Atlas fast-loads only the numbered checkpoint shards (``model-*-of-00010``), so
+compat weights must be merged into one of those shards — a standalone sidecar
+file is indexed but never loaded into the weight store.
 """
 
 from __future__ import annotations
@@ -18,8 +19,10 @@ from pathlib import Path
 from .console import info, ok, section
 from .shell import run
 
-_COMPAT_MARKER = ".atlas-attn-weight-compat-v1"
-_COMPAT_SHARD = "atlas-attn-weight-compat.safetensors"
+_COMPAT_MARKER = ".atlas-attn-weight-compat-v2"
+_LEGACY_MARKER = ".atlas-attn-weight-compat-v1"
+_LEGACY_SIDECAR = "atlas-attn-weight-compat.safetensors"
+_MERGE_SHARD = "model-00010-of-00010.safetensors"
 _COMPAT_MODELS = frozenset({"redhatai/qwen3-coder-next-nvfp4"})
 
 # Runs inside python:3.11-slim (same image family as HF snapshot_download).
@@ -32,6 +35,11 @@ _COMPAT_SCRIPT = textwrap.dedent(
     import torch
     from safetensors import safe_open
     from safetensors.torch import save_file
+
+    MARKER = ".atlas-attn-weight-compat-v2"
+    LEGACY_MARKER = ".atlas-attn-weight-compat-v1"
+    LEGACY_SIDECAR = "atlas-attn-weight-compat.safetensors"
+    MERGE_SHARD = "model-00010-of-00010.safetensors"
 
     E2M1_LUT = np.array(
         [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0],
@@ -64,7 +72,7 @@ _COMPAT_SCRIPT = textwrap.dedent(
 
     def main() -> None:
         snap = Path(__import__("sys").argv[1])
-        marker = snap / ".atlas-attn-weight-compat-v1"
+        marker = snap / MARKER
         if marker.exists():
             return
 
@@ -78,14 +86,18 @@ _COMPAT_SCRIPT = textwrap.dedent(
                 continue
             base = key[: -len(".weight_packed")]
             weight_key = base + ".weight"
-            if weight_key not in weight_map and base.split(".")[-1] in {"q_proj", "k_proj", "v_proj"}:
+            proj = base.split(".")[-1]
+            if proj not in {"q_proj", "k_proj", "v_proj"}:
+                continue
+            mapped = weight_map.get(weight_key)
+            if mapped is None or mapped == LEGACY_SIDECAR:
                 targets.append(base)
 
         if not targets:
             marker.write_text("noop\n")
             return
 
-        tensors: dict[str, torch.Tensor] = {}
+        new_weights: dict[str, torch.Tensor] = {}
         for base in sorted(targets):
             packed_key = base + ".weight_packed"
             scale_key = base + ".weight_scale"
@@ -93,25 +105,37 @@ _COMPAT_SCRIPT = textwrap.dedent(
             shard = snap / weight_map[packed_key]
             with safe_open(shard, framework="pt") as f:
                 packed = f.get_tensor(packed_key).to(torch.uint8).cpu().numpy()
-                scale = (
-                    f.get_tensor(scale_key).to(torch.float32).cpu().numpy()
-                )
+                scale = f.get_tensor(scale_key).to(torch.float32).cpu().numpy()
                 gscale = f.get_tensor(gscale_key).to(torch.float32).cpu().numpy()
             weight_key = base + ".weight"
-            tensors[weight_key] = dequant_nvfp4(packed, scale, gscale)
-            weight_map[weight_key] = "atlas-attn-weight-compat.safetensors"
+            new_weights[weight_key] = dequant_nvfp4(packed, scale, gscale)
+            weight_map[weight_key] = MERGE_SHARD
 
-        compat_path = snap / "atlas-attn-weight-compat.safetensors"
-        save_file(tensors, compat_path)
+        merge_path = snap / MERGE_SHARD
+        merged: dict[str, torch.Tensor] = {}
+        with safe_open(merge_path, framework="pt") as f:
+            for key in f.keys():
+                merged[key] = f.get_tensor(key)
+        merged.update(new_weights)
+
+        if merge_path.is_symlink():
+            merge_path.unlink()
+        save_file(merged, merge_path)
+
+        legacy_sidecar = snap / LEGACY_SIDECAR
+        if legacy_sidecar.exists():
+            legacy_sidecar.unlink()
+        legacy_marker = snap / LEGACY_MARKER
+        if legacy_marker.exists():
+            legacy_marker.unlink()
 
         metadata = index.get("metadata") or {}
-        total = int(metadata.get("total_size", 0))
-        total += compat_path.stat().st_size
+        total = sum((snap / shard).resolve().stat().st_size for shard in set(weight_map.values()))
         metadata["total_size"] = total
         index["metadata"] = metadata
         index["weight_map"] = weight_map
         index_path.write_text(json.dumps(index, indent=2) + "\n")
-        marker.write_text(f"layers={len(targets)}\n")
+        marker.write_text(f"layers={len(targets)} shard={MERGE_SHARD}\n")
 
     if __name__ == "__main__":
         main()
@@ -131,6 +155,21 @@ def _snapshot_dir(cfg) -> Path | None:
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
+def _index_needs_compat(index: dict) -> bool:
+    weight_map = index.get("weight_map", {})
+    if any(v == _LEGACY_SIDECAR for v in weight_map.values()):
+        return True
+    for key in weight_map:
+        if ".self_attn." not in key or not key.endswith(".weight_packed"):
+            continue
+        base = key[: -len(".weight_packed")]
+        if base.split(".")[-1] not in {"q_proj", "k_proj", "v_proj"}:
+            continue
+        if base + ".weight" not in weight_map:
+            return True
+    return False
+
+
 def needs_atlas_weight_compat(cfg) -> bool:
     if cfg.atlas_model.lower() not in _COMPAT_MODELS:
         return False
@@ -139,19 +178,12 @@ def needs_atlas_weight_compat(cfg) -> bool:
         return False
     if (snap / _COMPAT_MARKER).exists():
         return False
+    if (snap / _LEGACY_MARKER).exists() or (snap / _LEGACY_SIDECAR).exists():
+        return True
     index_path = snap / "model.safetensors.index.json"
     if not index_path.is_file():
         return False
-    index = json.loads(index_path.read_text())
-    for key in index.get("weight_map", {}):
-        if ".self_attn." not in key or not key.endswith(".weight_packed"):
-            continue
-        base = key[: -len(".weight_packed")]
-        if base.split(".")[-1] not in {"q_proj", "k_proj", "v_proj"}:
-            continue
-        if base + ".weight" not in index["weight_map"]:
-            return True
-    return False
+    return _index_needs_compat(json.loads(index_path.read_text()))
 
 
 def ensure_atlas_weight_compat(cfg, docker_cmd) -> None:
@@ -166,7 +198,7 @@ def ensure_atlas_weight_compat(cfg, docker_cmd) -> None:
     section("Preparing Atlas weight compat")
     info(
         "RedHatAI NVFP4 stores attention Q/K/V as weight_packed only; "
-        "materializing BF16 .weight sidecar for Atlas"
+        f"merging dequantized BF16 .weight tensors into {_MERGE_SHARD}"
     )
 
     hf_cache = Path.home() / ".cache" / "huggingface"
@@ -191,4 +223,4 @@ def ensure_atlas_weight_compat(cfg, docker_cmd) -> None:
             f"models--{cfg.atlas_model.replace('/', '--')}/snapshots/{snap.name}",
         ]
     )
-    ok(f"Weight compat ready ({_COMPAT_SHARD})")
+    ok(f"Weight compat ready (merged into {_MERGE_SHARD})")

@@ -107,6 +107,8 @@ def _atlas_serve_args(cfg) -> list:
         str(cfg.atlas_port),
         "--max-seq-len",
         str(cfg.atlas_max_seq_len),
+        "--max-batch-size",
+        str(cfg.atlas_max_batch_size),
         "--kv-cache-dtype",
         str(cfg.atlas_kv_cache_dtype),
         "--gpu-memory-utilization",
