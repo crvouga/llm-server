@@ -32,9 +32,9 @@ class Config:
     # Inference engine: vllm (default) or atlas (legacy)
     engine: str = "vllm"
 
-    # vLLM (Qwen3-Coder-Next NVFP4-GB10 + DFlash on GB10)
+    # vLLM (Qwen3-Coder-Next NVFP4 + DFlash on GB10)
     vllm_image: str = "nvcr.io/nvidia/vllm:26.01-py3"
-    vllm_model: str = "saricles/Qwen3-Coder-Next-NVFP4-GB10"
+    vllm_model: str = "RedHatAI/Qwen3-Coder-Next-NVFP4"
     vllm_dflash_model: str = "z-lab/Qwen3-Coder-Next-DFlash"
     vllm_container: str = "vllm"
     vllm_port: int = 8888
@@ -43,11 +43,13 @@ class Config:
     vllm_kv_cache_dtype: str = "fp8"
     vllm_gpu_mem_util: float = 0.60
     vllm_speculative: bool = True
+    # auto: qwen3_next_mtp on NVIDIA 26.01 (vLLM 0.13), dflash on newer images
+    vllm_speculative_method: str = "auto"
     vllm_dflash_tokens: int = 15
+    vllm_mtp_tokens: int = 2
     vllm_enforce_eager: bool = True
     vllm_attention_backend: str = "flashinfer"
     vllm_load_format: str = "fastsafetensors"
-    vllm_moe_backend: str = "cutlass"
     vllm_extra_env: dict[str, str] = field(default_factory=dict)
 
     # Atlas (Qwen3-Coder-Next NVFP4 on GB10)
@@ -80,6 +82,20 @@ class Config:
         if self.engine == "atlas":
             return self.atlas_port
         return self.vllm_port
+
+    def vllm_speculative_method_resolved(self) -> str | None:
+        """Return the speculative method to pass to vLLM, or None if disabled."""
+        if not self.vllm_speculative:
+            return None
+        method = self.vllm_speculative_method.strip().lower()
+        if method in ("none", "off", "0"):
+            return None
+        if method == "auto":
+            # NVIDIA 26.01-py3 ships vLLM 0.13 — DFlash landed in upstream 0.20+.
+            if "nvcr.io/nvidia/vllm:26.01" in self.vllm_image.lower():
+                return "qwen3_next_mtp"
+            return "dflash"
+        return method
 
 
 def _should_remove_container(cfg: "Config") -> bool:
@@ -124,16 +140,18 @@ def _apply_env_overrides(cfg: "Config") -> None:
         cfg.vllm_gpu_mem_util = float(gmu)
     if os.environ.get("VLLM_NO_SPECULATIVE", "").lower() in ("1", "true", "yes"):
         cfg.vllm_speculative = False
+    if method := os.environ.get("VLLM_SPECULATIVE_METHOD"):
+        cfg.vllm_speculative_method = method
     if tokens := os.environ.get("VLLM_DFLASH_TOKENS"):
         cfg.vllm_dflash_tokens = int(tokens)
+    if tokens := os.environ.get("VLLM_MTP_TOKENS"):
+        cfg.vllm_mtp_tokens = int(tokens)
     if os.environ.get("VLLM_ENFORCE_EAGER", "").lower() in ("0", "false", "no"):
         cfg.vllm_enforce_eager = False
     if backend := os.environ.get("VLLM_ATTENTION_BACKEND"):
         cfg.vllm_attention_backend = backend
     if load_fmt := os.environ.get("VLLM_LOAD_FORMAT"):
         cfg.vllm_load_format = load_fmt
-    if moe := os.environ.get("VLLM_MOE_BACKEND"):
-        cfg.vllm_moe_backend = moe
     if img := os.environ.get("ATLAS_IMAGE"):
         cfg.atlas_image = img
     if model := os.environ.get("ATLAS_MODEL"):

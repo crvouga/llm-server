@@ -51,6 +51,16 @@ def _gpu_oom_hint(cfg, logs: str) -> str:
             "(`VLLM_IMAGE=avarok/dgx-vllm-nvfp4-kernel:v22`) or disable "
             "speculative decoding (`VLLM_NO_SPECULATIVE=1`).\n"
         )
+    if (
+        "validation error for speculativeconfig" in lower
+        and "dflash" in lower
+    ) or "unrecognized arguments: --moe-backend" in lower:
+        return (
+            "\nHint: DFlash needs vLLM 0.20+ — the default NVIDIA 26.01 image "
+            "ships 0.13 and uses built-in MTP instead (`VLLM_SPECULATIVE_METHOD=auto`). "
+            "For DFlash, use a newer image (`VLLM_IMAGE=...`) with "
+            "`VLLM_SPECULATIVE_METHOD=dflash`, or disable with `VLLM_NO_SPECULATIVE=1`.\n"
+        )
     if "not found in store" in lower and cfg.engine == "atlas":
         return (
             "\nHint: Atlas failed while mapping NVFP4 weights. For "
