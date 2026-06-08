@@ -166,6 +166,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Prompt-depth padding in ~tokens (default: 0)",
     )
     parser.add_argument(
+        "--thinking",
+        action="store_true",
+        default=env_first_bool("LLM_BENCH_THINKING", default=False),
+        help="Benchmark with hybrid reasoning enabled (default: off / production mode)",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Print machine-readable JSON summary to stdout",
@@ -359,6 +365,7 @@ def main(argv: list[str] | None = None) -> int:
                     runs=args.bench_runs,
                     stream=bool(args.bench_stream),
                     depth=args.bench_depth,
+                    thinking=args.thinking,
                 ),
             )
             if bench_summary.model:

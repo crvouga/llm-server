@@ -117,6 +117,8 @@ def _atlas_serve_args(cfg) -> list:
         args.extend(["--kv-high-precision-layers", "auto"])
     if cfg.atlas_speculative:
         args.extend(["--speculative", "--num-drafts", str(cfg.atlas_num_drafts)])
+    if cfg.atlas_max_thinking_budget > 0:
+        args.extend(["--max-thinking-budget", str(cfg.atlas_max_thinking_budget)])
     return args
 
 

@@ -11,7 +11,7 @@ import httpx
 from openai import OpenAI
 
 # Documented server default when the API does not expose context length.
-DEFAULT_ATLAS_CONTEXT_TOKENS = 131_072
+DEFAULT_ATLAS_CONTEXT_TOKENS = 65_536
 
 
 @dataclass

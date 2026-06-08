@@ -23,6 +23,13 @@ class BenchmarkConfig:
     runs: int = 3
     stream: bool = True
     depth: int = 0
+    thinking: bool = False
+
+
+def completion_extra_body(thinking: bool) -> dict[str, Any] | None:
+    if thinking:
+        return None
+    return {"chat_template_kwargs": {"enable_thinking": False}}
 
 
 @dataclass
@@ -50,6 +57,7 @@ class BenchmarkSummary:
     runs: int
     max_tokens: int
     depth_tokens: int
+    thinking: bool = False
     latency_s: float
     ttft_s: float | None
     overall_tps: float
@@ -152,13 +160,21 @@ def _sample_from_timings(
     )
 
 
-def bench_once_blocking(client: OpenAI, model: str, prompt: str, max_tokens: int) -> BenchmarkSample:
+def bench_once_blocking(
+    client: OpenAI,
+    model: str,
+    prompt: str,
+    max_tokens: int,
+    *,
+    thinking: bool = False,
+) -> BenchmarkSample:
     started = time.perf_counter()
     resp = client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": prompt}],
         max_tokens=max_tokens,
         temperature=0.2,
+        extra_body=completion_extra_body(thinking),
     )
     end = time.perf_counter()
     return _sample_from_timings(
@@ -171,7 +187,14 @@ def bench_once_blocking(client: OpenAI, model: str, prompt: str, max_tokens: int
     )
 
 
-def bench_once_stream(client: OpenAI, model: str, prompt: str, max_tokens: int) -> BenchmarkSample:
+def bench_once_stream(
+    client: OpenAI,
+    model: str,
+    prompt: str,
+    max_tokens: int,
+    *,
+    thinking: bool = False,
+) -> BenchmarkSample:
     started = time.perf_counter()
     first_tok: float | None = None
     response_model = model
@@ -185,6 +208,7 @@ def bench_once_stream(client: OpenAI, model: str, prompt: str, max_tokens: int) 
         temperature=0.2,
         stream=True,
         stream_options=cast(Any, {"include_usage": True}),
+        extra_body=completion_extra_body(thinking),
     )
     for chunk in stream:
         if chunk.model:
@@ -238,6 +262,7 @@ def run_benchmark(
         runs=config.runs,
         max_tokens=config.max_tokens,
         depth_tokens=config.depth,
+        thinking=config.thinking,
         latency_s=0.0,
         ttft_s=None,
         overall_tps=0.0,
@@ -253,9 +278,21 @@ def run_benchmark(
         current_model = model
         for _ in range(config.runs):
             if config.stream:
-                sample = bench_once_stream(client, current_model, prompt, config.max_tokens)
+                sample = bench_once_stream(
+                    client,
+                    current_model,
+                    prompt,
+                    config.max_tokens,
+                    thinking=config.thinking,
+                )
             else:
-                sample = bench_once_blocking(client, current_model, prompt, config.max_tokens)
+                sample = bench_once_blocking(
+                    client,
+                    current_model,
+                    prompt,
+                    config.max_tokens,
+                    thinking=config.thinking,
+                )
             samples.append(sample)
             current_model = sample.model
 
@@ -300,9 +337,10 @@ def print_benchmark(summary: BenchmarkSummary) -> None:
         return
 
     mode = "streaming" if summary.stream else "non-streaming"
+    thinking_mode = "on" if summary.thinking else "off (production default)"
     print(f"Target: {summary.base_url}")
     print(
-        f"Mode: {mode}  |  runs: {summary.runs}  |  "
+        f"Mode: {mode}  |  thinking: {thinking_mode}  |  runs: {summary.runs}  |  "
         f"max_tokens: {summary.max_tokens}  |  depth: {summary.depth_tokens}"
     )
     print("")
@@ -338,6 +376,7 @@ def print_benchmark(summary: BenchmarkSummary) -> None:
 def benchmark_to_json(summary: BenchmarkSummary) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "stream": summary.stream,
+        "thinking": summary.thinking,
         "runs": summary.runs,
         "max_tokens": summary.max_tokens,
         "depth_tokens": summary.depth_tokens,
@@ -390,6 +429,7 @@ def benchmark_to_markdown_section(summary: BenchmarkSummary) -> list[str]:
             "| | |",
             "|---|---|",
             f"| **Mode** | {mode} |",
+            f"| **Thinking** | {'on' if summary.thinking else 'off'} |",
             f"| **Runs** | {summary.runs} |",
             f"| **max_tokens** | {summary.max_tokens} |",
             f"| **Depth** | {summary.depth_tokens} |",

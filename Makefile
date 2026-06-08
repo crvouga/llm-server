@@ -18,7 +18,7 @@ CHAT_BIN := $(CURDIR)/.chat/bin/aichat
 	remote-setup-mac remote-verify pull push gh
 
 help:
-	@echo "Server (Atlas + Qwen3-Coder-Next):"
+	@echo "Server (Atlas + Qwen3.6-35B-A3B-FP8):"
 	@echo "  make server-start  -> start Atlas + tunnel (python3 server/server.py)"
 	@echo "                         ATLAS_MAX_SEQ_LEN / ATLAS_KV_CACHE_DTYPE / ATLAS_NUM_DRAFTS to tune"
 	@echo "  make server-stop       -> stop tunnel + launcher + Atlas container"

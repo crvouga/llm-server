@@ -8,7 +8,7 @@ Thin entrypoint. All logic lives in the `spark/` package; start with
 Target host: ASUS Ascent GX10 AI Supercomputer (DGX Spark, NVIDIA GB10 Superchip,
 128 GB LPDDR5x, 1 TB PCIe Gen4 NVMe). See README.md § Hardware.
 
-Default model: Qwen3-Coder-Next NVFP4 via Atlas (OpenAI-compatible API).
+Default model: Qwen3.6-35B-A3B-FP8 via Atlas (OpenAI-compatible API).
 
 Idempotent. Manages its own process group. Ctrl+C or `make server-stop` stops
 the tunnel, launcher, and Atlas container.

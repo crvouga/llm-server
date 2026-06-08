@@ -20,7 +20,8 @@ def print_summary(cfg, cf_url):
   {B}Speculative:{X} {spec}  |  {B}Prefix cache:{X} on
   {B}GPU budget:{X} {cfg.atlas_gpu_mem_util:.0%}  |  {B}Scheduler:{X} slai
   {B}Context:{X}  {cfg.atlas_max_seq_len} tokens  |  {B}KV cache:{X} {kv}
-  {B}Target:{X}   ~80+ tok/s single-stream (Qwen3-Coder-Next on GB10)
+  {B}Thinking:{X} off by default (proxy injects opt-out; clients can opt in)
+  {B}Target:{X}   ~120-145 tok/s single-stream, sub-second TTFT (non-thinking)
 
   {B}Local API (OpenAI-compatible):{X}
     http://localhost:{cfg.atlas_port}/v1

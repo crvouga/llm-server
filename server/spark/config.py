@@ -25,16 +25,17 @@ class Config:
     cf_tunnel_name: str = "llm"
     cf_tunnel_hostname: str = "llm.chrisvouga.dev"
 
-    # Atlas (Qwen3-Coder-Next NVFP4 on GB10)
+    # Atlas (Qwen3.6-35B-A3B-FP8 on GB10 — Atlas Recipe A)
     atlas_image: str = "avarok/atlas-gb10:latest"
-    atlas_model: str = "Qwen/Qwen3-Coder-Next-NVFP4"
+    atlas_model: str = "Qwen/Qwen3.6-35B-A3B-FP8"
     atlas_container: str = "atlas"
     atlas_port: int = 8888
-    atlas_max_seq_len: int = 131072
+    atlas_max_seq_len: int = 65536
     atlas_kv_cache_dtype: str = "fp8"
     atlas_speculative: bool = True
     atlas_num_drafts: int = 2
     atlas_gpu_mem_util: float = 0.90
+    atlas_max_thinking_budget: int = 2048
 
     # Runtime
     helper_dir: Path = field(default_factory=lambda: Path.home() / ".spark-serve")
@@ -75,5 +76,7 @@ def _apply_env_overrides(cfg: "Config") -> None:
         cfg.atlas_num_drafts = int(drafts)
     if gmu := (os.environ.get("ATLAS_GPU_MEM_UTIL") or os.environ.get("GPU_MEMORY_UTILIZATION")):
         cfg.atlas_gpu_mem_util = float(gmu)
+    if budget := os.environ.get("ATLAS_MAX_THINKING_BUDGET"):
+        cfg.atlas_max_thinking_budget = int(budget)
 
     cfg.container_name = cfg.atlas_container
