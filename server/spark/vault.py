@@ -34,7 +34,11 @@ def _apply_vault_secrets(cfg, secrets: Mapping[str, str], source: str) -> None:
         )
     ok("CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID loaded")
     if cfg.cf_tunnel_token:
-        warn("Using CF_TUNNEL_TOKEN override instead of fetching connector token via API")
+        warn(
+            "CF_TUNNEL_TOKEN is set in secrets but ignored by default — the launcher "
+            "fetches a fresh connector token for the named tunnel via Cloudflare API. "
+            "Set CF_TUNNEL_TOKEN_FORCE=1 to use the vault token instead."
+        )
     if not cfg.hf_token:
         warn("HF_TOKEN not in secret store — fine for public models")
 

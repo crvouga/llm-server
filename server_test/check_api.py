@@ -4,7 +4,7 @@
 Usage:
   pip install -r server_test/requirements.txt
   python3 server_test/check_api.py
-  LLM_BASE_URL=http://localhost:8888 python3 server_test/check_api.py --json
+  LLM_BASE_URL=http://127.0.0.1:8888 python3 server_test/check_api.py --json
   python3 server_test/check_api.py --smoke-only
   python3 server_test/check_api.py --bench-only
 """
@@ -18,7 +18,7 @@ import sys
 from typing import Any
 
 try:
-    from openai import OpenAI
+    from openai import APIConnectionError, InternalServerError, OpenAI
 except ImportError:
     print(
         "Missing openai package. Install with: pip install -r server_test/requirements.txt",
@@ -55,6 +55,7 @@ from smoke import (
 )
 
 DEFAULT_BASE_URL = "https://llm-proxy.chrisvouga.dev"
+DEFAULT_LOCAL_PORT = 8888
 DEFAULT_API_KEY = "sk-local"
 DEFAULT_TIMEOUT = 120.0
 DEFAULT_USER_AGENT = "llm-server-check/1.0"
@@ -90,6 +91,44 @@ def normalize_base_url(url: str) -> str:
     return base
 
 
+def resolve_default_base_url() -> str:
+    return env_first("LLM_BASE_URL", "BENCH_URL", default=DEFAULT_BASE_URL)
+
+
+def explain_api_error(exc: Exception, base_url: str) -> str:
+    msg = str(exc)
+    lower = msg.lower()
+    port = env_first("ATLAS_PORT", default=str(DEFAULT_LOCAL_PORT))
+    if "1033" in msg or "tunnel" in lower:
+        return (
+            f"\nCannot reach {base_url} — Cloudflare tunnel or backend may be down.\n"
+            "  E2E (default):  make api-check\n"
+            f"  Local Atlas:    LLM_BASE_URL=http://127.0.0.1:{port} make api-check\n"
+        )
+    if isinstance(exc, APIConnectionError) or "connection" in lower:
+        return (
+            f"\nCannot connect to {base_url}.\n"
+            "  E2E (default):  make api-check\n"
+            f"  Local Atlas:    LLM_BASE_URL=http://127.0.0.1:{port} make api-check\n"
+        )
+    if isinstance(exc, InternalServerError):
+        return (
+            f"\nAPI returned an internal error for {base_url}.\n"
+            f"  Local Atlas: LLM_BASE_URL=http://127.0.0.1:{port} make api-check\n"
+        )
+    return ""
+
+
+def resolve_model_or_exit(client: OpenAI, model: str) -> str:
+    try:
+        return resolve_model(client, model)
+    except (APIConnectionError, InternalServerError) as exc:
+        hint = explain_api_error(exc, normalize_base_url(str(client.base_url)))
+        if hint:
+            print(hint, file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Check an OpenAI-compatible API: smoke tests and throughput benchmark.",
@@ -107,8 +146,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--base-url",
-        default=env_first("LLM_BASE_URL", "BENCH_URL", default=DEFAULT_BASE_URL),
-        help=f"API base URL (default: {DEFAULT_BASE_URL})",
+        default=resolve_default_base_url(),
+        help=(
+            f"API base URL (default: {DEFAULT_BASE_URL} e2e via llm-proxy; "
+            "override with LLM_BASE_URL for local Atlas)"
+        ),
     )
     parser.add_argument(
         "--model",
@@ -323,7 +365,7 @@ def main(argv: list[str] | None = None) -> int:
     model_info: ModelInfo | None = None
 
     if model == "" and (run_smoke or run_bench):
-        model = resolve_model(client, "")
+        model = resolve_model_or_exit(client, "")
 
     if model:
         model_info = fetch_model_info(client, model)
@@ -356,7 +398,7 @@ def main(argv: list[str] | None = None) -> int:
                 print("Skipped benchmark because smoke tests failed.")
         else:
             if model == "":
-                model = resolve_model(client, "")
+                model = resolve_model_or_exit(client, "")
             bench_summary = run_benchmark(
                 client,
                 model,

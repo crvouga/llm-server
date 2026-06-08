@@ -6,13 +6,43 @@ import os
 import shutil
 import subprocess
 import time
+from pathlib import Path
 
-from .console import die, info, ok, section
+from .console import die, info, ok, section, warn
 from .webapi import CloudflareAPIError, http_get, http_post, http_put
 
 # Hostnames retired in favour of cfg.cf_tunnel_hostname; dropped from ingress on
 # the next provision so old routes stop serving traffic.
 _LEGACY_TUNNEL_HOSTNAMES = frozenset({"vllm.chrisvouga.dev"})
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text().split()[2]
+        return state != "Z"
+    except (OSError, IndexError):
+        return True
+
+
+def tunnel_connector_pid(cfg) -> int | None:
+    pid_file = cfg.helper_dir / "cloudflared.pid"
+    if not pid_file.exists():
+        return None
+    try:
+        pid = int(pid_file.read_text().strip())
+    except (OSError, ValueError):
+        return None
+    return pid if _pid_alive(pid) else None
+
+
+def tunnel_connector_running(cfg) -> bool:
+    return tunnel_connector_pid(cfg) is not None
 
 
 def cf_headers(cfg):
@@ -236,11 +266,26 @@ def resolve_cf_tunnel_token(cfg) -> str:
         _cf_ensure_tunnel_ingress(cfg, tunnel_id, hdrs)
         _cf_ensure_tunnel_dns(cfg, tunnel_id, hdrs)
 
-        if cfg.cf_tunnel_token:
-            ok("Using connector token from secrets (routes updated via API)")
+        force_vault_token = os.environ.get("CF_TUNNEL_TOKEN_FORCE", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if cfg.cf_tunnel_token and force_vault_token:
+            ok(
+                "Using connector token from secrets (CF_TUNNEL_TOKEN_FORCE=1; "
+                "routes updated via API)"
+            )
             return cfg.cf_tunnel_token
 
+        if cfg.cf_tunnel_token:
+            warn(
+                "Ignoring CF_TUNNEL_TOKEN from secrets — fetching a fresh connector "
+                f"token for tunnel '{cfg.cf_tunnel_name}' via Cloudflare API"
+            )
+
         tok = http_get(f"{base}/{tunnel_id}/token", hdrs)
+        ok(f"Fetched connector token for tunnel '{cfg.cf_tunnel_name}'")
         return tok["result"]
     except CloudflareAPIError as e:
         die(
@@ -258,7 +303,8 @@ def stop_tunnel_connector(cfg, managed_procs=None):
     if pid_file.exists():
         try:
             pid = int(pid_file.read_text().strip())
-            _kill_pid(pid, "Cloudflare tunnel")
+            if _pid_alive(pid):
+                _kill_pid(pid, "Cloudflare tunnel")
         except (OSError, ValueError):
             pass
         pid_file.unlink(missing_ok=True)
@@ -272,6 +318,29 @@ def stop_tunnel_connector(cfg, managed_procs=None):
                     _kill_pid(proc.pid, "Cloudflare tunnel")
         except OSError:
             pass
+
+
+def _wait_tunnel_registered(
+    cf_log: Path, proc: subprocess.Popen, *, timeout: float = 45
+) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            try:
+                tail = cf_log.read_text()[-2000:]
+            except OSError:
+                tail = ""
+            die(f"cloudflared exited.\nLog:\n{tail}")
+        try:
+            if "Registered tunnel connection" in cf_log.read_text():
+                return
+        except OSError:
+            pass
+        time.sleep(0.5)
+    warn(
+        "Tunnel connector started but Cloudflare registration was not confirmed "
+        f"within {timeout:.0f}s — continuing"
+    )
 
 
 def start_cf_tunnel(cfg, tunnel_token, *, register_proc=None, stop_hint="make server-stop"):
@@ -298,11 +367,26 @@ def start_cf_tunnel(cfg, tunnel_token, *, register_proc=None, stop_hint="make se
     )
 
     info("Waiting for tunnel to connect...")
-    time.sleep(6)
-
-    if proc.poll() is not None:
-        die(f"cloudflared exited.\nLog:\n{cf_log.read_text()[-1000:]}")
+    _wait_tunnel_registered(cf_log, proc)
 
     ok(f"Cloudflare tunnel running (PID {proc.pid})")
 
     return _cf_public_url(cfg)
+
+
+def ensure_cf_tunnel(
+    cfg,
+    tunnel_token: str,
+    *,
+    register_proc=None,
+    stop_hint: str = "make server-stop",
+) -> str:
+    """Start the connector if it is not running; return the public URL."""
+    if tunnel_connector_running(cfg):
+        return _cf_public_url(cfg)
+    return start_cf_tunnel(
+        cfg,
+        tunnel_token,
+        register_proc=register_proc,
+        stop_hint=stop_hint,
+    )

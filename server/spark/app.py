@@ -11,6 +11,7 @@ from .cloudflare import (
     precheck_cf_tunnel,
     resolve_cf_tunnel_token,
     start_cf_tunnel,
+    tunnel_connector_running,
 )
 from .config import Config, _apply_env_overrides
 from .console import die, err, info, ok, warn
@@ -104,6 +105,15 @@ def main():
                 boot_mode = start_atlas(cfg, docker_cmd)
                 if boot_mode != "ready":
                     wait_for_engine(cfg)
+            elif not tunnel_connector_running(cfg):
+                warn(
+                    f"Cloudflare tunnel '{cfg.cf_tunnel_name}' disconnected — "
+                    "reconnecting..."
+                )
+                tunnel_token = resolve_cf_tunnel_token(cfg)
+                start_cf_tunnel(
+                    cfg, tunnel_token, register_proc=runtime.register
+                )
             if not runtime._sleep(30):
                 break
 

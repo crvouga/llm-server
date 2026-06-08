@@ -22,6 +22,13 @@ def _docker_reachable(argv):
     )
 
 
+def _docker_socket_permission_denied() -> bool:
+    if not shutil.which("docker"):
+        return False
+    r = subprocess.run(["docker", "info"], capture_output=True, text=True)
+    return r.returncode != 0 and "permission denied" in (r.stdout + r.stderr).lower()
+
+
 def _ensure_nvidia_cdi():
     from pathlib import Path
 
@@ -83,6 +90,25 @@ def _resolve_docker_cmd():
         die(
             "Cannot connect to Docker. Start Docker Desktop and wait until "
             "`docker info` succeeds, then retry."
+        )
+
+    if (
+        platform.system() == "Linux"
+        and _docker_socket_permission_denied()
+        and shutil.which("systemctl")
+        and subprocess.run(
+            ["systemctl", "is-active", "--quiet", "docker"],
+            capture_output=True,
+        ).returncode
+        == 0
+    ):
+        user = os.environ.get("USER", "your-user")
+        die(
+            "Cannot access Docker (permission denied on /var/run/docker.sock). "
+            "The daemon is running.\n\n"
+            f"  sudo usermod -aG docker {user}\n"
+            "  newgrp docker   # or log out and back in\n\n"
+            "Then rerun: make server-start"
         )
 
     die(
