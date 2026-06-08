@@ -24,6 +24,9 @@ dist/
 proxy/node_modules/
 proxy/.wrangler/
 
+# Chat (aichat binary + generated config)
+.chat/
+
 # IDE/editor noise
 .DS_Store
 .idea/

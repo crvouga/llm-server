@@ -6,10 +6,15 @@ COMMIT_MSG ?=
 REMOTE_ACCESS_MD ?= remote-access/REMOTE-ACCESS.md
 REMOTE_USER ?=
 REMOTE_HOST ?=
+CHAT_URL ?= https://llm-proxy.chrisvouga.dev
+CHAT_MODEL ?=
+AICHAT_VERSION ?= v0.30.0
+CHAT_BIN := $(CURDIR)/.chat/bin/aichat
 
 .PHONY: help server-start server-stop server-metrics server-install server-check server-test run start stop kill logs status ssh \
 	lm-studio-tunnel lm-studio-stop \
 	proxy-install proxy-dev proxy-check proxy-deploy proxy-db bench \
+	chat chat-install \
 	remote-setup-mac remote-verify pull push gh
 
 help:
@@ -38,6 +43,11 @@ help:
 	@echo "  make proxy-db      -> run database migrations"
 	@echo "  make bench         -> benchmark llm-proxy (model + tokens/sec)"
 	@echo "                         BENCH_ARGS='--json' or BENCH_RUNS=3 for options"
+	@echo ""
+	@echo "Chat:"
+	@echo "  make chat          -> interactive REPL against CHAT_URL (auto-installs aichat)"
+	@echo "  make chat-install  -> download aichat binary to .chat/bin/ (Ubuntu/macOS)"
+	@echo "                         CHAT_URL=... CHAT_MODEL=... to override defaults"
 	@echo ""
 	@echo "Remote access (Mac controls Linux):"
 	@echo "  make ssh              -> SSH into Linux target (from REMOTE-ACCESS.md)"
@@ -176,6 +186,62 @@ proxy-db:
 bench:
 	@set -euo pipefail; \
 	"$(CURDIR)/proxy/bench.sh" $(BENCH_ARGS)
+
+chat-install:
+	@set -euo pipefail; \
+	command -v curl >/dev/null || { echo "Missing: curl"; exit 1; }; \
+	os="$$(uname -s)"; \
+	arch="$$(uname -m)"; \
+	case "$$os:$$arch" in \
+		Darwin:arm64) target="aarch64-apple-darwin" ;; \
+		Darwin:x86_64) target="x86_64-apple-darwin" ;; \
+		Linux:x86_64) target="x86_64-unknown-linux-musl" ;; \
+		Linux:aarch64|Linux:arm64) target="aarch64-unknown-linux-musl" ;; \
+		*) \
+			echo "Unsupported platform: $$os $$arch"; \
+			echo "Install aichat manually: https://github.com/sigoden/aichat/releases"; \
+			exit 1 ;; \
+	esac; \
+	version="$(AICHAT_VERSION)"; \
+	url="https://github.com/sigoden/aichat/releases/download/$$version/aichat-$$version-$$target.tar.gz"; \
+	tmpdir="$$(mktemp -d)"; \
+	trap 'rm -rf "$$tmpdir"' EXIT; \
+	echo "Downloading aichat $$version ($$target)..."; \
+	curl -fsSL -o "$$tmpdir/aichat.tgz" "$$url"; \
+	mkdir -p "$(CURDIR)/.chat/bin"; \
+	tar -xzf "$$tmpdir/aichat.tgz" -C "$$tmpdir"; \
+	if [ -f "$$tmpdir/aichat" ]; then \
+		mv "$$tmpdir/aichat" "$(CHAT_BIN)"; \
+	else \
+		bin="$$(find "$$tmpdir" -maxdepth 2 -type f -name aichat | head -1)"; \
+		[ -n "$$bin" ] || { echo "aichat binary not found in archive"; exit 1; }; \
+		mv "$$bin" "$(CHAT_BIN)"; \
+	fi; \
+	chmod +x "$(CHAT_BIN)"; \
+	echo "Installed: $(CHAT_BIN)"
+
+chat:
+	@set -euo pipefail; \
+	command -v curl >/dev/null || { echo "Missing: curl"; exit 1; }; \
+	command -v python3 >/dev/null || { echo "Missing: python3"; exit 1; }; \
+	aichat_bin=""; \
+	if [ -x "$(CHAT_BIN)" ]; then \
+		aichat_bin="$(CHAT_BIN)"; \
+	elif command -v aichat >/dev/null; then \
+		aichat_bin="$$(command -v aichat)"; \
+	else \
+		"$(MAKE)" chat-install; \
+		aichat_bin="$(CHAT_BIN)"; \
+	fi; \
+	chat_url="$(CHAT_URL)"; \
+	chat_url="$${chat_url%/}"; \
+	model="$(CHAT_MODEL)"; \
+	if [ -z "$$model" ]; then \
+		model="$$(curl -fsSL "$$chat_url/v1/models" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'][0]['id'])")"; \
+	fi; \
+	mkdir -p "$(CURDIR)/.chat"; \
+	CHAT_DIR="$(CURDIR)/.chat" CHAT_URL="$$chat_url" CHAT_MODEL="$$model" python3 -c 'import os, pathlib; model=os.environ["CHAT_MODEL"]; url=os.environ["CHAT_URL"].rstrip("/"); p=pathlib.Path(os.environ["CHAT_DIR"])/"config.yaml"; p.write_text("model: llm-proxy:%s\nclients:\n  - type: openai-compatible\n    name: llm-proxy\n    api_base: %s/v1\n    api_key: sk-no-auth\n    models:\n      - name: %s\n" % (model, url, model))'; \
+	exec env AICHAT_CONFIG_DIR="$(CURDIR)/.chat" "$$aichat_bin"
 
 remote-setup-mac:
 	@"$(CURDIR)/remote-access/setup-controller.sh"
