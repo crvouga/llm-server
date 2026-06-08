@@ -33,6 +33,8 @@ export interface InsertLogRowOptions {
   statusCode?: number;
   promptTokens?: number;
   completionTokens?: number;
+  durationMs?: number | null;
+  ttftMs?: number | null;
   includeUsage?: boolean;
   requestBody?: object | null;
   responseBody?: object | null;
@@ -85,7 +87,7 @@ export async function insertLogRow(options: InsertLogRowOptions): Promise<string
     INSERT INTO llm_proxy.http_log (
       id, created_at, request_method, request_path, request_query_params,
       request_headers, request_body, response_status_code, response_headers,
-      response_body, response_error_message
+      response_body, response_error_message, duration_ms, ttft_ms
     )
     VALUES (
       ${id}::uuid,
@@ -98,7 +100,9 @@ export async function insertLogRow(options: InsertLogRowOptions): Promise<string
       ${statusCode},
       '{}'::jsonb,
       ${responseBody}::jsonb,
-      NULL
+      NULL,
+      ${options.durationMs ?? null},
+      ${options.ttftMs ?? null}
     )
   `;
 
@@ -117,14 +121,31 @@ export function sumUsageRows(rows: RawModelUsageRow[]): {
   requestCount: number;
   promptTokens: number;
   completionTokens: number;
+  timedCompletionTokens: number;
+  totalDurationMs: number;
+  generationCompletionTokens: number;
+  totalGenerationMs: number;
 } {
   return rows.reduce(
     (acc, row) => ({
       requestCount: acc.requestCount + row.requestCount,
       promptTokens: acc.promptTokens + row.promptTokens,
       completionTokens: acc.completionTokens + row.completionTokens,
+      timedCompletionTokens: acc.timedCompletionTokens + row.timedCompletionTokens,
+      totalDurationMs: acc.totalDurationMs + row.totalDurationMs,
+      generationCompletionTokens:
+        acc.generationCompletionTokens + row.generationCompletionTokens,
+      totalGenerationMs: acc.totalGenerationMs + row.totalGenerationMs,
     }),
-    { requestCount: 0, promptTokens: 0, completionTokens: 0 },
+    {
+      requestCount: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      timedCompletionTokens: 0,
+      totalDurationMs: 0,
+      generationCompletionTokens: 0,
+      totalGenerationMs: 0,
+    },
   );
 }
 
@@ -194,7 +215,9 @@ export async function fetchLogRowById(id: string) {
       request_body,
       response_status_code,
       response_body,
-      response_error_message
+      response_error_message,
+      duration_ms,
+      ttft_ms
     FROM llm_proxy.http_log
     WHERE id = ${id}::uuid
     LIMIT 1
@@ -205,7 +228,15 @@ export async function fetchLogRowById(id: string) {
 export async function fetchLatestLogRowByPath(path: string) {
   const sql = sqlClient();
   const rows = await sql`
-    SELECT id, request_path, request_body, response_status_code, response_body, response_error_message
+    SELECT
+      id,
+      request_path,
+      request_body,
+      response_status_code,
+      response_body,
+      response_error_message,
+      duration_ms,
+      ttft_ms
     FROM llm_proxy.http_log
     WHERE request_path = ${path}
     ORDER BY created_at DESC
@@ -223,7 +254,9 @@ export async function fetchLatestLogRowByModel(model: string) {
       request_body,
       response_status_code,
       response_body,
-      response_error_message
+      response_error_message,
+      duration_ms,
+      ttft_ms
     FROM llm_proxy.http_log
     WHERE request_body->>'model' = ${model}
     ORDER BY created_at DESC

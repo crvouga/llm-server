@@ -8,6 +8,7 @@ import type {
   UsageSummary,
 } from '../types';
 import { rowCostUsd, rowRates } from './cost';
+import { computeGenerationTps, computeOverallTps } from './timing';
 
 export function summarizeUsage(
   rawRows: RawModelUsageRow[],
@@ -17,18 +18,34 @@ export function summarizeUsage(
   let promptTokens = 0;
   let completionTokens = 0;
   let estCostUsd = 0;
+  let timedCompletionTokens = 0;
+  let totalDurationMs = 0;
+  let generationCompletionTokens = 0;
+  let totalGenerationMs = 0;
 
   const rows: ModelUsageRow[] = rawRows.map((row) => {
     const totalTokens = row.promptTokens + row.completionTokens;
     requestCount += row.requestCount;
     promptTokens += row.promptTokens;
     completionTokens += row.completionTokens;
+    timedCompletionTokens += row.timedCompletionTokens;
+    totalDurationMs += row.totalDurationMs;
+    generationCompletionTokens += row.generationCompletionTokens;
+    totalGenerationMs += row.totalGenerationMs;
     const cost = rowCostUsd(row.promptTokens, row.completionTokens, rowRates(filters, row.model));
     estCostUsd += cost;
     return {
-      ...row,
+      model: row.model,
+      requestCount: row.requestCount,
+      promptTokens: row.promptTokens,
+      completionTokens: row.completionTokens,
       totalTokens,
       avgTokensPerRequest: row.requestCount > 0 ? totalTokens / row.requestCount : 0,
+      avgOverallTps: computeOverallTps(row.timedCompletionTokens, row.totalDurationMs),
+      avgGenerationTps: computeGenerationTps(
+        row.generationCompletionTokens,
+        row.totalGenerationMs,
+      ),
       percentOfTotal: 0,
       estCostUsd: cost,
     };
@@ -48,6 +65,8 @@ export function summarizeUsage(
       totalTokens: grandTotal,
       estCostUsd,
       modelCount: rows.length,
+      avgOverallTps: computeOverallTps(timedCompletionTokens, totalDurationMs),
+      avgGenerationTps: computeGenerationTps(generationCompletionTokens, totalGenerationMs),
     },
   };
 }

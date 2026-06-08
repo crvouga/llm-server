@@ -1,3 +1,14 @@
+export interface RawModelUsageRow {
+  model: string;
+  requestCount: number;
+  promptTokens: number;
+  completionTokens: number;
+  timedCompletionTokens: number;
+  totalDurationMs: number;
+  generationCompletionTokens: number;
+  totalGenerationMs: number;
+}
+
 export interface ModelUsageRow {
   model: string;
   requestCount: number;
@@ -5,14 +16,11 @@ export interface ModelUsageRow {
   completionTokens: number;
   totalTokens: number;
   avgTokensPerRequest: number;
+  avgOverallTps: number | null;
+  avgGenerationTps: number | null;
   percentOfTotal: number;
   estCostUsd: number;
 }
-
-export type RawModelUsageRow = Omit<
-  ModelUsageRow,
-  'totalTokens' | 'avgTokensPerRequest' | 'percentOfTotal' | 'estCostUsd'
->;
 
 export interface DailyUsageRow {
   day: string;
@@ -30,6 +38,8 @@ export const SORT_KEYS = [
   'completionTokens',
   'totalTokens',
   'avgTokensPerRequest',
+  'avgOverallTps',
+  'avgGenerationTps',
   'percentOfTotal',
   'estCostUsd',
 ] as const;
@@ -61,6 +71,8 @@ export interface UsageSummary {
     totalTokens: number;
     estCostUsd: number;
     modelCount: number;
+    avgOverallTps: number | null;
+    avgGenerationTps: number | null;
   };
 }
 

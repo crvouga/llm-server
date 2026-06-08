@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { createApp } from '../src/index';
 import { fetchUsageRows } from '../src/dashboard/db/queries';
+import { computeGenerationTps, computeOverallTps } from '../src/dashboard/lib/timing';
 import { createTestCtx } from './helpers/ctx';
 import {
   cleanupTestRows,
@@ -74,17 +75,22 @@ describe('proxy usage tracking e2e', () => {
     expect(requestBody.model).toBe(model);
     expect(responseBody.usage?.prompt_tokens).toBe(promptTokens);
     expect(responseBody.usage?.completion_tokens).toBe(completionTokens);
+    expect(Number(logRow?.duration_ms)).toBeGreaterThan(0);
+    expect(logRow?.ttft_ms).toBeNull();
 
     const today = await todayIsoDate();
     const usageRows = await fetchUsageRows(databaseUrl, today, today);
     const modelRow = usageRows.find((row) => row.model === model);
 
-    expect(modelRow).toEqual({
+    expect(modelRow).toMatchObject({
       model,
       requestCount: 1,
       promptTokens,
       completionTokens,
+      timedCompletionTokens: completionTokens,
     });
+    expect(modelRow?.totalDurationMs).toBeGreaterThan(0);
+    expect(computeOverallTps(modelRow!.timedCompletionTokens, modelRow!.totalDurationMs)).not.toBeNull();
   });
 
   test('injects thinking default while preserving client model in logged body', async () => {
@@ -166,19 +172,124 @@ describe('proxy usage tracking e2e', () => {
       };
       expect(responseBody.usage?.prompt_tokens).toBe(55);
       expect(responseBody.usage?.completion_tokens).toBe(23);
+      expect(Number(logRow?.duration_ms)).toBeGreaterThan(0);
+      expect(Number(logRow?.ttft_ms)).toBeGreaterThan(0);
+      expect(Number(logRow?.ttft_ms)).toBeLessThanOrEqual(Number(logRow?.duration_ms));
 
       const today = await todayIsoDate();
       const usageRows = await fetchUsageRows(databaseUrl, today, today);
       const modelRow = usageRows.find((row) => row.model === streamModel);
 
-      expect(modelRow).toEqual({
+      expect(modelRow).toMatchObject({
         model: streamModel,
         requestCount: 1,
         promptTokens: 55,
         completionTokens: 23,
+        timedCompletionTokens: 23,
       });
+      expect(modelRow?.totalDurationMs).toBeGreaterThan(0);
     } finally {
       streamMock.stop();
+      if (prevBackend) {
+        await setBackendUrl(prevBackend);
+      }
+    }
+  });
+
+  test('logs blocking request timing for weighted TPS aggregation', async () => {
+    const timingModel = sentinelModel(runId, 'timing-blocking');
+    const timingMock = startMockBackend({
+      model: timingModel,
+      promptTokens: 0,
+      completionTokens: 20,
+      responseDelayMs: 200,
+    });
+
+    const prevBackend = await getBackendUrl();
+    await setBackendUrl(timingMock.url);
+
+    try {
+      const app = createApp();
+      const { ctx, drain } = createTestCtx();
+      await proxyRequest({ app, databaseUrl, ctx, drain, model: timingModel });
+
+      const logRow = await fetchLatestLogRowByModel(timingModel);
+      expect(Number(logRow?.duration_ms)).toBeGreaterThanOrEqual(200);
+      expect(logRow?.ttft_ms).toBeNull();
+
+      const today = await todayIsoDate();
+      const usageRows = await fetchUsageRows(databaseUrl, today, today);
+      const modelRow = usageRows.find((row) => row.model === timingModel);
+
+      expect(modelRow).toMatchObject({
+        model: timingModel,
+        requestCount: 1,
+        completionTokens: 20,
+        timedCompletionTokens: 20,
+      });
+      expect(computeOverallTps(modelRow!.timedCompletionTokens, modelRow!.totalDurationMs)).toBeLessThanOrEqual(
+        100,
+      );
+      expect(computeOverallTps(modelRow!.timedCompletionTokens, modelRow!.totalDurationMs)).toBeGreaterThan(
+        0,
+      );
+    } finally {
+      timingMock.stop();
+      if (prevBackend) {
+        await setBackendUrl(prevBackend);
+      }
+    }
+  });
+
+  test('logs streaming timing with measurable generation window', async () => {
+    const timingModel = sentinelModel(runId, 'timing-stream');
+    const timingMock = startMockBackend({
+      model: timingModel,
+      streamChatCompletions: true,
+      promptTokens: 0,
+      completionTokens: 30,
+      streamChunkDelayMs: 120,
+    });
+
+    const prevBackend = await getBackendUrl();
+    await setBackendUrl(timingMock.url);
+
+    try {
+      const app = createApp();
+      const { ctx, drain } = createTestCtx();
+      await proxyRequest({
+        app,
+        databaseUrl,
+        ctx,
+        drain,
+        model: timingModel,
+        body: {
+          model: timingModel,
+          stream: true,
+          messages: [{ role: 'user', content: 'hello' }],
+        },
+      });
+
+      const logRow = await fetchLatestLogRowByModel(timingModel);
+      expect(Number(logRow?.duration_ms)).toBeGreaterThanOrEqual(120);
+      expect(Number(logRow?.ttft_ms)).toBeGreaterThan(0);
+      expect(Number(logRow?.ttft_ms)).toBeLessThan(Number(logRow?.duration_ms));
+
+      const today = await todayIsoDate();
+      const usageRows = await fetchUsageRows(databaseUrl, today, today);
+      const modelRow = usageRows.find((row) => row.model === timingModel);
+
+      expect(modelRow).toMatchObject({
+        model: timingModel,
+        completionTokens: 30,
+        generationCompletionTokens: 30,
+      });
+      expect(computeGenerationTps(
+        modelRow!.generationCompletionTokens,
+        modelRow!.totalGenerationMs,
+      )).toBeGreaterThan(0);
+    } finally {
+      timingMock.stop();
       if (prevBackend) {
         await setBackendUrl(prevBackend);
       }
@@ -250,12 +361,14 @@ describe('proxy usage tracking e2e - multi request', () => {
     const usageRows = await fetchUsageRows(databaseUrl, today, today);
     const modelRow = usageRows.find((row) => row.model === multiModel);
 
-    expect(modelRow).toEqual({
+    expect(modelRow).toMatchObject({
       model: multiModel,
       requestCount: 3,
       promptTokens: perRequestPrompt * 3,
       completionTokens: perRequestCompletion * 3,
+      timedCompletionTokens: perRequestCompletion * 3,
     });
+    expect(modelRow?.totalDurationMs).toBeGreaterThan(0);
   });
 });
 

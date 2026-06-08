@@ -96,6 +96,10 @@ describe('dashboard query edge cases', () => {
       requestCount: 2,
       promptTokens: 300,
       completionTokens: 150,
+      timedCompletionTokens: 0,
+      totalDurationMs: 0,
+      generationCompletionTokens: 0,
+      totalGenerationMs: 0,
     });
   });
 
@@ -108,6 +112,10 @@ describe('dashboard query edge cases', () => {
       requestCount: 1,
       promptTokens: 0,
       completionTokens: 0,
+      timedCompletionTokens: 0,
+      totalDurationMs: 0,
+      generationCompletionTokens: 0,
+      totalGenerationMs: 0,
     });
   });
 

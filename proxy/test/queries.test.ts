@@ -5,6 +5,7 @@ import {
   fetchKnownModels,
   fetchUsageRows,
 } from '../src/dashboard/db/queries';
+import { computeGenerationTps, computeOverallTps } from '../src/dashboard/lib/timing';
 import {
   cleanupTestRows,
   createRunId,
@@ -18,6 +19,7 @@ let databaseUrl = '';
 
 const modelA = sentinelModel(runId, 'model-a');
 const modelB = sentinelModel(runId, 'model-b');
+const modelTps = sentinelModel(runId, 'model-tps');
 
 const startDate = '2999-01-01';
 const endDate = '2999-01-03';
@@ -53,6 +55,22 @@ describe('dashboard query aggregation', () => {
       model: modelB,
       promptTokens: 1_000_000_000,
       completionTokens: 2_000_000_000,
+    });
+    await insertLogRow({
+      createdAt: day1,
+      model: modelTps,
+      promptTokens: 0,
+      completionTokens: 50,
+      durationMs: 1000,
+      ttftMs: 200,
+    });
+    await insertLogRow({
+      createdAt: day1,
+      model: modelTps,
+      promptTokens: 0,
+      completionTokens: 10,
+      durationMs: 500,
+      ttftMs: 100,
     });
 
     // Excluded rows
@@ -100,13 +118,45 @@ describe('dashboard query aggregation', () => {
       requestCount: 2,
       promptTokens: 120,
       completionTokens: 60,
+      timedCompletionTokens: 0,
+      totalDurationMs: 0,
+      generationCompletionTokens: 0,
+      totalGenerationMs: 0,
     });
     expect(modelBRow).toEqual({
       model: modelB,
       requestCount: 2,
       promptTokens: 1_000_000_300,
       completionTokens: 2_000_000_200,
+      timedCompletionTokens: 0,
+      totalDurationMs: 0,
+      generationCompletionTokens: 0,
+      totalGenerationMs: 0,
     });
+  });
+
+  test('fetchUsageRows aggregates timing for weighted TPS', async () => {
+    const rows = await fetchUsageRows(databaseUrl, startDate, endDate);
+    const tpsRow = rows.find((row) => row.model === modelTps);
+
+    expect(tpsRow).toEqual({
+      model: modelTps,
+      requestCount: 2,
+      promptTokens: 0,
+      completionTokens: 60,
+      timedCompletionTokens: 60,
+      totalDurationMs: 1500,
+      generationCompletionTokens: 60,
+      totalGenerationMs: 1200,
+    });
+
+    expect(computeOverallTps(tpsRow!.timedCompletionTokens, tpsRow!.totalDurationMs)).toBeCloseTo(
+      40,
+      5,
+    );
+    expect(
+      computeGenerationTps(tpsRow!.generationCompletionTokens, tpsRow!.totalGenerationMs),
+    ).toBeCloseTo(50, 2);
   });
 
   test('fetchDailyUsageRows groups by day and sums tokens', async () => {
@@ -116,8 +166,8 @@ describe('dashboard query aggregation', () => {
       {
         day: '2999-01-01',
         promptTokens: 120,
-        completionTokens: 60,
-        totalTokens: 180,
+        completionTokens: 120,
+        totalTokens: 240,
       },
       {
         day: '2999-01-02',

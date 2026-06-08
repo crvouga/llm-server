@@ -18,8 +18,13 @@ CREATE TABLE IF NOT EXISTS llm_proxy.http_log (
   response_status_code SMALLINT NOT NULL,
   response_headers JSONB,
   response_body JSONB,
-  response_error_message TEXT
+  response_error_message TEXT,
+  duration_ms INTEGER,
+  ttft_ms INTEGER
 );
+
+ALTER TABLE llm_proxy.http_log ADD COLUMN IF NOT EXISTS duration_ms INTEGER;
+ALTER TABLE llm_proxy.http_log ADD COLUMN IF NOT EXISTS ttft_ms INTEGER;
 
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_http_log_created_at ON llm_proxy.http_log(created_at DESC);

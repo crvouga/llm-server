@@ -39,7 +39,22 @@ export async function fetchUsageRows(
       COALESCE(request_body->>'model', 'unknown') AS model,
       COUNT(*)::int AS request_count,
       COALESCE(SUM((response_body->'usage'->>'prompt_tokens')::bigint), 0)::bigint AS prompt_tokens,
-      COALESCE(SUM((response_body->'usage'->>'completion_tokens')::bigint), 0)::bigint AS completion_tokens
+      COALESCE(SUM((response_body->'usage'->>'completion_tokens')::bigint), 0)::bigint AS completion_tokens,
+      COALESCE(
+        SUM((response_body->'usage'->>'completion_tokens')::bigint)
+          FILTER (WHERE duration_ms IS NOT NULL AND duration_ms > 0),
+        0
+      )::bigint AS timed_completion_tokens,
+      COALESCE(SUM(duration_ms) FILTER (WHERE duration_ms IS NOT NULL AND duration_ms > 0), 0)::bigint AS total_duration_ms,
+      COALESCE(
+        SUM((response_body->'usage'->>'completion_tokens')::bigint)
+          FILTER (WHERE ttft_ms IS NOT NULL AND duration_ms > ttft_ms),
+        0
+      )::bigint AS generation_completion_tokens,
+      COALESCE(
+        SUM(duration_ms - ttft_ms) FILTER (WHERE ttft_ms IS NOT NULL AND duration_ms > ttft_ms),
+        0
+      )::bigint AS total_generation_ms
     FROM llm_proxy.http_log
     WHERE request_path = '/v1/chat/completions'
       AND response_status_code >= 200
@@ -59,6 +74,10 @@ export async function fetchUsageRows(
     requestCount: Number(row.request_count),
     promptTokens: Number(row.prompt_tokens),
     completionTokens: Number(row.completion_tokens),
+    timedCompletionTokens: Number(row.timed_completion_tokens),
+    totalDurationMs: Number(row.total_duration_ms),
+    generationCompletionTokens: Number(row.generation_completion_tokens),
+    totalGenerationMs: Number(row.total_generation_ms),
   }));
 }
 

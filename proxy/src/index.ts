@@ -41,6 +41,11 @@ function headersToObject(headers: Headers): Record<string, string> {
   return obj;
 }
 
+interface LogTiming {
+  durationMs?: number | null;
+  ttftMs?: number | null;
+}
+
 async function logRequest(
   env: Env,
   requestId: string,
@@ -53,6 +58,7 @@ async function logRequest(
   responseHeaders: Headers,
   responseBody: unknown | null,
   errorMessage?: string,
+  timing?: LogTiming,
 ): Promise<void> {
   if (!env.DATABASE_URL) {
     console.warn('DATABASE_URL not configured, skipping request logging');
@@ -74,7 +80,7 @@ async function logRequest(
       INSERT INTO llm_proxy.http_log (
         id, created_at, request_method, request_path, request_query_params,
         request_headers, request_body, response_status_code, response_headers,
-        response_body, response_error_message
+        response_body, response_error_message, duration_ms, ttft_ms
       )
       VALUES (
         ${requestId},
@@ -87,7 +93,9 @@ async function logRequest(
         ${statusCode},
         ${JSON.stringify(headersToObject(responseHeaders))}::jsonb,
         ${responseBodyJson}::jsonb,
-        ${errorMessage || null}
+        ${errorMessage || null},
+        ${timing?.durationMs ?? null},
+        ${timing?.ttftMs ?? null}
       )
     `;
   } catch (error) {
@@ -179,6 +187,7 @@ export function createApp(): Hono<AppEnv> {
     };
 
     try {
+      const startedAt = Date.now();
       const response = await fetch(targetUrl, init);
       const contentType = response.headers.get('content-type') || '';
 
@@ -187,7 +196,10 @@ export function createApp(): Hono<AppEnv> {
 
         c.executionCtx.waitUntil(
           (async () => {
-            const responseBody = await parseSseStream(logStream);
+            const { responseBody, durationMs, ttftMs } = await parseSseStream(
+              logStream,
+              startedAt,
+            );
             await logRequest(
               env,
               requestId,
@@ -199,6 +211,8 @@ export function createApp(): Hono<AppEnv> {
               response.status,
               response.headers,
               responseBody,
+              undefined,
+              { durationMs, ttftMs },
             );
           })(),
         );
@@ -213,6 +227,7 @@ export function createApp(): Hono<AppEnv> {
       }
 
       const responseBody = await readJsonResponseBody(response);
+      const durationMs = Math.max(1, Date.now() - startedAt);
 
       c.executionCtx.waitUntil(
         logRequest(
@@ -226,6 +241,8 @@ export function createApp(): Hono<AppEnv> {
           response.status,
           response.headers,
           responseBody,
+          undefined,
+          { durationMs, ttftMs: null },
         ),
       );
 

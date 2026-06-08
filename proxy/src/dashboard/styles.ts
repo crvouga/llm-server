@@ -1,4 +1,36 @@
 export const dashboardStyles = `
+  * { box-sizing: border-box; }
+  
+  /* Prevent horizontal overflow globally */
+  html, body {
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden;
+    position: relative;
+  }
+
+  * { box-sizing: border-box; }
+
+  html {
+    overflow-y: scroll;
+    scrollbar-gutter: stable;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  /* Prevent horizontal overflow on all containers */
+  .page,
+  .top-bar-inner {
+    width: 100%;
+    max-width: 1280px;
+    box-sizing: border-box;
+  }
 
   :root {
     color-scheme: light dark;
@@ -14,6 +46,7 @@ export const dashboardStyles = `
     --shadow-lg: 0 10px 25px rgba(15, 23, 42, 0.08);
     font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
     line-height: 1.5;
+    --touch-target-min: 44px; /* Apple's recommended minimum */
   }
 
   @media (prefers-color-scheme: dark) {
@@ -31,18 +64,6 @@ export const dashboardStyles = `
     }
   }
 
-  * { box-sizing: border-box; }
-
-  html {
-    overflow-y: scroll;
-    scrollbar-gutter: stable;
-  }
-
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-  }
 
   .top-bar {
     position: sticky;
@@ -126,8 +147,8 @@ export const dashboardStyles = `
   }
 
   .summary-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    display: flex;
+    flex-wrap: wrap;
     gap: 1rem;
     margin-bottom: 0.75rem;
   }
@@ -138,10 +159,10 @@ export const dashboardStyles = `
     border-radius: 12px;
     box-shadow: var(--shadow);
     padding: 1.25rem;
+    flex: 1 1 calc(25% - 1rem);
   }
 
   .stat-card-hero {
-    grid-column: 1 / -1;
     padding: 1.5rem 1.75rem;
     border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
     background: linear-gradient(
@@ -150,6 +171,13 @@ export const dashboardStyles = `
       var(--surface) 100%
     );
     box-shadow: var(--shadow-lg);
+    flex: 1 1 100%;
+  }
+
+  @media (min-width: 768px) {
+    .stat-card:not(.stat-card-hero) {
+      flex: 1 1 calc(33.333% - 0.67rem);
+    }
   }
 
   .stat-card-hero .stat-label {
@@ -394,6 +422,11 @@ export const dashboardStyles = `
     min-width: 4.5rem;
   }
 
+  .model-cost-overrides {
+    width: 100%;
+    max-width: 100%;
+  }
+
   .btn-primary {
     cursor: pointer;
     font: inherit;
@@ -480,6 +513,30 @@ export const dashboardStyles = `
   th.sort-asc::after { content: ' ↑'; opacity: 1; }
   th.sort-desc::after { content: ' ↓'; opacity: 1; }
 
+  /* Mobile table optimizations */
+  @media (max-width: 768px) {
+    table {
+      font-size: 0.8125rem;
+    }
+    
+    th, td {
+      padding: 0.45rem 0.5rem;
+      word-break: break-word;
+    }
+
+    th.sortable::after {
+      font-size: 0.6rem;
+    }
+    
+    /* Hide less important columns on very small screens */
+    @media (max-width: 480px) {
+      .table-scroll table tr td:nth-child(5),
+      .table-scroll table tr th:nth-child(5) {
+        display: none;
+      }
+    }
+  }
+
   .num {
     text-align: right;
     font-variant-numeric: tabular-nums;
@@ -542,9 +599,30 @@ export const dashboardStyles = `
   }
 
   .table-scroll {
-    overflow-x: scroll;
-    scrollbar-gutter: stable;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-gutter: stable both-edges;
     -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+  }
+  
+  .table-scroll::-webkit-scrollbar {
+    height: 10px;
+  }
+  
+  .table-scroll::-webkit-scrollbar-track {
+    background: var(--bg);
+    border-radius: 5px;
+  }
+  
+  .table-scroll::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 5px;
+    cursor: pointer;
+  }
+  
+  .table-scroll::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--muted) 30%, var(--border));
   }
 
   .range-badge {
@@ -556,6 +634,289 @@ export const dashboardStyles = `
     padding: 0.25rem 0.6rem;
     border-radius: 999px;
     margin-top: 0.5rem;
+    white-space: nowrap;
+  }
+
+  /* Mobile-first responsive design */
+  @media (max-width: 768px) {
+    .stat-card:not(.stat-card-hero) {
+      flex: 1 1 calc(50% - 0.5rem);
+      max-width: 48%;
+    }
+    
+    .top-bar-inner {
+      padding: 0.75rem 1rem;
+      gap: 0.75rem;
+    }
+    
+    .top-bar-title {
+      font-size: 1rem;
+    }
+    
+    .btn-refresh {
+      padding: 0.4rem 0.75rem;
+      font-size: 0.8125rem;
+    }
+
+    .page {
+      padding: 1rem;
+    }
+
+    .card {
+      padding: 1rem;
+      border-radius: 10px;
+    }
+
+    .summary-meta {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.5rem;
+    }
+    
+    .range-badge {
+      font-size: 0.75rem;
+      padding: 0.2rem 0.5rem;
+    }
+
+    .chart-wrap { height: 240px; }
+    .chart-wrap.tall { height: 280px; }
+
+    .stat-card-hero .stat-value {
+      font-size: 2.25rem;
+    }
+
+    .stat-value {
+      font-size: 1.375rem;
+    }
+
+    fieldset {
+      padding: 0.75rem 1rem;
+      margin-bottom: 0.75rem;
+    }
+
+    legend {
+      font-size: 0.825rem;
+      padding: 0 0.2rem;
+    }
+    
+    .form-row {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    
+    .date-buckets {
+      gap: 0.375rem;
+    }
+
+    .date-bucket {
+      font-size: 0.75rem;
+      padding: 0.35rem 0.6rem;
+      white-space: nowrap;
+      min-width: auto;
+    }
+
+    /* If date bucket labels overflow, show ellipsis */
+    @media (max-width: 480px) {
+      .date-bucket {
+        font-size: 0.7rem;
+        padding: 0.3rem 0.5rem;
+        flex-shrink: 1;
+      }
+    }
+
+    .cost-input-grid {
+      grid-template-columns: 1fr;
+    }
+    
+    .input-shell {
+      padding: 0.15rem 0.15rem 0.15rem 0.75rem;
+    }
+
+    input[type="date"],
+    input[type="number"] {
+      font-size: 1rem;
+      padding: 0.6rem 1rem;
+    }
+    
+    .btn-primary {
+      width: 100%;
+      text-align: center;
+      padding: 0.7rem 1.5rem;
+    }
+
+    .form-actions {
+      flex-direction: column;
+      gap: 0.75rem 0.75rem;
+    }
+    
+    .form-action-hint {
+      width: 100%;
+      margin-top: 0.25rem;
+      font-size: 0.8125rem;
+    }
+    
+    .cost-rates-status {
+      width: 100%;
+    }
+
+    .model-cost-overrides {
+      overflow-x: visible;
+    }
+
+    .model-cost-overrides thead {
+      display: none;
+    }
+
+    .model-cost-overrides tbody tr {
+      display: block;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.875rem 1rem;
+      margin-bottom: 0.75rem;
+      background: var(--bg);
+    }
+
+    .model-cost-overrides tbody tr:last-child {
+      margin-bottom: 0;
+    }
+
+    .model-cost-overrides tbody td {
+      display: block;
+      border-bottom: none;
+      padding: 0.35rem 0;
+    }
+
+    .model-cost-overrides tbody td::before {
+      content: attr(data-label);
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin-bottom: 0.35rem;
+    }
+
+    .model-cost-overrides tbody td:first-child {
+      margin-bottom: 0.75rem;
+      padding-bottom: 0;
+    }
+
+    .model-cost-overrides tbody td:first-child::before {
+      content: none;
+    }
+
+    .model-cost-overrides tbody td code {
+      word-break: break-word;
+    }
+
+    .model-cost-overrides table .input-shell {
+      width: 100%;
+      min-width: 0;
+      max-width: 100%;
+    }
+
+    .model-cost-overrides table .input-shell .number-input {
+      min-width: 0;
+      width: 100%;
+    }
+
+    /* Touch target minimum sizing */
+    button,
+    a.date-bucket,
+    input[type="date"] {
+      min-height: var(--touch-target-min);
+    }
+
+    input[type="number"]:not(.model-cost-overrides .number-input) {
+      min-height: var(--touch-target-min);
+      min-width: var(--touch-target-min);
+    }
+
+    .model-cost-overrides .number-input {
+      min-height: var(--touch-target-min);
+      min-width: 0;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .stat-card:not(.stat-card-hero) {
+      flex: 1 1 100%;
+      max-width: 100%;
+    }
+
+    .page {
+      padding: 0.75rem 0.875rem 2rem;
+    }
+
+    .card h2 {
+      font-size: 0.95rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .card-subtitle,
+    p.muted,
+    .form-action-hint {
+      font-size: 0.8125rem;
+    }
+    
+    th, td {
+      padding: 0.5rem 0.6rem;
+      font-size: 0.8125rem;
+    }
+
+    .table-scroll {
+      -ms-overflow-style: -ms-autohiding-scrollbar;
+      scrollbar-width: thin;
+    }
+    
+    .table-scroll::-webkit-scrollbar {
+      height: 8px;
+    }
+    
+    .table-scroll::-webkit-scrollbar-track {
+      background: var(--bg);
+    }
+    
+    .table-scroll::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 4px;
+    }
+
+    /* Handle long model names in tables */
+    code {
+      word-break: break-word;
+      hyphens: auto;
+    }
+    
+    /* Ensure all numbers display properly without overflow */
+    .num {
+      word-break: break-all;
+    }
+
+    input[type="date"] {
+      width: 100%;
+      max-width: 200px;
+    }
+
+    .input-shell .number-input {
+      font-size: 1rem;
+    }
+    
+    .stat-card-hero,
+    .stat-card {
+      margin-bottom: 0.75rem;
+    }
+    
+    /* Prevent any content from overflowing horizontally */
+    [class*="-card"],
+    [class*="grid"] {
+      overflow-x: hidden;
+    }
+    
+    canvas {
+      max-width: 100%;
+    }
   }
 
 `;

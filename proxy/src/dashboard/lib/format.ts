@@ -11,6 +11,16 @@ export function formatInt(value: number): string {
   return new Intl.NumberFormat('en-US').format(value);
 }
 
+export function formatTps(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) {
+    return '—';
+  }
+  return new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
 export function formatPercent(value: number): string {
   return new Intl.NumberFormat('en-US', {
     style: 'percent',

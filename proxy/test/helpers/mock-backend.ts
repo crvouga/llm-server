@@ -14,6 +14,8 @@ export interface MockBackendOptions {
   completionTokens?: number;
   usageForRequest?: (request: Request) => { promptTokens: number; completionTokens: number };
   streamChatCompletions?: boolean;
+  responseDelayMs?: number;
+  streamChunkDelayMs?: number;
   routes?: MockRouteOverride[];
 }
 
@@ -72,8 +74,9 @@ async function defaultChatResponse(
   const shouldStream = options.streamChatCompletions || body.stream === true;
   if (shouldStream) {
     const encoder = new TextEncoder();
+    const chunkDelayMs = options.streamChunkDelayMs ?? 0;
     const stream = new ReadableStream({
-      start(controller) {
+      async start(controller) {
         controller.enqueue(
           encoder.encode(
             `data: ${JSON.stringify({
@@ -85,6 +88,9 @@ async function defaultChatResponse(
             })}\n\n`,
           ),
         );
+        if (chunkDelayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, chunkDelayMs));
+        }
         controller.enqueue(
           encoder.encode(
             `data: ${JSON.stringify({
@@ -110,6 +116,10 @@ async function defaultChatResponse(
       status: 200,
       headers: { 'content-type': 'text/event-stream' },
     });
+  }
+
+  if (options.responseDelayMs && options.responseDelayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, options.responseDelayMs));
   }
 
   return Response.json({

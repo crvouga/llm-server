@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { loadDashboardData } from '../src/dashboard/db/load';
 import { fetchDailyUsageRows, fetchUsageRows } from '../src/dashboard/db/queries';
 import { buildClientPayload } from '../src/dashboard/lib/summary';
+import { computeGenerationTps, computeOverallTps } from '../src/dashboard/lib/timing';
 import type { DashboardFilters } from '../src/dashboard/types';
 import {
   cleanupTestRows,
@@ -40,9 +41,30 @@ describe('usage tracking invariants', () => {
     databaseUrl = requireDatabaseUrl();
     extraIds.push(
       ...(await insertLogRows([
-        { createdAt: day1, model: modelA, promptTokens: 100, completionTokens: 40 },
-        { createdAt: day1, model: modelA, promptTokens: 50, completionTokens: 10 },
-        { createdAt: day2, model: modelB, promptTokens: 200, completionTokens: 80 },
+        {
+          createdAt: day1,
+          model: modelA,
+          promptTokens: 100,
+          completionTokens: 40,
+          durationMs: 1000,
+          ttftMs: 200,
+        },
+        {
+          createdAt: day1,
+          model: modelA,
+          promptTokens: 50,
+          completionTokens: 10,
+          durationMs: 500,
+          ttftMs: 100,
+        },
+        {
+          createdAt: day2,
+          model: modelB,
+          promptTokens: 200,
+          completionTokens: 80,
+          durationMs: 800,
+          ttftMs: null,
+        },
       ])),
     );
   });
@@ -64,6 +86,10 @@ describe('usage tracking invariants', () => {
     expect(dailyTotals.promptTokens).toBe(usageTotals.promptTokens);
     expect(dailyTotals.completionTokens).toBe(usageTotals.completionTokens);
     expect(dailyTotals.totalTokens).toBe(usageTotals.promptTokens + usageTotals.completionTokens);
+    expect(usageTotals.timedCompletionTokens).toBe(130);
+    expect(usageTotals.totalDurationMs).toBe(2300);
+    expect(usageTotals.generationCompletionTokens).toBe(50);
+    expect(usageTotals.totalGenerationMs).toBe(1200);
   });
 
   test('loadDashboardData summary totals match raw query totals', async () => {
@@ -78,6 +104,8 @@ describe('usage tracking invariants', () => {
       usageTotals.promptTokens + usageTotals.completionTokens,
     );
     expect(summary.totals.modelCount).toBe(2);
+    expect(summary.totals.avgOverallTps).toBeCloseTo(130 / 2.3, 2);
+    expect(summary.totals.avgGenerationTps).toBeCloseTo(50 / 1.2, 2);
     expect(dailyRows.length).toBe(2);
   });
 
@@ -92,6 +120,22 @@ describe('usage tracking invariants', () => {
     expect(payload.estCostUsd).toEqual(summary.rows.map((row) => row.estCostUsd));
     expect(payload.totals).toEqual(summary.totals);
     expect(payload.dailyTotal).toEqual(dailyRows.map((row) => row.totalTokens));
+  });
+
+  test('summary TPS matches raw query timing aggregates', async () => {
+    const usageRows = await fetchUsageRows(databaseUrl, startDate, endDate);
+    const usageTotals = sumUsageRows(usageRows);
+    const { summary } = await loadDashboardData(databaseUrl, filters);
+
+    expect(summary.totals.avgOverallTps).toBe(
+      computeOverallTps(usageTotals.timedCompletionTokens, usageTotals.totalDurationMs),
+    );
+    expect(summary.totals.avgGenerationTps).toBe(
+      computeGenerationTps(
+        usageTotals.generationCompletionTokens,
+        usageTotals.totalGenerationMs,
+      ),
+    );
   });
 
   test('percentOfTotal sums to 100% and totalTokens equals prompt plus completion', async () => {

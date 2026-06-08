@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { buildLoggableStreamResponse, parseSseStream } from '../src/stream-logging';
+import {
+  buildLoggableStreamResponse,
+  isContentChunk,
+  parseSseStream,
+} from '../src/stream-logging';
 
 function sseBody(lines: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -11,6 +15,50 @@ function sseBody(lines: string[]): ReadableStream<Uint8Array> {
     },
   });
 }
+
+function delayedSseBody(
+  chunks: Array<{ delayMs: number; line: string }>,
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  return new ReadableStream({
+    async start(controller) {
+      for (const chunk of chunks) {
+        if (chunk.delayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, chunk.delayMs));
+        }
+        controller.enqueue(encoder.encode(`${chunk.line}\n`));
+      }
+      controller.close();
+    },
+  });
+}
+
+describe('isContentChunk', () => {
+  test('returns true for chunks with delta content', () => {
+    expect(
+      isContentChunk({
+        choices: [{ delta: { content: 'hi' } }],
+      }),
+    ).toBe(true);
+  });
+
+  test('returns false for usage-only chunks', () => {
+    expect(
+      isContentChunk({
+        choices: [],
+        usage: { prompt_tokens: 1, completion_tokens: 2 },
+      }),
+    ).toBe(false);
+  });
+
+  test('returns false for empty delta', () => {
+    expect(
+      isContentChunk({
+        choices: [{ delta: {} }],
+      }),
+    ).toBe(false);
+  });
+});
 
 describe('buildLoggableStreamResponse', () => {
   test('returns null for empty chunks', () => {
@@ -47,6 +95,7 @@ describe('buildLoggableStreamResponse', () => {
 
 describe('parseSseStream', () => {
   test('parses multi-chunk SSE with usage and [DONE]', async () => {
+    const startedAt = Date.now();
     const stream = sseBody([
       'data: {"id":"chatcmpl-1","model":"test-model","choices":[{"delta":{"content":"hello"}}]}',
       '',
@@ -56,27 +105,31 @@ describe('parseSseStream', () => {
       '',
     ]);
 
-    const result = (await parseSseStream(stream)) as {
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
-    };
+    const result = await parseSseStream(stream, startedAt);
 
-    expect(result?.usage?.prompt_tokens).toBe(42);
-    expect(result?.usage?.completion_tokens).toBe(17);
+    expect(result.responseBody).toMatchObject({
+      usage: { prompt_tokens: 42, completion_tokens: 17 },
+    });
+    expect(result.durationMs).toBeGreaterThanOrEqual(0);
+    expect(result.ttftMs).toBeGreaterThanOrEqual(0);
+    expect(result.ttftMs).toBeLessThanOrEqual(result.durationMs);
   });
 
-  test('returns null for empty stream', async () => {
+  test('returns null response body for empty stream', async () => {
     const stream = sseBody([]);
-    expect(await parseSseStream(stream)).toBeNull();
+    const result = await parseSseStream(stream, Date.now());
+    expect(result.responseBody).toBeNull();
   });
 
-  test('returns null when stream has no usage chunk', async () => {
+  test('returns null response body when stream has no usage chunk', async () => {
     const stream = sseBody([
       'data: {"choices":[{"delta":{"content":"x"}}]}',
       '',
       'data: [DONE]',
       '',
     ]);
-    expect(await parseSseStream(stream)).toBeNull();
+    const result = await parseSseStream(stream, Date.now());
+    expect(result.responseBody).toBeNull();
   });
 
   test('skips malformed data lines', async () => {
@@ -87,11 +140,31 @@ describe('parseSseStream', () => {
       '',
     ]);
 
-    const result = (await parseSseStream(stream)) as {
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
-    };
+    const result = await parseSseStream(stream, Date.now());
+    expect(result.responseBody).toMatchObject({
+      usage: { prompt_tokens: 1, completion_tokens: 2 },
+    });
+  });
 
-    expect(result?.usage?.prompt_tokens).toBe(1);
-    expect(result?.usage?.completion_tokens).toBe(2);
+  test('records ttft before duration when chunks are delayed', async () => {
+    const startedAt = Date.now();
+    const stream = delayedSseBody([
+      {
+        delayMs: 0,
+        line: 'data: {"choices":[{"delta":{"content":"hello"}}]}',
+      },
+      { delayMs: 80, line: '' },
+      {
+        delayMs: 0,
+        line: 'data: {"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2}}',
+      },
+      { delayMs: 0, line: 'data: [DONE]' },
+    ]);
+
+    const result = await parseSseStream(stream, startedAt);
+
+    expect(result.ttftMs).not.toBeNull();
+    expect(result.durationMs).toBeGreaterThanOrEqual(80);
+    expect(result.ttftMs!).toBeLessThan(result.durationMs);
   });
 });

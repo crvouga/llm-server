@@ -3,6 +3,13 @@ import { perMillionToPerToken, rowCostUsd } from '../src/dashboard/lib/cost';
 import { buildClientPayload, summarizeUsage } from '../src/dashboard/lib/summary';
 import type { DashboardFilters, DailyUsageRow, RawModelUsageRow } from '../src/dashboard/types';
 
+const noTiming = {
+  timedCompletionTokens: 0,
+  totalDurationMs: 0,
+  generationCompletionTokens: 0,
+  totalGenerationMs: 0,
+} as const;
+
 function makeFilters(overrides: Partial<DashboardFilters> = {}): DashboardFilters {
   return {
     dateBucket: 'all_time',
@@ -49,13 +56,15 @@ describe('summarizeUsage', () => {
       totalTokens: 0,
       estCostUsd: 0,
       modelCount: 0,
+      avgOverallTps: null,
+      avgGenerationTps: null,
     });
   });
 
   test('sums totals across models', () => {
     const rawRows: RawModelUsageRow[] = [
-      { model: 'alpha', requestCount: 2, promptTokens: 100, completionTokens: 50 },
-      { model: 'beta', requestCount: 1, promptTokens: 200, completionTokens: 100 },
+      { model: 'alpha', requestCount: 2, promptTokens: 100, completionTokens: 50, ...noTiming },
+      { model: 'beta', requestCount: 1, promptTokens: 200, completionTokens: 100, ...noTiming },
     ];
 
     const summary = summarizeUsage(rawRows, makeFilters());
@@ -69,8 +78,8 @@ describe('summarizeUsage', () => {
 
   test('computes avgTokensPerRequest and percentOfTotal per row', () => {
     const rawRows: RawModelUsageRow[] = [
-      { model: 'alpha', requestCount: 2, promptTokens: 100, completionTokens: 100 },
-      { model: 'beta', requestCount: 1, promptTokens: 100, completionTokens: 100 },
+      { model: 'alpha', requestCount: 2, promptTokens: 100, completionTokens: 100, ...noTiming },
+      { model: 'beta', requestCount: 1, promptTokens: 100, completionTokens: 100, ...noTiming },
     ];
 
     const summary = summarizeUsage(rawRows, makeFilters());
@@ -85,8 +94,20 @@ describe('summarizeUsage', () => {
 
   test('uses per-model rates when configured', () => {
     const rawRows: RawModelUsageRow[] = [
-      { model: 'cheap', requestCount: 1, promptTokens: 1_000_000, completionTokens: 0 },
-      { model: 'expensive', requestCount: 1, promptTokens: 0, completionTokens: 1_000_000 },
+      {
+        model: 'cheap',
+        requestCount: 1,
+        promptTokens: 1_000_000,
+        completionTokens: 0,
+        ...noTiming,
+      },
+      {
+        model: 'expensive',
+        requestCount: 1,
+        promptTokens: 0,
+        completionTokens: 1_000_000,
+        ...noTiming,
+      },
     ];
 
     const filters = makeFilters({
@@ -107,7 +128,13 @@ describe('summarizeUsage', () => {
 
   test('falls back to default rates for unknown models', () => {
     const rawRows: RawModelUsageRow[] = [
-      { model: 'unknown-model', requestCount: 1, promptTokens: 1_000_000, completionTokens: 1_000_000 },
+      {
+        model: 'unknown-model',
+        requestCount: 1,
+        promptTokens: 1_000_000,
+        completionTokens: 1_000_000,
+        ...noTiming,
+      },
     ];
 
     const summary = summarizeUsage(rawRows, makeFilters());
@@ -116,9 +143,9 @@ describe('summarizeUsage', () => {
 
   test('percentOfTotal across three uneven models sums to 100%', () => {
     const rawRows: RawModelUsageRow[] = [
-      { model: 'a', requestCount: 1, promptTokens: 100, completionTokens: 0 },
-      { model: 'b', requestCount: 1, promptTokens: 200, completionTokens: 0 },
-      { model: 'c', requestCount: 1, promptTokens: 700, completionTokens: 0 },
+      { model: 'a', requestCount: 1, promptTokens: 100, completionTokens: 0, ...noTiming },
+      { model: 'b', requestCount: 1, promptTokens: 200, completionTokens: 0, ...noTiming },
+      { model: 'c', requestCount: 1, promptTokens: 700, completionTokens: 0, ...noTiming },
     ];
 
     const summary = summarizeUsage(rawRows, makeFilters());
@@ -129,11 +156,49 @@ describe('summarizeUsage', () => {
   });
 });
 
+describe('summarizeUsage timing', () => {
+  test('computes weighted overall and generation TPS per model', () => {
+    const rawRows: RawModelUsageRow[] = [
+      {
+        model: 'alpha',
+        requestCount: 2,
+        promptTokens: 0,
+        completionTokens: 60,
+        timedCompletionTokens: 60,
+        totalDurationMs: 1500,
+        generationCompletionTokens: 60,
+        totalGenerationMs: 900,
+      },
+    ];
+
+    const summary = summarizeUsage(rawRows, makeFilters());
+    const alpha = summary.rows[0];
+
+    expect(alpha?.avgOverallTps).toBeCloseTo(40, 5);
+    expect(alpha?.avgGenerationTps).toBeCloseTo(66.666, 2);
+    expect(summary.totals.avgOverallTps).toBeCloseTo(40, 5);
+    expect(summary.totals.avgGenerationTps).toBeCloseTo(66.666, 2);
+  });
+
+  test('returns null TPS when no timed rows exist', () => {
+    const rawRows: RawModelUsageRow[] = [
+      { model: 'alpha', requestCount: 1, promptTokens: 10, completionTokens: 5, ...noTiming },
+    ];
+
+    const summary = summarizeUsage(rawRows, makeFilters());
+
+    expect(summary.rows[0]?.avgOverallTps).toBeNull();
+    expect(summary.rows[0]?.avgGenerationTps).toBeNull();
+    expect(summary.totals.avgOverallTps).toBeNull();
+    expect(summary.totals.avgGenerationTps).toBeNull();
+  });
+});
+
 describe('buildClientPayload', () => {
   test('chart arrays align with summary rows and daily totals', () => {
     const filters = makeFilters();
     const rawRows: RawModelUsageRow[] = [
-      { model: 'alpha', requestCount: 1, promptTokens: 10, completionTokens: 5 },
+      { model: 'alpha', requestCount: 1, promptTokens: 10, completionTokens: 5, ...noTiming },
     ];
     const summary = summarizeUsage(rawRows, filters);
     const dailyRows: DailyUsageRow[] = [
