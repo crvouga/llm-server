@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import statistics
 import time
 from dataclasses import dataclass, field
 from typing import Any, cast
@@ -32,11 +31,15 @@ class BenchmarkSample:
     stream: bool
     latency_s: float
     ttft_s: float | None
-    decode_tps: float
-    e2e_tps: float
+    overall_tps: float
+    generation_tps: float | None
+    server_tps: float | None
+    server_ttft_ms: float | None
     completion_tokens: int
     prompt_tokens: int
     total_tokens: int
+    reasoning_tokens: int = 0
+    stream_chunks: int = 0
 
 
 @dataclass
@@ -49,11 +52,15 @@ class BenchmarkSummary:
     depth_tokens: int
     latency_s: float
     ttft_s: float | None
-    decode_tps: float
-    e2e_tps: float
+    overall_tps: float
+    generation_tps: float | None
+    server_tps: float | None
+    server_ttft_ms: float | None
     completion_tokens: int
     prompt_tokens: int
     total_tokens: int
+    reasoning_tokens: int = 0
+    stream_chunks: int = 0
     samples: list[BenchmarkSample] = field(default_factory=list)
     error: str | None = None
 
@@ -80,6 +87,71 @@ def build_prompt(depth: int) -> str:
     )
 
 
+def _usage_metrics(usage: Any) -> tuple[int, int, int, int, float | None, float | None]:
+    if usage is None:
+        return 0, 0, 0, 0, None, None
+    completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+    prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+    total_tokens = int(getattr(usage, "total_tokens", 0) or (prompt_tokens + completion_tokens))
+    reasoning_tokens = 0
+    details = getattr(usage, "completion_tokens_details", None)
+    if details is not None:
+        reasoning_tokens = int(getattr(details, "reasoning_tokens", 0) or 0)
+    server_tps = getattr(usage, "response_token/s", None)
+    if server_tps is None:
+        server_tps = getattr(usage, "response_tokens_per_second", None)
+    server_ttft_ms = getattr(usage, "time_to_first_token_ms", None)
+    return (
+        completion_tokens,
+        prompt_tokens,
+        total_tokens,
+        reasoning_tokens,
+        float(server_tps) if server_tps is not None else None,
+        float(server_ttft_ms) if server_ttft_ms is not None else None,
+    )
+
+
+def _sample_from_timings(
+    *,
+    model: str,
+    stream: bool,
+    started: float,
+    end: float,
+    first_tok: float | None,
+    usage: Any,
+    stream_chunks: int = 0,
+) -> BenchmarkSample:
+    latency_s = end - started
+    completion_tokens, prompt_tokens, total_tokens, reasoning_tokens, server_tps, server_ttft_ms = (
+        _usage_metrics(usage)
+    )
+    ttft_s = (first_tok - started) if first_tok is not None else None
+    overall_tps = (completion_tokens / latency_s) if latency_s > 0 and completion_tokens else 0.0
+    generation_tps = None
+    if ttft_s is not None and completion_tokens:
+        gen_window = latency_s - ttft_s
+        if gen_window > 0:
+            generation_tps = completion_tokens / gen_window
+    elif not stream and completion_tokens:
+        generation_tps = overall_tps
+
+    return BenchmarkSample(
+        model=model,
+        stream=stream,
+        latency_s=latency_s,
+        ttft_s=ttft_s,
+        overall_tps=overall_tps,
+        generation_tps=generation_tps,
+        server_tps=server_tps,
+        server_ttft_ms=server_ttft_ms,
+        completion_tokens=completion_tokens,
+        prompt_tokens=prompt_tokens,
+        total_tokens=total_tokens,
+        reasoning_tokens=reasoning_tokens,
+        stream_chunks=stream_chunks,
+    )
+
+
 def bench_once_blocking(client: OpenAI, model: str, prompt: str, max_tokens: int) -> BenchmarkSample:
     started = time.perf_counter()
     resp = client.chat.completions.create(
@@ -88,35 +160,23 @@ def bench_once_blocking(client: OpenAI, model: str, prompt: str, max_tokens: int
         max_tokens=max_tokens,
         temperature=0.2,
     )
-    elapsed = time.perf_counter() - started
-
-    usage = resp.usage
-    completion_tokens = int(usage.completion_tokens or 0) if usage else 0
-    prompt_tokens = int(usage.prompt_tokens or 0) if usage else 0
-    total_tokens = int(usage.total_tokens or (prompt_tokens + completion_tokens)) if usage else 0
-    response_model = str(resp.model or model)
-    tps = (completion_tokens / elapsed) if elapsed > 0 else 0.0
-    return BenchmarkSample(
-        model=response_model,
+    end = time.perf_counter()
+    return _sample_from_timings(
+        model=str(resp.model or model),
         stream=False,
-        latency_s=elapsed,
-        ttft_s=None,
-        decode_tps=tps,
-        e2e_tps=tps,
-        completion_tokens=completion_tokens,
-        prompt_tokens=prompt_tokens,
-        total_tokens=total_tokens,
+        started=started,
+        end=end,
+        first_tok=None,
+        usage=resp.usage,
     )
 
 
 def bench_once_stream(client: OpenAI, model: str, prompt: str, max_tokens: int) -> BenchmarkSample:
     started = time.perf_counter()
-    tok_times: list[float] = []
     first_tok: float | None = None
     response_model = model
-    usage_completion = 0
-    usage_prompt = 0
-    usage_total = 0
+    usage: Any = None
+    stream_chunks = 0
 
     stream = client.chat.completions.create(
         model=model,
@@ -130,50 +190,39 @@ def bench_once_stream(client: OpenAI, model: str, prompt: str, max_tokens: int) 
         if chunk.model:
             response_model = str(chunk.model)
         if chunk.usage is not None:
-            usage_completion = int(chunk.usage.completion_tokens or 0)
-            usage_prompt = int(chunk.usage.prompt_tokens or 0)
-            usage_total = int(chunk.usage.total_tokens or 0)
+            usage = chunk.usage
         if not chunk.choices:
             continue
         delta = chunk.choices[0].delta
         piece = _content_text(getattr(delta, "content", None))
         if piece:
-            now = time.perf_counter()
             if first_tok is None:
-                first_tok = now
-            tok_times.append(now)
+                first_tok = time.perf_counter()
+            stream_chunks += 1
 
     end = time.perf_counter()
     if first_tok is None:
         raise RuntimeError("Stream produced no content tokens")
 
-    ttft = first_tok - started
-    inter = [t2 - t1 for t1, t2 in zip(tok_times, tok_times[1:], strict=False)]
-    median_inter = statistics.median(inter) if inter else 0.0
-    decode_tps = (1.0 / median_inter) if median_inter > 0 else 0.0
-
-    completion_tokens = usage_completion or len(tok_times)
-    prompt_tokens = usage_prompt
-    total_tokens = usage_total or (prompt_tokens + completion_tokens)
-    decode_window = end - first_tok
-    e2e_tps = (completion_tokens / decode_window) if decode_window > 0 else 0.0
-
-    return BenchmarkSample(
+    return _sample_from_timings(
         model=response_model,
         stream=True,
-        latency_s=end - started,
-        ttft_s=ttft,
-        decode_tps=decode_tps,
-        e2e_tps=e2e_tps,
-        completion_tokens=completion_tokens,
-        prompt_tokens=prompt_tokens,
-        total_tokens=total_tokens,
+        started=started,
+        end=end,
+        first_tok=first_tok,
+        usage=usage,
+        stream_chunks=stream_chunks,
     )
 
 
 def _avg(samples: list[BenchmarkSample], key: str) -> float:
     vals = [getattr(s, key) for s in samples if getattr(s, key) is not None]
     return (sum(vals) / len(vals)) if vals else 0.0
+
+
+def _avg_optional(samples: list[BenchmarkSample], key: str) -> float | None:
+    vals = [getattr(s, key) for s in samples if getattr(s, key) is not None]
+    return (sum(vals) / len(vals)) if vals else None
 
 
 def run_benchmark(
@@ -191,8 +240,10 @@ def run_benchmark(
         depth_tokens=config.depth,
         latency_s=0.0,
         ttft_s=None,
-        decode_tps=0.0,
-        e2e_tps=0.0,
+        overall_tps=0.0,
+        generation_tps=None,
+        server_tps=None,
+        server_ttft_ms=None,
         completion_tokens=0,
         prompt_tokens=0,
         total_tokens=0,
@@ -212,58 +263,65 @@ def run_benchmark(
         summary.model = last.model
         summary.samples = samples
         summary.latency_s = _avg(samples, "latency_s")
-        summary.ttft_s = _avg(samples, "ttft_s") if config.stream else None
-        summary.decode_tps = _avg(samples, "decode_tps")
-        summary.e2e_tps = _avg(samples, "e2e_tps")
-        summary.completion_tokens = last.completion_tokens
+        summary.ttft_s = _avg_optional(samples, "ttft_s") if config.stream else None
+        summary.overall_tps = _avg(samples, "overall_tps")
+        summary.generation_tps = _avg_optional(samples, "generation_tps")
+        summary.server_tps = _avg_optional(samples, "server_tps")
+        summary.server_ttft_ms = _avg_optional(samples, "server_ttft_ms")
+        summary.completion_tokens = int(_avg(samples, "completion_tokens"))
         summary.prompt_tokens = last.prompt_tokens
         summary.total_tokens = last.total_tokens
+        summary.reasoning_tokens = int(_avg(samples, "reasoning_tokens"))
+        summary.stream_chunks = int(_avg(samples, "stream_chunks"))
     except Exception as exc:
         summary.error = str(exc)
     return summary
 
 
+def _fmt_tps(value: float | None) -> str:
+    if value is None:
+        return "—"
+    return f"{value:.1f}"
+
+
 def print_benchmark(summary: BenchmarkSummary) -> None:
-    section("Throughput benchmark")
+    section("Throughput")
     if summary.error:
         print(f"Benchmark failed: {summary.error}")
         return
 
-    mode = "streaming (true decode)" if summary.stream else "non-streaming (end-to-end)"
+    mode = "streaming" if summary.stream else "non-streaming"
     print(f"Target: {summary.base_url}")
     print(
         f"Mode: {mode}  |  runs: {summary.runs}  |  "
         f"max_tokens: {summary.max_tokens}  |  depth: {summary.depth_tokens}"
     )
     print("")
+    print(f"{'Metric':<28} {'Value':>14}")
+    print(f"{'-' * 28} {'-' * 14}")
+    print(f"{'Overall tok/s':<28} {_fmt_tps(summary.overall_tps):>14}")
+    if summary.generation_tps is not None:
+        print(f"{'Generation tok/s':<28} {_fmt_tps(summary.generation_tps):>14}")
+    if summary.server_tps is not None:
+        print(f"{'Server-reported tok/s':<28} {_fmt_tps(summary.server_tps):>14}")
+    if summary.ttft_s is not None:
+        print(f"{'TTFT (client)':<28} {summary.ttft_s:>13.2f}s")
+    if summary.server_ttft_ms is not None:
+        print(f"{'TTFT (server)':<28} {summary.server_ttft_ms:>12.0f}ms")
+    print(f"{'Total latency':<28} {summary.latency_s:>13.2f}s")
+    print(f"{'Completion tokens':<28} {summary.completion_tokens:>14}")
+    print(f"{'Prompt tokens':<28} {summary.prompt_tokens:>14}")
+    if summary.reasoning_tokens:
+        print(f"{'Reasoning tokens':<28} {summary.reasoning_tokens:>14}")
     if summary.stream:
-        print(f"{'Model':<28} {'Decode tok/s':>13} {'TTFT':>9} {'Compl':>7} {'Prompt':>8}")
-        print(f"{'-' * 28} {'-' * 13} {'-' * 9} {'-' * 7} {'-' * 8}")
-        ttft = summary.ttft_s if summary.ttft_s is not None else 0.0
-        print(
-            f"{summary.model:<28} "
-            f"{summary.decode_tps:>13.1f} "
-            f"{ttft:>8.2f}s "
-            f"{summary.completion_tokens:>7} "
-            f"{summary.prompt_tokens:>8}"
-        )
-        print("")
-        print(
-            f"decode tok/s = 1/median(inter-token); end-to-end decode tok/s = "
-            f"{summary.e2e_tps:.1f}"
-        )
-    else:
-        print(f"{'Model':<28} {'Tok/s':>10} {'Latency':>10} {'Compl':>7} {'Prompt':>8}")
-        print(f"{'-' * 28} {'-' * 10} {'-' * 10} {'-' * 7} {'-' * 8}")
-        print(
-            f"{summary.model:<28} "
-            f"{summary.e2e_tps:>10.1f} "
-            f"{summary.latency_s:>9.2f}s "
-            f"{summary.completion_tokens:>7} "
-            f"{summary.prompt_tokens:>8}"
-        )
+        print(f"{'Stream chunks':<28} {summary.stream_chunks:>14}")
+    print("")
+    print("Overall tok/s = completion_tokens / total wall time (best single-stream estimate).")
+    if summary.server_tps is not None:
+        print("Server-reported tok/s comes from the API usage block (Atlas/vLLM).")
+    if summary.stream and summary.stream_chunks <= 2:
+        print("Note: few stream chunks — backend may batch tokens; trust overall/server tok/s.")
     if summary.runs > 1:
-        print("")
         print(f"Averaged over {summary.runs} runs.")
 
 
@@ -275,11 +333,15 @@ def benchmark_to_json(summary: BenchmarkSummary) -> dict[str, Any]:
         "depth_tokens": summary.depth_tokens,
         "latency_s": round(summary.latency_s, 3),
         "ttft_s": round(summary.ttft_s, 3) if summary.ttft_s is not None else None,
-        "decode_tps": round(summary.decode_tps, 1),
-        "e2e_tps": round(summary.e2e_tps, 1),
+        "overall_tps": round(summary.overall_tps, 1),
+        "generation_tps": round(summary.generation_tps, 1) if summary.generation_tps is not None else None,
+        "server_tps": round(summary.server_tps, 1) if summary.server_tps is not None else None,
+        "server_ttft_ms": round(summary.server_ttft_ms, 1) if summary.server_ttft_ms is not None else None,
         "completion_tokens": summary.completion_tokens,
         "prompt_tokens": summary.prompt_tokens,
         "total_tokens": summary.total_tokens,
+        "reasoning_tokens": summary.reasoning_tokens,
+        "stream_chunks": summary.stream_chunks,
         "ok": summary.ok,
         "samples": [
             {
@@ -287,11 +349,15 @@ def benchmark_to_json(summary: BenchmarkSummary) -> dict[str, Any]:
                 "stream": s.stream,
                 "latency_s": round(s.latency_s, 3),
                 "ttft_s": round(s.ttft_s, 3) if s.ttft_s is not None else None,
-                "decode_tps": round(s.decode_tps, 1),
-                "e2e_tps": round(s.e2e_tps, 1),
+                "overall_tps": round(s.overall_tps, 1),
+                "generation_tps": round(s.generation_tps, 1) if s.generation_tps is not None else None,
+                "server_tps": round(s.server_tps, 1) if s.server_tps is not None else None,
+                "server_ttft_ms": round(s.server_ttft_ms, 1) if s.server_ttft_ms is not None else None,
                 "completion_tokens": s.completion_tokens,
                 "prompt_tokens": s.prompt_tokens,
                 "total_tokens": s.total_tokens,
+                "reasoning_tokens": s.reasoning_tokens,
+                "stream_chunks": s.stream_chunks,
             }
             for s in summary.samples
         ],
@@ -308,7 +374,7 @@ def benchmark_to_markdown_section(summary: BenchmarkSummary) -> list[str]:
         lines.append("")
         return lines
 
-    mode = "streaming (true decode)" if summary.stream else "non-streaming (end-to-end)"
+    mode = "streaming" if summary.stream else "non-streaming"
     lines.extend(
         [
             "| | |",
@@ -317,11 +383,15 @@ def benchmark_to_markdown_section(summary: BenchmarkSummary) -> list[str]:
             f"| **Runs** | {summary.runs} |",
             f"| **max_tokens** | {summary.max_tokens} |",
             f"| **Depth** | {summary.depth_tokens} |",
-            f"| **Decode tok/s** | {summary.decode_tps:.1f} |",
-            f"| **TTFT** | {summary.ttft_s:.2f}s |" if summary.ttft_s is not None else "| **TTFT** | — |",
-            f"| **End-to-end decode tok/s** | {summary.e2e_tps:.1f} |",
+            f"| **Overall tok/s** | {summary.overall_tps:.1f} |",
+            f"| **Generation tok/s** | {_fmt_tps(summary.generation_tps)} |",
+            f"| **Server-reported tok/s** | {_fmt_tps(summary.server_tps)} |",
+            f"| **TTFT (client)** | {summary.ttft_s:.2f}s |" if summary.ttft_s is not None else "| **TTFT (client)** | — |",
+            f"| **TTFT (server)** | {summary.server_ttft_ms:.0f}ms |" if summary.server_ttft_ms is not None else "| **TTFT (server)** | — |",
+            f"| **Total latency** | {summary.latency_s:.2f}s |",
             f"| **Completion tokens** | {summary.completion_tokens} |",
             f"| **Prompt tokens** | {summary.prompt_tokens} |",
+            f"| **Reasoning tokens** | {summary.reasoning_tokens or '—'} |",
             "",
         ]
     )

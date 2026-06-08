@@ -34,6 +34,14 @@ from benchmark import (
     print_benchmark,
     run_benchmark,
 )
+from model_info import (
+    ModelInfo,
+    fetch_model_info,
+    model_info_to_json,
+    model_info_to_markdown_section,
+    print_model_info,
+    probe_runtime_info,
+)
 from smoke import (
     RunSummary,
     TestContext,
@@ -195,6 +203,7 @@ def combined_to_json(
     model: str,
     smoke: RunSummary | None,
     benchmark: BenchmarkSummary | None,
+    model_info: ModelInfo | None = None,
 ) -> dict[str, Any]:
     smoke_ok = smoke is None or smoke.failed == 0
     bench_ok = benchmark is None or benchmark.ok
@@ -203,6 +212,8 @@ def combined_to_json(
         "model": model,
         "ok": smoke_ok and bench_ok,
     }
+    if model_info is not None:
+        payload["model_info"] = model_info_to_json(model_info)
     if smoke is not None:
         payload["smoke"] = summary_to_json(smoke)
     if benchmark is not None:
@@ -210,11 +221,20 @@ def combined_to_json(
     return payload
 
 
+def _apply_smoke_capabilities(model_info: ModelInfo | None, smoke: RunSummary | None) -> None:
+    if model_info is None or smoke is None:
+        return
+    passed = {r.name for r in smoke.results if r.passed and not r.skipped}
+    if "tool_calling" in passed or "tool_round_trip" in passed:
+        model_info.supports_tools = True
+
+
 def combined_to_markdown(
     base_url: str,
     model: str,
     smoke: RunSummary | None,
     benchmark: BenchmarkSummary | None,
+    model_info: ModelInfo | None = None,
 ) -> str:
     smoke_ok = smoke is None or smoke.failed == 0
     bench_ok = benchmark is None or benchmark.ok
@@ -235,10 +255,14 @@ def combined_to_markdown(
         lines.append(f"| **Smoke failed** | {smoke.failed} |")
         lines.append(f"| **Smoke skipped** | {smoke.skipped} |")
     if benchmark is not None and benchmark.ok:
-        lines.append(f"| **Decode tok/s** | {benchmark.decode_tps:.1f} |")
+        lines.append(f"| **Overall tok/s** | {benchmark.overall_tps:.1f} |")
+        if benchmark.server_tps is not None:
+            lines.append(f"| **Server-reported tok/s** | {benchmark.server_tps:.1f} |")
         if benchmark.ttft_s is not None:
-            lines.append(f"| **TTFT** | {benchmark.ttft_s:.2f}s |")
+            lines.append(f"| **TTFT (client)** | {benchmark.ttft_s:.2f}s |")
     lines.append("")
+    if model_info is not None:
+        lines.extend(model_info_to_markdown_section(model_info))
     if smoke is not None:
         lines.extend(summary_to_markdown_section(smoke))
     if benchmark is not None:
@@ -252,10 +276,15 @@ def print_overall_summary(
     model: str,
     smoke: RunSummary | None,
     benchmark: BenchmarkSummary | None,
+    model_info: ModelInfo | None = None,
 ) -> None:
     section("Overall")
     print(f"Target: {base_url}")
     print(f"Model:  {model}")
+    if model_info is not None and model_info.context_window is not None:
+        from model_info import format_context_window
+
+        print(f"Context: {format_context_window(model_info)}")
     if smoke is not None:
         print(
             f"Smoke: {smoke.passed} passed, {smoke.failed} failed, "
@@ -263,17 +292,12 @@ def print_overall_summary(
         )
     if benchmark is not None:
         if benchmark.ok:
-            if benchmark.stream:
-                ttft = benchmark.ttft_s if benchmark.ttft_s is not None else 0.0
-                print(
-                    f"Benchmark: {benchmark.decode_tps:.1f} decode tok/s, "
-                    f"TTFT {ttft:.2f}s"
-                )
-            else:
-                print(
-                    f"Benchmark: {benchmark.e2e_tps:.1f} tok/s, "
-                    f"latency {benchmark.latency_s:.2f}s"
-                )
+            line = f"Throughput: {benchmark.overall_tps:.1f} tok/s overall"
+            if benchmark.server_tps is not None:
+                line += f", {benchmark.server_tps:.1f} server-reported"
+            if benchmark.ttft_s is not None:
+                line += f", TTFT {benchmark.ttft_s:.2f}s"
+            print(line)
         else:
             print(f"Benchmark: failed ({benchmark.error})")
 
@@ -290,6 +314,16 @@ def main(argv: list[str] | None = None) -> int:
 
     smoke_summary: RunSummary | None = None
     bench_summary: BenchmarkSummary | None = None
+    model_info: ModelInfo | None = None
+
+    if model == "" and (run_smoke or run_bench):
+        model = resolve_model(client, "")
+
+    if model:
+        model_info = fetch_model_info(client, model)
+        probe_runtime_info(client, model, model_info)
+        if not quiet:
+            print_model_info(model_info)
 
     if run_smoke:
         if not quiet:
@@ -303,6 +337,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         smoke_summary = run_tests(ctx)
         model = smoke_summary.model
+        if model_info is None or model_info.id != model:
+            model_info = fetch_model_info(client, model)
+        _apply_smoke_capabilities(model_info, smoke_summary)
         if not quiet and not run_bench:
             print_summary(smoke_summary)
 
@@ -326,10 +363,12 @@ def main(argv: list[str] | None = None) -> int:
             )
             if bench_summary.model:
                 model = bench_summary.model
+            if model_info is not None and bench_summary.reasoning_tokens > 0:
+                model_info.supports_reasoning = True
             if not quiet:
                 print_benchmark(bench_summary)
 
-    payload = combined_to_json(base_url, model, smoke_summary, bench_summary)
+    payload = combined_to_json(base_url, model, smoke_summary, bench_summary, model_info)
 
     if args.json_out:
         with open(args.json_out, "w", encoding="utf-8") as fh:
@@ -338,17 +377,21 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.markdown_out:
         with open(args.markdown_out, "w", encoding="utf-8") as fh:
-            fh.write(combined_to_markdown(base_url, model, smoke_summary, bench_summary))
+            fh.write(
+                combined_to_markdown(
+                    base_url, model, smoke_summary, bench_summary, model_info
+                )
+            )
 
     if args.json:
         print(json.dumps(payload, indent=2))
     elif not quiet:
         if run_smoke and run_bench:
-            print_overall_summary(base_url, model, smoke_summary, bench_summary)
+            print_overall_summary(
+                base_url, model, smoke_summary, bench_summary, model_info
+            )
         elif run_smoke and smoke_summary is not None:
             print_summary(smoke_summary)
-        elif run_bench and bench_summary is not None:
-            print_benchmark(bench_summary)
 
     smoke_ok = smoke_summary is None or smoke_summary.failed == 0
     bench_ok = bench_summary is None or bench_summary.ok
