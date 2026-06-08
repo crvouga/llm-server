@@ -27,7 +27,7 @@ class Config:
 
     # Atlas (Qwen3-Coder-Next NVFP4 on GB10)
     atlas_image: str = "avarok/atlas-gb10:latest"
-    atlas_model: str = "Qwen/Qwen3-Coder-Next-NVFP4"
+    atlas_model: str = "RedHatAI/Qwen3-Coder-Next-NVFP4"
     atlas_container: str = "atlas"
     atlas_port: int = 8888
     atlas_max_seq_len: int = 131072

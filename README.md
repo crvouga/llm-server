@@ -16,7 +16,7 @@ Requires Docker, NVIDIA container toolkit, and Doppler (`doppler login` + `doppl
 
 The launcher serves an OpenAI-compatible API over the Cloudflare tunnel using the **Atlas**
 engine (`avarok/atlas-gb10`, purpose-built for GB10/SM121) running
-`Qwen/Qwen3-Coder-Next-NVFP4` with fp8 KV cache, MTP speculative decoding, and a 128K
+`RedHatAI/Qwen3-Coder-Next-NVFP4` with fp8 KV cache, MTP speculative decoding, and a 128K
 context window.
 
 ```bash
@@ -40,7 +40,7 @@ make server-check     # lint + typecheck server/ and tests/
 
 | Env var | Default | Purpose |
 | --- | --- | --- |
-| `ATLAS_MODEL` | `Qwen/Qwen3-Coder-Next-NVFP4` | HF model id (pre-downloaded to `~/.cache/huggingface` before launch) |
+| `ATLAS_MODEL` | `RedHatAI/Qwen3-Coder-Next-NVFP4` | HF model id (pre-downloaded to `~/.cache/huggingface` before launch) |
 | `ATLAS_MAX_SEQ_LEN` | `131072` | Context window (128K) |
 | `ATLAS_KV_CACHE_DTYPE` | `fp8` | `bf16` / `fp8` / `turbo8` / `nvfp4` / `turbo4` / `turbo3` |
 | `ATLAS_NUM_DRAFTS` | `2` | MTP speculative depth (K); `ATLAS_NO_SPECULATIVE=1` to disable |

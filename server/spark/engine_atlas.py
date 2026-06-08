@@ -40,7 +40,7 @@ def ensure_atlas_model(cfg, docker_cmd):
         ok(f"Model cached: {cfg.atlas_model}")
         return
 
-    info(f"Downloading {cfg.atlas_model} into HF cache  (~20 GB NVFP4 — grab a coffee)")
+    info(f"Downloading {cfg.atlas_model} into HF cache  (~46 GB NVFP4 — grab a coffee)")
     py_cmd = (
         "from huggingface_hub import snapshot_download; "
         "snapshot_download('" + cfg.atlas_model + "')"
