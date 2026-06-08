@@ -49,6 +49,7 @@ from smoke import (
 DEFAULT_BASE_URL = "https://llm-proxy.chrisvouga.dev"
 DEFAULT_API_KEY = "sk-local"
 DEFAULT_TIMEOUT = 120.0
+DEFAULT_USER_AGENT = "llm-server-check/1.0"
 
 
 def env_first(*names: str, default: str = "") -> str:
@@ -118,6 +119,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=f"Request timeout in seconds (default: {DEFAULT_TIMEOUT})",
     )
     parser.add_argument(
+        "--user-agent",
+        default=env_first(
+            "LLM_USER_AGENT",
+            "BENCH_USER_AGENT",
+            default=DEFAULT_USER_AGENT,
+        ),
+        help=f"HTTP User-Agent (default: {DEFAULT_USER_AGENT})",
+    )
+    parser.add_argument(
         "--skip-tools",
         action="store_true",
         help="Skip tool-calling tests when the model does not support them",
@@ -165,12 +175,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def build_client(base_url: str, api_key: str, timeout: float) -> OpenAI:
+def build_client(
+    base_url: str,
+    api_key: str,
+    timeout: float,
+    user_agent: str = DEFAULT_USER_AGENT,
+) -> OpenAI:
     bench_timeout = max(DEFAULT_TIMEOUT, timeout)
     return OpenAI(
         base_url=base_url,
         api_key=api_key,
         timeout=bench_timeout,
+        default_headers={"User-Agent": user_agent},
     )
 
 
@@ -269,7 +285,7 @@ def main(argv: list[str] | None = None) -> int:
     run_bench = not args.smoke_only
     quiet = args.json or bool(args.json_out) or bool(args.markdown_out)
 
-    client = build_client(base_url, args.api_key, args.timeout)
+    client = build_client(base_url, args.api_key, args.timeout, args.user_agent)
     model = args.model.strip()
 
     smoke_summary: RunSummary | None = None
