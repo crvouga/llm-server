@@ -36,8 +36,14 @@ class Config:
     atlas_kv_cache_dtype: str = "fp8"
     atlas_speculative: bool = True
     atlas_num_drafts: int = 2
-    atlas_gpu_mem_util: float = 0.90
-    atlas_max_thinking_budget: int = 2048
+    # Required for MoE MTP on qwen3_next (Qwen3-Coder-Next / Qwen3-Next-80B family).
+    atlas_mtp_quantization: str = "nvfp4"
+    atlas_gpu_mem_util: float = 0.88
+    # 0 = omit --max-thinking-budget (thinking off by default; proxy injects opt-out).
+    atlas_max_thinking_budget: int = 0
+    atlas_oom_guard_mb: int = 1024
+    # qwen3_next GDN layers: disable SSM snapshot slots to save ~GB during boot.
+    atlas_ssm_cache_slots: int = 0
 
     # Runtime
     helper_dir: Path = field(default_factory=lambda: Path.home() / ".spark-serve")
@@ -84,9 +90,15 @@ def _apply_env_overrides(cfg: "Config") -> None:
         cfg.atlas_speculative = False
     if drafts := os.environ.get("ATLAS_NUM_DRAFTS"):
         cfg.atlas_num_drafts = int(drafts)
+    if mtp := os.environ.get("ATLAS_MTP_QUANTIZATION"):
+        cfg.atlas_mtp_quantization = mtp
     if gmu := (os.environ.get("ATLAS_GPU_MEM_UTIL") or os.environ.get("GPU_MEMORY_UTILIZATION")):
         cfg.atlas_gpu_mem_util = float(gmu)
     if budget := os.environ.get("ATLAS_MAX_THINKING_BUDGET"):
         cfg.atlas_max_thinking_budget = int(budget)
+    if guard := os.environ.get("ATLAS_OOM_GUARD_MB"):
+        cfg.atlas_oom_guard_mb = int(guard)
+    if slots := os.environ.get("ATLAS_SSM_CACHE_SLOTS"):
+        cfg.atlas_ssm_cache_slots = int(slots)
 
     cfg.container_name = cfg.atlas_container

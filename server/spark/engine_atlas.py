@@ -10,6 +10,7 @@ from .config import _CONFIG_HASH_LABEL, _should_remove_container
 from .console import info, ok, section, warn
 from .containers import (
     _container_config_hash,
+    _container_exit_code,
     _container_restart_count,
     _container_status,
     _image_exists_locally,
@@ -17,6 +18,7 @@ from .containers import (
 )
 from .gpu import _gpu_run_flags
 from .health import _atlas_ready
+from .model_compat import ensure_atlas_weight_compat
 from .runtime import register_container
 from .shell import run
 
@@ -38,6 +40,7 @@ def ensure_atlas_model(cfg, docker_cmd):
     hf_cache.mkdir(parents=True, exist_ok=True)
     if _atlas_model_cached(cfg):
         ok(f"Model cached: {cfg.atlas_model}")
+        ensure_atlas_weight_compat(cfg, docker_cmd)
         return
 
     info(f"Downloading {cfg.atlas_model} into HF cache  (~46 GB NVFP4 — grab a coffee)")
@@ -69,6 +72,7 @@ def ensure_atlas_model(cfg, docker_cmd):
         ]
     )
     ok(f"Downloaded: {cfg.atlas_model}")
+    ensure_atlas_weight_compat(cfg, docker_cmd)
 
 
 def pull_atlas_image(cfg, docker_cmd):
@@ -117,8 +121,14 @@ def _atlas_serve_args(cfg) -> list:
         args.extend(["--kv-high-precision-layers", "auto"])
     if cfg.atlas_speculative:
         args.extend(["--speculative", "--num-drafts", str(cfg.atlas_num_drafts)])
+        if cfg.atlas_mtp_quantization:
+            args.extend(["--mtp-quantization", cfg.atlas_mtp_quantization])
     if cfg.atlas_max_thinking_budget > 0:
         args.extend(["--max-thinking-budget", str(cfg.atlas_max_thinking_budget)])
+    if cfg.atlas_oom_guard_mb > 0:
+        args.extend(["--oom-guard-mb", str(cfg.atlas_oom_guard_mb)])
+    if cfg.atlas_ssm_cache_slots >= 0:
+        args.extend(["--ssm-cache-slots", str(cfg.atlas_ssm_cache_slots)])
     return args
 
 
@@ -171,13 +181,22 @@ def start_atlas(cfg, docker_cmd) -> str:
             return "booting"
 
     if not force_restart and status == "exited":
-        if _container_config_hash(cfg) == fingerprint:
+        exit_code = _container_exit_code(cfg)
+        if (
+            _container_config_hash(cfg) == fingerprint
+            and exit_code == 0
+        ):
             info(f"Restarting stopped container '{cfg.container_name}' (docker start)...")
             run([*docker_cmd, "start", cfg.container_name])
             register_container(cfg.container_name)
             ok(f"Container '{cfg.container_name}' started")
             return "started"
-        warn("Container config changed — recreating")
+        if exit_code not in (None, 0):
+            warn(
+                f"Container '{cfg.container_name}' exited with code {exit_code} — recreating"
+            )
+        else:
+            warn("Container config changed — recreating")
         remove_container(cfg, docker_cmd)
     elif status not in ("missing",):
         remove_container(cfg, docker_cmd)
@@ -203,7 +222,7 @@ def start_atlas(cfg, docker_cmd) -> str:
             "--ulimit",
             "memlock=-1:-1",
             "--restart",
-            "unless-stopped",
+            "no",
             "-v",
             f"{hf_cache}:/root/.cache/huggingface",
             "-e",

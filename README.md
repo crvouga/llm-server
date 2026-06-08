@@ -66,7 +66,11 @@ or legacy `BENCH_URL`. Use `CHECK_ARGS='--json'` for machine-readable output.
 | `ATLAS_MAX_SEQ_LEN` | `131072` | Context window (128K) |
 | `ATLAS_KV_CACHE_DTYPE` | `fp8` | `bf16` / `fp8` / `turbo8` / `nvfp4` / `turbo4` / `turbo3` |
 | `ATLAS_NUM_DRAFTS` | `2` | MTP speculative depth (K); `ATLAS_NO_SPECULATIVE=1` to disable |
-| `ATLAS_MAX_THINKING_BUDGET` | `2048` | Cap reasoning tokens when thinking is enabled (`0` = unlimited) |
+| `ATLAS_MTP_QUANTIZATION` | `nvfp4` | MTP draft-head quant (required for qwen3_next MoE + speculative) |
+| `ATLAS_OOM_GUARD_MB` | `1024` | Headroom Atlas keeps free on GPU during inference |
+| `ATLAS_SSM_CACHE_SLOTS` | `0` | GDN/SSM snapshot slots (`0` saves memory on qwen3_next) |
+| `ATLAS_GPU_MEM_UTIL` | `0.88` | Fraction of GPU memory Atlas may use |
+| `ATLAS_MAX_THINKING_BUDGET` | _(unset)_ | Cap reasoning tokens when thinking is enabled (`0` = omit flag) |
 | `ATLAS_FORCE_RESTART` | _(unset)_ | Set to `1` to recreate the container on next start |
 
 The public API model id is `atlas`. Expected single-stream speed is ~80+ tok/s on GB10 with

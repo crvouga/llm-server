@@ -72,6 +72,26 @@ def _latest_container_log_line(cfg) -> str:
     return ""
 
 
+def _container_exit_code(cfg) -> int | None:
+    r = subprocess.run(
+        [
+            *cfg.docker_cmd,
+            "inspect",
+            "--format",
+            "{{.State.ExitCode}}",
+            cfg.container_name,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        return None
+    try:
+        return int(r.stdout.strip())
+    except ValueError:
+        return None
+
+
 def _container_config_hash(cfg) -> str:
     r = subprocess.run(
         [
