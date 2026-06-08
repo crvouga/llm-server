@@ -29,10 +29,23 @@ jobs:
     name: API check
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.run_benchmark && 25 || 15 }}
+    permissions:
+      id-token: write
+      contents: read
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Import secrets from Vault
+        uses: hashicorp/vault-action@v3
+        with:
+          url: https://secret-store.chrisvouga.dev
+          method: jwt
+          path: jwt
+          role: github-actions
+          secrets: |
+            secret/data/personal/dev OPENAI_API_KEY | OPENAI_API_KEY
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -50,7 +63,6 @@ jobs:
           LLM_BASE_URL: ${{ inputs.base_url }}
           LLM_MODEL: ${{ inputs.model }}
           LLM_TIMEOUT: ${{ inputs.timeout }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           set +e
           export OPENAI_API_KEY="${OPENAI_API_KEY:-sk-local}"

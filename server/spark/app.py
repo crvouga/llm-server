@@ -16,7 +16,6 @@ from .config import Config, _apply_env_overrides
 from .console import die, err, info, ok, warn
 from .containers import _container_logs_tail
 from .docker_env import _resolve_docker_cmd, ensure_cloudflared, ensure_docker
-from .doppler import fetch_doppler_secrets
 from .engine_atlas import ensure_atlas_model, pull_atlas_image, start_atlas
 from .health import _gpu_oom_hint, wait_for_engine
 from .helpers import write_helpers
@@ -31,13 +30,14 @@ from .runtime import (
     register_container,
 )
 from .summary import print_summary
+from .vault import fetch_vault_secrets
 from .webapi import CloudflareAPIError
 
 
 def main():
     cfg = Config()
     _apply_env_overrides(cfg)
-    cfg.doppler_token = os.environ.get("DOPPLER_TOKEN", "")
+    cfg.vault_token = os.environ.get("VAULT_TOKEN", "")
 
     if platform.machine() != "aarch64":
         warn(
@@ -48,7 +48,7 @@ def main():
     signal.signal(signal.SIGTERM, _handle_sigterm)
 
     try:
-        fetch_doppler_secrets(cfg)
+        fetch_vault_secrets(cfg)
         _exit_on_shutdown(cfg)
 
         docker_cmd = ensure_docker(cfg)
@@ -139,7 +139,7 @@ def setup_tunnel_only():
     """Configure DNS + ingress for Atlas without starting the server."""
     cfg = Config()
     _apply_env_overrides(cfg)
-    fetch_doppler_secrets(cfg)
+    fetch_vault_secrets(cfg)
     ensure_cloudflared()
     precheck_cf_tunnel(cfg)
     resolve_cf_tunnel_token(cfg)

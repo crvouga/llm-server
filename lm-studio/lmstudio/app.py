@@ -11,7 +11,7 @@ from spark.cloudflare import (
 )
 from spark.console import err, info, ok
 from spark.docker_env import ensure_cloudflared
-from spark.doppler import fetch_doppler_secrets
+from spark.vault import fetch_vault_secrets
 from spark.webapi import CloudflareAPIError
 
 from .config import Config, apply_env_overrides
@@ -33,13 +33,13 @@ from .summary import print_summary, write_stop_helper
 def main() -> None:
     cfg = Config()
     apply_env_overrides(cfg)
-    cfg.doppler_token = os.environ.get("DOPPLER_TOKEN", "")
+    cfg.vault_token = os.environ.get("VAULT_TOKEN", "")
 
     signal.signal(signal.SIGINT, _handle_sigint)
     signal.signal(signal.SIGTERM, _handle_sigterm)
 
     try:
-        fetch_doppler_secrets(cfg)
+        fetch_vault_secrets(cfg)
         _exit_on_shutdown(cfg)
 
         ensure_cloudflared()
@@ -104,7 +104,7 @@ def setup_tunnel_only() -> None:
     """Configure DNS + ingress without starting the connector."""
     cfg = Config()
     apply_env_overrides(cfg)
-    fetch_doppler_secrets(cfg)
+    fetch_vault_secrets(cfg)
     ensure_cloudflared()
     precheck_cf_tunnel(cfg)
     resolve_cf_tunnel_token(cfg)

@@ -26,7 +26,7 @@ Inference runs on an **ASUS Ascent GX10 AI Supercomputer** (NVIDIA DGX Spark cla
 | **Network** | Wi-Fi 7, Bluetooth 5.4 |
 | **Agentic AI** | Agentic AI ready; supports OpenClaw, NemoClaw |
 
-Requires Docker, NVIDIA container toolkit, and Doppler (`doppler login` + `doppler setup`).
+Requires Docker, NVIDIA container toolkit, and the secret store (`vault login` + `vault setup --project personal --config dev`).
 
 The launcher serves an OpenAI-compatible API over the Cloudflare tunnel using the **Atlas**
 engine (`avarok/atlas-gb10`, purpose-built for GB10/SM121) running
@@ -92,7 +92,7 @@ Transparent forwarder to Atlas with request logging. For `/v1/chat/completions` 
 `/v1/messages`, the proxy injects `enable_thinking: false` unless the client opts into
 reasoning (see **Thinking mode** above).
 
-Requires [Bun](https://bun.sh) and Doppler secrets (`DATABASE_URL`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`).
+Requires [Bun](https://bun.sh) and secrets from `secret/personal/<config>` (`DATABASE_URL`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`).
 
 ```bash
 make proxy-install

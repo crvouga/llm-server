@@ -40,7 +40,7 @@ def _api_origin(client: OpenAI) -> str:
 
 def _client_headers(client: OpenAI) -> dict[str, str]:
     raw = dict(getattr(client, "default_headers", None) or {})
-    headers = {k: v for k, v in raw.items() if isinstance(v, (str, bytes))}
+    headers = {k: v for k, v in raw.items() if isinstance(v, str)}
     api_key = getattr(client, "api_key", None)
     if api_key and isinstance(api_key, str):
         headers["Authorization"] = f"Bearer {api_key}"
@@ -65,7 +65,10 @@ def _get_json(client: OpenAI, path: str) -> dict[str, Any] | None:
 
 def _parse_model_hints(model_id: str) -> tuple[str | None, str | None]:
     quant = None
-    for pattern in (r"-(NVFP4|FP8|FP16|BF16|INT8|INT4)\b", r"_(NVFP4|FP8|FP16|BF16|INT8|INT4)\b"):
+    for pattern in (
+        r"-(NVFP4|FP8|FP16|BF16|INT8|INT4)\b",
+        r"_(NVFP4|FP8|FP16|BF16|INT8|INT4)\b",
+    ):
         if match := re.search(pattern, model_id, re.IGNORECASE):
             quant = match.group(1).upper()
             break
@@ -75,8 +78,14 @@ def _parse_model_hints(model_id: str) -> tuple[str | None, str | None]:
     return quant, param
 
 
-def _apply_context_from_payload(info: ModelInfo, payload: dict[str, Any], source: str) -> None:
-    ctx = payload.get("max_model_len") or payload.get("context_length") or payload.get("max_seq_len")
+def _apply_context_from_payload(
+    info: ModelInfo, payload: dict[str, Any], source: str
+) -> None:
+    ctx = (
+        payload.get("max_model_len")
+        or payload.get("context_length")
+        or payload.get("max_seq_len")
+    )
     if ctx is not None:
         info.context_window = int(ctx)
         info.context_window_source = source
@@ -113,7 +122,11 @@ def fetch_model_info(client: OpenAI, model_id: str) -> ModelInfo:
         if detail:
             _apply_context_from_payload(info, detail, f"/v1/models/{model_id}")
             info.extra.update(
-                {k: v for k, v in detail.items() if k not in {"id", "object", "created", "owned_by"}}
+                {
+                    k: v
+                    for k, v in detail.items()
+                    if k not in {"id", "object", "created", "owned_by"}
+                }
             )
 
     health = _get_json(client, "/health")

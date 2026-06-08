@@ -41,7 +41,7 @@ help:
 	@echo "  make proxy-install -> bun install in proxy/"
 	@echo "  make proxy-dev     -> wrangler dev"
 	@echo "  make proxy-check   -> type-check proxy"
-	@echo "  make proxy-deploy  -> deploy worker ( requires Doppler)"
+	@echo "  make proxy-deploy  -> deploy worker (requires vault)"
 	@echo "  make proxy-db      -> run database migrations"
 	@echo ""
 	@echo "Chat:"
@@ -186,10 +186,10 @@ proxy-check:
 	@cd "$(CURDIR)/proxy" && bun run check
 
 proxy-deploy:
-	@cd "$(CURDIR)/proxy" && doppler run -- wrangler deploy
+	@cd "$(CURDIR)/proxy" && vault run --config prd -- wrangler deploy
 
 proxy-db:
-	@cd "$(CURDIR)/proxy" && doppler run -- bash database/setup.sh
+	@cd "$(CURDIR)/proxy" && vault run --config prd -- bash database/setup.sh
 
 chat-install:
 	@set -euo pipefail; \

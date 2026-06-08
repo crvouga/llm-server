@@ -7,9 +7,11 @@ from pathlib import Path
 
 @dataclass
 class Config:
-    doppler_token: str = ""
-    doppler_project: str = "personal"
-    doppler_config: str = "dev"
+    vault_token: str = ""
+    vault_addr: str = "https://secret-store.chrisvouga.dev"
+    vault_mount: str = "secret"
+    vault_project: str = "personal"
+    vault_config: str = "dev"
 
     cf_api_token: str = ""
     cf_account_id: str = ""
@@ -27,6 +29,14 @@ class Config:
 
 
 def apply_env_overrides(cfg: Config) -> None:
+    if addr := os.environ.get("VAULT_ADDR"):
+        cfg.vault_addr = addr
+    if mount := os.environ.get("VAULT_MOUNT"):
+        cfg.vault_mount = mount
+    if project := os.environ.get("VAULT_PROJECT"):
+        cfg.vault_project = project
+    if config := os.environ.get("VAULT_CONFIG"):
+        cfg.vault_config = config
     if port := os.environ.get("LM_STUDIO_PORT"):
         cfg.lm_studio_port = int(port)
     if hostname := os.environ.get("CF_TUNNEL_HOSTNAME"):

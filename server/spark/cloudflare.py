@@ -31,7 +31,7 @@ def _cf_tunnel_api_base(cfg) -> str:
 def _cf_api_token_help(cfg) -> str:
     return (
         f"Grant CLOUDFLARE_API_TOKEN Account → Cloudflare Tunnel → Edit "
-        f"({cfg.doppler_project}/{cfg.doppler_config})."
+        f"({cfg.vault_project}/{cfg.vault_config})."
     )
 
 
@@ -48,7 +48,7 @@ def precheck_cf_tunnel(cfg):
 
     if not cfg.cf_api_token or not cfg.cf_account_id:
         die(
-            "Cloudflare API credentials missing from Doppler.\n"
+            "Cloudflare API credentials missing from the secret store.\n"
             + _cf_api_token_help(cfg)
         )
 

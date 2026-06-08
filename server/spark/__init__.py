@@ -9,7 +9,7 @@ Boot order and wiring live in `app.py`. Everything else is a focused module:
     docker_env     ensure Docker / cloudflared on the host
     gpu            GPU flags + preflight
     containers     Docker container helpers
-    doppler        secret fetching
+    vault          secret fetching
     cloudflare     tunnel API + cloudflared process
     health         readiness probes + boot wait loop
     engine_atlas   Atlas container launch

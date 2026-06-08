@@ -18,9 +18,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Doppler CLI
-        uses: dopplerhq/cli-action@v3
-
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -39,12 +36,23 @@ jobs:
     runs-on: ubuntu-latest
     needs: check
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Doppler CLI
-        uses: dopplerhq/cli-action@v3
+      - name: Import secrets from Vault
+        uses: hashicorp/vault-action@v3
+        with:
+          url: https://secret-store.chrisvouga.dev
+          method: jwt
+          path: jwt
+          role: github-actions
+          secrets: |
+            secret/data/personal/dev CLOUDFLARE_API_TOKEN | CLOUDFLARE_API_TOKEN ;
+            secret/data/personal/dev DATABASE_URL | DATABASE_URL
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -53,11 +61,7 @@ jobs:
 
       - name: Run database migrations
         working-directory: proxy
-        env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_SERVICE_TOKEN }}
-          DOPPLER_CONFIG: dev
-        run: |
-          doppler run -- bash database/setup.sh
+        run: bash database/setup.sh
 
       - name: Install wrangler CLI
         run: npm install -g wrangler
@@ -68,10 +72,7 @@ jobs:
 
       - name: Deploy to Cloudflare Workers
         working-directory: proxy
-        env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_SERVICE_TOKEN }}
-          DOPPLER_CONFIG: dev
         run: |
-          # Wrangler authenticates with CLOUDFLARE_API_TOKEN from Doppler.
-          doppler run -- sh -c 'printf "%s" "$DATABASE_URL" | wrangler secret put DATABASE_URL'
-          doppler run -- sh -c 'test -n "$CLOUDFLARE_API_TOKEN" && wrangler deploy'
+          # Wrangler authenticates with CLOUDFLARE_API_TOKEN from Vault.
+          printf "%s" "$DATABASE_URL" | wrangler secret put DATABASE_URL
+          test -n "$CLOUDFLARE_API_TOKEN" && wrangler deploy

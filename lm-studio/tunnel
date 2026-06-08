@@ -16,8 +16,8 @@ Usage:
     python3 lm-studio/tunnel --stop           # stop tunnel connector
     python3 lm-studio/tunnel --setup-tunnel   # configure DNS/ingress only
 
-Secrets via Doppler CLI (`doppler login` + `doppler setup`) or DOPPLER_TOKEN.
-Doppler secrets (project=personal, config=dev):
+Secrets via vault CLI (`vault login` + `vault setup --project personal --config dev`)
+or VAULT_TOKEN. Secret store path (project=personal, config=dev):
     CLOUDFLARE_API_TOKEN   — Cloudflare API token (required)
     CLOUDFLARE_ACCOUNT_ID  — Cloudflare account ID (required)
 """

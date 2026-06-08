@@ -19,6 +19,9 @@ dist/
 .env
 .env.*
 !.env.example
+.vault-token
+*.vault-token
+init-output.json
 
 # Proxy project
 proxy/node_modules/

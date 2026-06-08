@@ -10,12 +10,14 @@ _CONFIG_HASH_LABEL = "spark-serve.config-hash"
 
 @dataclass
 class Config:
-    # Doppler
-    doppler_token: str = ""
-    doppler_project: str = "personal"
-    doppler_config: str = "dev"
+    # Vault / OpenBao
+    vault_token: str = ""
+    vault_addr: str = "https://secret-store.chrisvouga.dev"
+    vault_mount: str = "secret"
+    vault_project: str = "personal"
+    vault_config: str = "dev"
 
-    # Secrets — populated from Doppler
+    # Secrets — populated from the secret store
     cf_api_token: str = ""
     cf_account_id: str = ""
     cf_tunnel_token: str = ""
@@ -56,6 +58,14 @@ def _should_remove_container(cfg: "Config") -> bool:
 
 
 def _apply_env_overrides(cfg: "Config") -> None:
+    if addr := os.environ.get("VAULT_ADDR"):
+        cfg.vault_addr = addr
+    if mount := os.environ.get("VAULT_MOUNT"):
+        cfg.vault_mount = mount
+    if project := os.environ.get("VAULT_PROJECT"):
+        cfg.vault_project = project
+    if config := os.environ.get("VAULT_CONFIG"):
+        cfg.vault_config = config
     if hostname := os.environ.get("CF_TUNNEL_HOSTNAME"):
         cfg.cf_tunnel_hostname = hostname
     if name := os.environ.get("CF_TUNNEL_NAME"):

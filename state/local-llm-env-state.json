@@ -11,7 +11,7 @@
     "dependencies": {
       "binary:cloudflared": "present",
       "binary:curl": "present",
-      "binary:doppler": "present",
+      "binary:vault": "present",
       "binary:rg": "present",
       "lmstudio_binary": "/home/crvouga/.lmstudio/bin/lms"
     }

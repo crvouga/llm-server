@@ -18,8 +18,8 @@ Usage:
     python3 server/server.py --stop           # stop tunnel + Atlas container
     python3 server/server.py --setup-tunnel   # configure DNS/ingress only
 
-Secrets via Doppler CLI (`doppler login` + `doppler setup`) or DOPPLER_TOKEN.
-Doppler secrets (project=personal, config=dev):
+Secrets via vault CLI (`vault login` + `vault setup --project personal --config dev`)
+or VAULT_TOKEN. Secret store path (project=personal, config=dev):
     CLOUDFLARE_API_TOKEN   — Cloudflare API token (required; tunnels, WAF, Workers)
     CLOUDFLARE_ACCOUNT_ID  — Cloudflare account ID (required)
     HF_TOKEN               — Hugging Face token (optional)

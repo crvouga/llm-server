@@ -57,7 +57,6 @@ class BenchmarkSummary:
     runs: int
     max_tokens: int
     depth_tokens: int
-    thinking: bool = False
     latency_s: float
     ttft_s: float | None
     overall_tps: float
@@ -67,6 +66,7 @@ class BenchmarkSummary:
     completion_tokens: int
     prompt_tokens: int
     total_tokens: int
+    thinking: bool = False
     reasoning_tokens: int = 0
     stream_chunks: int = 0
     samples: list[BenchmarkSample] = field(default_factory=list)

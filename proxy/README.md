@@ -15,7 +15,7 @@ The upstream backend URL is stored in `llm_proxy.config` — not in environment 
 ## Prerequisites
 
 - Cloudflare account with Workers access
-- Doppler project with secrets:
+- Secret store at `https://secret-store.chrisvouga.dev` with secrets at `secret/personal/<config>`:
   - `DATABASE_URL` - PostgreSQL connection string in HTTP API format (Supabase/PlanetScale)
   - `CLOUDFLARE_API_TOKEN` - API token for deployment
   - `CLOUDFLARE_ACCOUNT_ID` - Your Cloudflare account ID
@@ -79,11 +79,11 @@ The upstream backend URL is stored in `llm_proxy.config` — not in environment 
 
 4. **Deploy to Cloudflare Workers**:
    ```bash
-   # Ensure Doppler is configured and secrets are loaded
-   doppler setup --project personal --config prod
+   # Ensure the secret store is configured and secrets are loaded
+   vault setup --project personal --config prd
 
    # Deploy the worker
-   wrangler deploy
+   vault run --config prd -- wrangler deploy
    ```
 
 ## Proxy config
