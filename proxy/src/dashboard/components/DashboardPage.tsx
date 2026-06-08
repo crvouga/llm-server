@@ -17,15 +17,7 @@ export const DashboardPage: FC<{
   savedCostRates: SavedCostRates | null;
   errorMessage?: string;
   flashMessage?: string;
-}> = ({
-  filters,
-  models,
-  summary,
-  dailyRows,
-  savedCostRates,
-  errorMessage,
-  flashMessage,
-}) => {
+}> = ({ filters, models, summary, dailyRows, savedCostRates, errorMessage, flashMessage }) => {
   const hasData = summary !== null && summary.rows.length > 0;
   const scriptData =
     hasData && summary ? JSON.stringify(buildClientPayload(summary, dailyRows, filters)) : null;

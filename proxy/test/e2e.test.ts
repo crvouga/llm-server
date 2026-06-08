@@ -241,6 +241,63 @@ describe('proxy usage tracking e2e', () => {
     }
   });
 
+  test('logs usage-only stream with duration but null ttft', async () => {
+    const usageOnlyModel = sentinelModel(runId, 'usage-only-stream');
+    const usageOnlyMock = startMockBackend({
+      model: usageOnlyModel,
+      streamChatCompletions: true,
+      usageOnlyStream: true,
+      promptTokens: 12,
+      completionTokens: 8,
+    });
+
+    const prevBackend = await getBackendUrl();
+    await setBackendUrl(usageOnlyMock.url);
+
+    try {
+      const app = createApp();
+      const { ctx, drain } = createTestCtx();
+      await proxyRequest({
+        app,
+        databaseUrl,
+        ctx,
+        drain,
+        model: usageOnlyModel,
+        body: {
+          model: usageOnlyModel,
+          stream: true,
+          messages: [{ role: 'user', content: 'hello' }],
+        },
+      });
+
+      const logRow = await fetchLatestLogRowByModel(usageOnlyModel);
+      expect(Number(logRow?.duration_ms)).toBeGreaterThanOrEqual(1);
+      expect(logRow?.ttft_ms).toBeNull();
+
+      const today = await todayIsoDate();
+      const usageRows = await fetchUsageRows(databaseUrl, today, today);
+      const modelRow = usageRows.find((row) => row.model === usageOnlyModel);
+
+      expect(modelRow).toMatchObject({
+        model: usageOnlyModel,
+        completionTokens: 8,
+        timedCompletionTokens: 8,
+        generationCompletionTokens: 0,
+        totalGenerationMs: 0,
+      });
+      expect(computeOverallTps(modelRow!.timedCompletionTokens, modelRow!.totalDurationMs)).not.toBeNull();
+      expect(computeGenerationTps(
+        modelRow!.generationCompletionTokens,
+        modelRow!.totalGenerationMs,
+      )).toBeNull();
+    } finally {
+      usageOnlyMock.stop();
+      if (prevBackend) {
+        await setBackendUrl(prevBackend);
+      }
+    }
+  });
+
   test('logs streaming timing with measurable generation window', async () => {
     const timingModel = sentinelModel(runId, 'timing-stream');
     const timingMock = startMockBackend({

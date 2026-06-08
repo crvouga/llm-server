@@ -16,6 +16,7 @@ export interface MockBackendOptions {
   streamChatCompletions?: boolean;
   responseDelayMs?: number;
   streamChunkDelayMs?: number;
+  usageOnlyStream?: boolean;
   routes?: MockRouteOverride[];
 }
 
@@ -77,19 +78,21 @@ async function defaultChatResponse(
     const chunkDelayMs = options.streamChunkDelayMs ?? 0;
     const stream = new ReadableStream({
       async start(controller) {
-        controller.enqueue(
-          encoder.encode(
-            `data: ${JSON.stringify({
-              id: 'chatcmpl-test',
-              object: 'chat.completion.chunk',
-              created: Math.floor(Date.now() / 1000),
-              model,
-              choices: [{ index: 0, delta: { content: 'test response' }, finish_reason: null }],
-            })}\n\n`,
-          ),
-        );
-        if (chunkDelayMs > 0) {
-          await new Promise((resolve) => setTimeout(resolve, chunkDelayMs));
+        if (!options.usageOnlyStream) {
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({
+                id: 'chatcmpl-test',
+                object: 'chat.completion.chunk',
+                created: Math.floor(Date.now() / 1000),
+                model,
+                choices: [{ index: 0, delta: { content: 'test response' }, finish_reason: null }],
+              })}\n\n`,
+            ),
+          );
+          if (chunkDelayMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, chunkDelayMs));
+          }
         }
         controller.enqueue(
           encoder.encode(

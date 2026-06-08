@@ -40,12 +40,14 @@ export async function fetchUsageRows(
       COUNT(*)::int AS request_count,
       COALESCE(SUM((response_body->'usage'->>'prompt_tokens')::bigint), 0)::bigint AS prompt_tokens,
       COALESCE(SUM((response_body->'usage'->>'completion_tokens')::bigint), 0)::bigint AS completion_tokens,
+      -- Overall TPS: only rows with measured duration (legacy null duration_ms excluded).
       COALESCE(
         SUM((response_body->'usage'->>'completion_tokens')::bigint)
           FILTER (WHERE duration_ms IS NOT NULL AND duration_ms > 0),
         0
       )::bigint AS timed_completion_tokens,
       COALESCE(SUM(duration_ms) FILTER (WHERE duration_ms IS NOT NULL AND duration_ms > 0), 0)::bigint AS total_duration_ms,
+      -- Generation TPS: streaming subset where decode window (duration - ttft) is positive.
       COALESCE(
         SUM((response_body->'usage'->>'completion_tokens')::bigint)
           FILTER (WHERE ttft_ms IS NOT NULL AND duration_ms > ttft_ms),

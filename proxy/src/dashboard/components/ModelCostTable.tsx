@@ -7,14 +7,7 @@ function CostRateInput({ name, value }: { name: string; value: number }) {
   return (
     <div class="input-shell">
       <span class="input-prefix">$</span>
-      <input
-        type="number"
-        class="number-input"
-        name={name}
-        value={value}
-        min={0}
-        step={0.01}
-      />
+      <input type="number" class="number-input" name={name} value={value} min={0} step={0.01} />
     </div>
   );
 }
@@ -46,16 +39,10 @@ export const ModelCostTable: FC<{ models: string[]; filters: DashboardFilters }>
                   <code>{model}</code>
                 </td>
                 <td data-label="Input $/1M tokens">
-                  <CostRateInput
-                    name={`input_cost[${model}]`}
-                    value={rates.inputPerMillion}
-                  />
+                  <CostRateInput name={`input_cost[${model}]`} value={rates.inputPerMillion} />
                 </td>
                 <td data-label="Output $/1M tokens">
-                  <CostRateInput
-                    name={`output_cost[${model}]`}
-                    value={rates.outputPerMillion}
-                  />
+                  <CostRateInput name={`output_cost[${model}]`} value={rates.outputPerMillion} />
                 </td>
               </tr>
             );

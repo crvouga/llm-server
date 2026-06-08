@@ -196,10 +196,7 @@ export function createApp(): Hono<AppEnv> {
 
         c.executionCtx.waitUntil(
           (async () => {
-            const { responseBody, durationMs, ttftMs } = await parseSseStream(
-              logStream,
-              startedAt,
-            );
+            const { responseBody, durationMs, ttftMs } = await parseSseStream(logStream, startedAt);
             await logRequest(
               env,
               requestId,

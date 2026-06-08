@@ -58,6 +58,38 @@ describe('isContentChunk', () => {
       }),
     ).toBe(false);
   });
+
+  test('returns false for empty content string', () => {
+    expect(
+      isContentChunk({
+        choices: [{ delta: { content: '' } }],
+      }),
+    ).toBe(false);
+  });
+
+  test('returns true for tool_calls delta', () => {
+    expect(
+      isContentChunk({
+        choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_1', type: 'function' }] } }],
+      }),
+    ).toBe(true);
+  });
+
+  test('returns true for reasoning_content delta', () => {
+    expect(
+      isContentChunk({
+        choices: [{ delta: { reasoning_content: 'thinking...' } }],
+      }),
+    ).toBe(true);
+  });
+
+  test('returns true for role-only delta (current TTFT behavior)', () => {
+    expect(
+      isContentChunk({
+        choices: [{ delta: { role: 'assistant' } }],
+      }),
+    ).toBe(true);
+  });
 });
 
 describe('buildLoggableStreamResponse', () => {
@@ -144,6 +176,24 @@ describe('parseSseStream', () => {
     expect(result.responseBody).toMatchObject({
       usage: { prompt_tokens: 1, completion_tokens: 2 },
     });
+  });
+
+  test('returns null ttft for usage-only stream', async () => {
+    const startedAt = Date.now();
+    const stream = sseBody([
+      'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":7,"total_tokens":10}}',
+      '',
+      'data: [DONE]',
+      '',
+    ]);
+
+    const result = await parseSseStream(stream, startedAt);
+
+    expect(result.responseBody).toMatchObject({
+      usage: { prompt_tokens: 3, completion_tokens: 7 },
+    });
+    expect(result.ttftMs).toBeNull();
+    expect(result.durationMs).toBeGreaterThanOrEqual(1);
   });
 
   test('records ttft before duration when chunks are delayed', async () => {

@@ -42,10 +42,7 @@ export function summarizeUsage(
       totalTokens,
       avgTokensPerRequest: row.requestCount > 0 ? totalTokens / row.requestCount : 0,
       avgOverallTps: computeOverallTps(row.timedCompletionTokens, row.totalDurationMs),
-      avgGenerationTps: computeGenerationTps(
-        row.generationCompletionTokens,
-        row.totalGenerationMs,
-      ),
+      avgGenerationTps: computeGenerationTps(row.generationCompletionTokens, row.totalGenerationMs),
       percentOfTotal: 0,
       estCostUsd: cost,
     };

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { perMillionToPerToken, rowCostUsd } from '../src/dashboard/lib/cost';
 import { buildClientPayload, summarizeUsage } from '../src/dashboard/lib/summary';
+import { isValidTimingRow } from '../src/dashboard/lib/timing';
 import type { DashboardFilters, DailyUsageRow, RawModelUsageRow } from '../src/dashboard/types';
 
 const noTiming = {
@@ -191,6 +192,63 @@ describe('summarizeUsage timing', () => {
     expect(summary.rows[0]?.avgGenerationTps).toBeNull();
     expect(summary.totals.avgOverallTps).toBeNull();
     expect(summary.totals.avgGenerationTps).toBeNull();
+  });
+
+  test('streaming model has both TPS metrics; blocking model has overall only', () => {
+    const rawRows: RawModelUsageRow[] = [
+      {
+        model: 'stream-model',
+        requestCount: 1,
+        promptTokens: 0,
+        completionTokens: 30,
+        timedCompletionTokens: 30,
+        totalDurationMs: 600,
+        generationCompletionTokens: 30,
+        totalGenerationMs: 400,
+      },
+      {
+        model: 'block-model',
+        requestCount: 1,
+        promptTokens: 0,
+        completionTokens: 20,
+        timedCompletionTokens: 20,
+        totalDurationMs: 400,
+        generationCompletionTokens: 0,
+        totalGenerationMs: 0,
+      },
+    ];
+
+    const summary = summarizeUsage(rawRows, makeFilters());
+    const stream = summary.rows.find((row) => row.model === 'stream-model');
+    const block = summary.rows.find((row) => row.model === 'block-model');
+
+    expect(stream?.avgOverallTps).toBeCloseTo(50, 5);
+    expect(stream?.avgGenerationTps).toBeCloseTo(75, 5);
+    expect(block?.avgOverallTps).toBeCloseTo(50, 5);
+    expect(block?.avgGenerationTps).toBeNull();
+    expect(summary.totals.avgOverallTps).toBeCloseTo(50, 5);
+    expect(summary.totals.avgGenerationTps).toBeCloseTo(75, 5);
+  });
+
+  test('partial timing uses timed completion tokens not full completion total', () => {
+    const rawRows: RawModelUsageRow[] = [
+      {
+        model: 'alpha',
+        requestCount: 2,
+        promptTokens: 0,
+        completionTokens: 80,
+        timedCompletionTokens: 50,
+        totalDurationMs: 1000,
+        generationCompletionTokens: 50,
+        totalGenerationMs: 800,
+      },
+    ];
+
+    const summary = summarizeUsage(rawRows, makeFilters());
+
+    expect(summary.rows[0]?.avgOverallTps).toBeCloseTo(50, 5);
+    expect(summary.rows[0]?.avgOverallTps).not.toBeCloseTo(80, 5);
+    expect(isValidTimingRow(rawRows[0]!)).toBe(true);
   });
 });
 

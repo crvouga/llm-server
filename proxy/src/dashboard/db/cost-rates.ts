@@ -1,8 +1,5 @@
 import { neon } from '@neondatabase/serverless';
-import {
-  DEFAULT_INPUT_COST_PER_MILLION,
-  DEFAULT_OUTPUT_COST_PER_MILLION,
-} from '../constants';
+import { DEFAULT_INPUT_COST_PER_MILLION, DEFAULT_OUTPUT_COST_PER_MILLION } from '../constants';
 import type { ModelCostRates } from '../types';
 
 export interface SavedCostRates {

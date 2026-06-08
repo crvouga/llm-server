@@ -37,10 +37,12 @@ function isSortDir(value: string): value is SortDir {
 }
 
 function baseDefaultRates(savedRates: SavedCostRates | null | undefined): ModelCostRates {
-  return savedRates?.defaultRates ?? {
-    inputPerMillion: DEFAULT_INPUT_COST_PER_MILLION,
-    outputPerMillion: DEFAULT_OUTPUT_COST_PER_MILLION,
-  };
+  return (
+    savedRates?.defaultRates ?? {
+      inputPerMillion: DEFAULT_INPUT_COST_PER_MILLION,
+      outputPerMillion: DEFAULT_OUTPUT_COST_PER_MILLION,
+    }
+  );
 }
 
 function baseModelRates(
@@ -105,10 +107,7 @@ export function parseFiltersFromQuery(
   const baseDefaults = baseDefaultRates(savedRates);
   const defaultRates: ModelCostRates = {
     inputPerMillion: parseCostPerMillion(query.input_cost ?? null, baseDefaults.inputPerMillion),
-    outputPerMillion: parseCostPerMillion(
-      query.output_cost ?? null,
-      baseDefaults.outputPerMillion,
-    ),
+    outputPerMillion: parseCostPerMillion(query.output_cost ?? null, baseDefaults.outputPerMillion),
   };
 
   const modelCosts = parseBracketModelCosts(query, knownModels, defaultRates, savedRates);

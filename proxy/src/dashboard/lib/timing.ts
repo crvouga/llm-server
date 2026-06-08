@@ -1,3 +1,5 @@
+import type { RawModelUsageRow } from '../types';
+
 export function computeOverallTps(
   timedCompletionTokens: number,
   totalDurationMs: number,
@@ -26,4 +28,12 @@ export function computeGenerationTps(
     return null;
   }
   return timedCompletionTokens / (totalGenerationMs / 1000);
+}
+
+export function isValidTimingRow(row: RawModelUsageRow): boolean {
+  return (
+    row.timedCompletionTokens <= row.completionTokens &&
+    row.generationCompletionTokens <= row.timedCompletionTokens &&
+    row.totalGenerationMs <= row.totalDurationMs
+  );
 }

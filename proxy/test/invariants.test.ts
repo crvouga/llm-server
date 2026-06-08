@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { loadDashboardData } from '../src/dashboard/db/load';
 import { fetchDailyUsageRows, fetchUsageRows } from '../src/dashboard/db/queries';
 import { buildClientPayload } from '../src/dashboard/lib/summary';
-import { computeGenerationTps, computeOverallTps } from '../src/dashboard/lib/timing';
+import { computeGenerationTps, computeOverallTps, isValidTimingRow } from '../src/dashboard/lib/timing';
 import type { DashboardFilters } from '../src/dashboard/types';
 import {
   cleanupTestRows,
@@ -136,6 +136,22 @@ describe('usage tracking invariants', () => {
         usageTotals.totalGenerationMs,
       ),
     );
+  });
+
+  test('blocking model has overall TPS but null generation TPS', async () => {
+    const { summary } = await loadDashboardData(databaseUrl, filters);
+    const blockingRow = summary.rows.find((row) => row.model === modelB);
+
+    expect(blockingRow?.avgOverallTps).toBeCloseTo(80 / 0.8, 2);
+    expect(blockingRow?.avgGenerationTps).toBeNull();
+  });
+
+  test('every raw usage row satisfies timing invariants', async () => {
+    const usageRows = await fetchUsageRows(databaseUrl, startDate, endDate);
+
+    for (const row of usageRows) {
+      expect(isValidTimingRow(row)).toBe(true);
+    }
   });
 
   test('percentOfTotal sums to 100% and totalTokens equals prompt plus completion', async () => {

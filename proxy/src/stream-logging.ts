@@ -157,8 +157,7 @@ export async function parseSseStream(
   }
 
   const durationMs = Math.max(1, Date.now() - startedAt);
-  const normalizedTtftMs =
-    ttftMs === null ? null : Math.min(ttftMs, Math.max(0, durationMs - 1));
+  const normalizedTtftMs = ttftMs === null ? null : Math.min(ttftMs, Math.max(0, durationMs - 1));
 
   return {
     responseBody: buildLoggableStreamResponse(chunks),

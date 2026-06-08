@@ -3,11 +3,7 @@ import { NeonDbError } from '@neondatabase/serverless';
 import { Hono } from 'hono';
 import { DashboardPage } from './components/DashboardPage';
 import { COST_RATES_PATH, DASHBOARD_PATH, LEGACY_DASHBOARD_PATH } from './constants';
-import {
-  defaultSavedCostRates,
-  fetchCostRates,
-  upsertCostRates,
-} from './db/cost-rates';
+import { defaultSavedCostRates, fetchCostRates, upsertCostRates } from './db/cost-rates';
 import { loadDashboardData } from './db/load';
 import { fetchEarliestUsageDate, fetchKnownModels } from './db/queries';
 import { emptyFilters } from './lib/filters';
@@ -20,15 +16,10 @@ interface CostRatesPostBody {
   modelCosts?: Record<string, Partial<ModelCostRates>>;
 }
 
-function parsePostDefaultRates(
-  body: CostRatesPostBody,
-  fallback: ModelCostRates,
-): ModelCostRates {
+function parsePostDefaultRates(body: CostRatesPostBody, fallback: ModelCostRates): ModelCostRates {
   return {
     inputPerMillion: parseCostPerMillion(
-      body.defaultRates?.inputPerMillion != null
-        ? String(body.defaultRates.inputPerMillion)
-        : null,
+      body.defaultRates?.inputPerMillion != null ? String(body.defaultRates.inputPerMillion) : null,
       fallback.inputPerMillion,
     ),
     outputPerMillion: parseCostPerMillion(
@@ -168,7 +159,9 @@ dashboardRoute.get(DASHBOARD_PATH, async (c) => {
     const filters = parseFiltersFromQuery(c.req.query(), earliestDate, models, savedCostRates);
     const flashMessage =
       c.req.query('saved') === '1' ? 'Cost rates saved and shared across clients.' : undefined;
-    return c.html(await renderDashboard(databaseUrl, filters, models, savedCostRates, flashMessage));
+    return c.html(
+      await renderDashboard(databaseUrl, filters, models, savedCostRates, flashMessage),
+    );
   } catch (error) {
     const code = error instanceof NeonDbError ? error.code : 'unknown';
     console.error(`Dashboard failed (code: ${code ?? 'unknown'})`);
