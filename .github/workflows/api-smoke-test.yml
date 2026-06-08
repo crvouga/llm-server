@@ -44,6 +44,7 @@ jobs:
           method: jwt
           path: jwt
           role: github-actions
+          jwtGithubAudience: https://secret-store.chrisvouga.dev
           secrets: |
             secret/data/personal/dev OPENAI_API_KEY | OPENAI_API_KEY
 
