@@ -33,6 +33,8 @@ class Config:
     atlas_container: str = "atlas"
     atlas_port: int = 8888
     atlas_max_seq_len: int = 131072
+    # GB10 + 128K fp8 KV fits ~6 concurrent max-length sequences (Atlas default batch 8 OOMs).
+    atlas_max_batch_size: int = 6
     atlas_kv_cache_dtype: str = "fp8"
     atlas_speculative: bool = True
     atlas_num_drafts: int = 2
@@ -84,6 +86,8 @@ def _apply_env_overrides(cfg: "Config") -> None:
         cfg.atlas_port = int(port)
     if seq := (os.environ.get("ATLAS_MAX_SEQ_LEN") or os.environ.get("MAX_SEQ_LEN")):
         cfg.atlas_max_seq_len = int(seq)
+    if batch := os.environ.get("ATLAS_MAX_BATCH_SIZE"):
+        cfg.atlas_max_batch_size = int(batch)
     if kv := (os.environ.get("ATLAS_KV_CACHE_DTYPE") or os.environ.get("KV_CACHE_DTYPE")):
         cfg.atlas_kv_cache_dtype = kv
     if os.environ.get("ATLAS_NO_SPECULATIVE", "").lower() in ("1", "true", "yes"):

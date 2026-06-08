@@ -20,7 +20,7 @@ CHAT_BIN := $(CURDIR)/.chat/bin/aichat
 help:
 	@echo "Server (Atlas + Qwen3-Coder-Next):"
 	@echo "  make server-start  -> start Atlas + tunnel (python3 server/server.py)"
-	@echo "                         ATLAS_MAX_SEQ_LEN / ATLAS_KV_CACHE_DTYPE / ATLAS_NUM_DRAFTS to tune"
+	@echo "                         ATLAS_MAX_SEQ_LEN / ATLAS_MAX_BATCH_SIZE / ATLAS_KV_CACHE_DTYPE / ATLAS_NUM_DRAFTS to tune"
 	@echo "  make server-stop       -> stop tunnel + launcher + Atlas container"
 	@echo "  make server-metrics -> CPU/RAM/GPU/disk + Atlas health snapshot"
 	@echo "                         METRICS_ARGS='--json' or '--watch 5' for options"
@@ -277,7 +277,7 @@ pull:
 		exit 1; \
 	fi; \
 	stashed=false; \
-	if ! git diff --quiet || ! git diff --cached -- || [ -n "$$(git ls-files --others --exclude-standa")"; then \
+	if ! git diff --quiet || ! git diff --cached --quiet || [ -n "$$(git ls-files --others --exclude-standard)" ]; then \
 		echo "Stashing local changes before pull..."; \
 		git stash push -u -m "make pull ($$(date -u +%Y-%m-%dT%H:%M:%SZ))"; \
 		stashed=true; \
@@ -304,7 +304,7 @@ push:
 	fi; \
 	has_changes=false; \
 	if ! git diff --quiet || ! git diff --cached --quiet; then has_changes=true; fi; \
-	if [ -n "$$(git ls-files --others --exclude-standa")"; then has_changes=true; fi; \
+	if [ -n "$$(git ls-files --others --exclude-standard)" ]; then has_changes=true; fi; \
 	if [ "$$has_changes" = true ]; then \
 		if [ -z "$(COMMIT_MSG)" ]; then \
 			echo "Changes detected. Set COMMIT_MSG, e.g. COMMIT_MSG='fix tunnel' make push"; \
