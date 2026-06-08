@@ -351,6 +351,39 @@ export const dashboardStyles = `
     margin-bottom: 1rem;
   }
 
+  .success {
+    color: var(--success);
+    font-weight: 600;
+    padding: 0.75rem 1rem;
+    background: rgba(16, 185, 129, 0.12);
+    border-radius: 8px;
+    margin-bottom: 1rem;
+  }
+
+  .form-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem 1rem;
+    margin-top: 1rem;
+  }
+
+  .form-action-hint {
+    margin: 0;
+    flex: 1 1 16rem;
+  }
+
+  .cost-rates-status {
+    margin: 0;
+    width: 100%;
+    font-size: 0.875rem;
+  }
+
+  .cost-rates-status.error {
+    color: #ef4444;
+    font-weight: 600;
+  }
+
   .table-scroll {
     overflow-x: scroll;
     scrollbar-gutter: stable;

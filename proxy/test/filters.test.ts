@@ -96,4 +96,47 @@ describe('parseFiltersFromQuery', () => {
 
     expect(filters.defaultRates).toEqual({ inputPerMillion: 3, outputPerMillion: 4 });
   });
+
+  test('uses saved rates when query params are absent', () => {
+    const savedRates = {
+      defaultRates: { inputPerMillion: 0.1, outputPerMillion: 0.75 },
+      modelOverrides: new Map([
+        ['gpt-test', { inputPerMillion: 0.5, outputPerMillion: 1.5 }],
+      ]),
+      updatedAt: '2026-06-08T00:00:00.000Z',
+    };
+
+    const filters = parseFiltersFromQuery({}, earliest, models, savedRates);
+
+    expect(filters.defaultRates).toEqual({ inputPerMillion: 0.1, outputPerMillion: 0.75 });
+    expect(filters.modelCosts.get('gpt-test')).toEqual({
+      inputPerMillion: 0.5,
+      outputPerMillion: 1.5,
+    });
+    expect(filters.modelCosts.get('claude-test')).toEqual({
+      inputPerMillion: 0.1,
+      outputPerMillion: 0.75,
+    });
+  });
+
+  test('lets query params override saved rates', () => {
+    const savedRates = {
+      defaultRates: { inputPerMillion: 0.1, outputPerMillion: 0.75 },
+      modelOverrides: new Map<string, { inputPerMillion: number; outputPerMillion: number }>(),
+      updatedAt: '2026-06-08T00:00:00.000Z',
+    };
+
+    const filters = parseFiltersFromQuery(
+      { input_cost: '3', output_cost: '4', 'input_cost[gpt-test]': '9' },
+      earliest,
+      ['gpt-test'],
+      savedRates,
+    );
+
+    expect(filters.defaultRates).toEqual({ inputPerMillion: 3, outputPerMillion: 4 });
+    expect(filters.modelCosts.get('gpt-test')).toEqual({
+      inputPerMillion: 9,
+      outputPerMillion: 4,
+    });
+  });
 });

@@ -49,3 +49,12 @@ CREATE TABLE IF NOT EXISTS llm_proxy.config (
   backend_url TEXT NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Singleton dashboard cost rate configuration
+CREATE TABLE IF NOT EXISTS llm_proxy.cost_rates (
+  id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  input_per_million NUMERIC NOT NULL DEFAULT 1,
+  output_per_million NUMERIC NOT NULL DEFAULT 2,
+  model_overrides JSONB NOT NULL DEFAULT '{}',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

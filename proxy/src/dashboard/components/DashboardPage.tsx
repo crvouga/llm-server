@@ -4,6 +4,7 @@ import { CLIENT_SCRIPT_PATH } from '../constants';
 import { buildClientPayload } from '../lib/summary';
 import { dashboardStyles } from '../styles';
 import type { DailyUsageRow, DashboardFilters, UsageSummary } from '../types';
+import type { SavedCostRates } from '../db/cost-rates';
 import { AppTopBar } from './AppTopBar';
 import { DASHBOARD_FORM_ID, FilterForm } from './FilterForm';
 import { SummaryCards } from './SummaryCards';
@@ -13,8 +14,18 @@ export const DashboardPage: FC<{
   models: string[];
   summary: UsageSummary | null;
   dailyRows: DailyUsageRow[];
+  savedCostRates: SavedCostRates | null;
   errorMessage?: string;
-}> = ({ filters, models, summary, dailyRows, errorMessage }) => {
+  flashMessage?: string;
+}> = ({
+  filters,
+  models,
+  summary,
+  dailyRows,
+  savedCostRates,
+  errorMessage,
+  flashMessage,
+}) => {
   const hasData = summary !== null && summary.rows.length > 0;
   const scriptData =
     hasData && summary ? JSON.stringify(buildClientPayload(summary, dailyRows, filters)) : null;
@@ -31,8 +42,9 @@ export const DashboardPage: FC<{
         <AppTopBar formId={DASHBOARD_FORM_ID} />
         <div class="page">
           {errorMessage ? <p class="error">{errorMessage}</p> : null}
+          {flashMessage ? <p class="success">{flashMessage}</p> : null}
 
-          <FilterForm filters={filters} models={models} />
+          <FilterForm filters={filters} models={models} savedCostRates={savedCostRates} />
 
           {summary === null ? null : (
             <>

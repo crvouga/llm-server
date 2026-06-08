@@ -1,5 +1,6 @@
 import { DEFAULT_INPUT_COST_PER_MILLION, DEFAULT_OUTPUT_COST_PER_MILLION } from '../constants';
 import type { DashboardFilters, ModelCostRates } from '../types';
+import { defaultSavedCostRates, fetchCostRates } from '../db/cost-rates';
 import { fetchEarliestUsageDate } from '../db/queries';
 import { resolveDateRange } from './date-range';
 import { todayIsoDate } from './format';
@@ -8,20 +9,23 @@ export async function defaultFilters(
   databaseUrl: string,
   models: string[],
 ): Promise<DashboardFilters> {
-  const defaultRates: ModelCostRates = {
-    inputPerMillion: DEFAULT_INPUT_COST_PER_MILLION,
-    outputPerMillion: DEFAULT_OUTPUT_COST_PER_MILLION,
-  };
+  const savedRates = (await fetchCostRates(databaseUrl)) ?? defaultSavedCostRates();
+  const defaultRates: ModelCostRates = { ...savedRates.defaultRates };
 
   const earliestDate = await fetchEarliestUsageDate(databaseUrl);
   const { startDate, endDate } = resolveDateRange('all_time', earliestDate);
+
+  const modelCosts = new Map<string, ModelCostRates>();
+  for (const model of models) {
+    modelCosts.set(model, savedRates.modelOverrides.get(model) ?? { ...defaultRates });
+  }
 
   return {
     dateBucket: 'all_time',
     startDate,
     endDate,
     defaultRates,
-    modelCosts: new Map(models.map((model) => [model, { ...defaultRates }])),
+    modelCosts,
     sortKey: 'totalTokens',
     sortDir: 'desc',
   };

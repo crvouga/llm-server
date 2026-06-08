@@ -3,6 +3,7 @@ import {
   DEFAULT_INPUT_COST_PER_MILLION,
   DEFAULT_OUTPUT_COST_PER_MILLION,
 } from '../constants';
+import type { SavedCostRates } from '../db/cost-rates';
 import {
   SORT_KEYS,
   type DashboardFilters,
@@ -35,14 +36,26 @@ function isSortDir(value: string): value is SortDir {
   return value === 'asc' || value === 'desc';
 }
 
-function ratesEqual(a: ModelCostRates, b: ModelCostRates): boolean {
-  return a.inputPerMillion === b.inputPerMillion && a.outputPerMillion === b.outputPerMillion;
+function baseDefaultRates(savedRates: SavedCostRates | null | undefined): ModelCostRates {
+  return savedRates?.defaultRates ?? {
+    inputPerMillion: DEFAULT_INPUT_COST_PER_MILLION,
+    outputPerMillion: DEFAULT_OUTPUT_COST_PER_MILLION,
+  };
+}
+
+function baseModelRates(
+  model: string,
+  defaultRates: ModelCostRates,
+  savedRates: SavedCostRates | null | undefined,
+): ModelCostRates {
+  return savedRates?.modelOverrides.get(model) ?? defaultRates;
 }
 
 function parseBracketModelCosts(
   query: Record<string, string>,
   knownModels: string[],
   defaultRates: ModelCostRates,
+  savedRates: SavedCostRates | null | undefined,
 ): Map<string, ModelCostRates> {
   const inputByModel = new Map<string, string>();
   const outputByModel = new Map<string, string>();
@@ -61,14 +74,15 @@ function parseBracketModelCosts(
 
   const modelCosts = new Map<string, ModelCostRates>();
   for (const model of knownModels) {
+    const baseRates = baseModelRates(model, defaultRates, savedRates);
     const rates: ModelCostRates = {
       inputPerMillion: parseCostPerMillion(
         inputByModel.get(model) ?? null,
-        defaultRates.inputPerMillion,
+        baseRates.inputPerMillion,
       ),
       outputPerMillion: parseCostPerMillion(
         outputByModel.get(model) ?? null,
-        defaultRates.outputPerMillion,
+        baseRates.outputPerMillion,
       ),
     };
     modelCosts.set(model, rates);
@@ -81,21 +95,23 @@ export function parseFiltersFromQuery(
   query: Record<string, string>,
   earliestDate: string,
   knownModels: string[],
+  savedRates?: SavedCostRates | null,
 ): DashboardFilters {
   const today = todayIsoDate();
   const rangeRaw = query.range ?? 'all_time';
   const dateBucket: DateBucket = isPresetDateBucket(rangeRaw) ? rangeRaw : 'all_time';
   const { startDate, endDate } = resolveDateRange(dateBucket, earliestDate, today);
 
+  const baseDefaults = baseDefaultRates(savedRates);
   const defaultRates: ModelCostRates = {
-    inputPerMillion: parseCostPerMillion(query.input_cost ?? null, DEFAULT_INPUT_COST_PER_MILLION),
+    inputPerMillion: parseCostPerMillion(query.input_cost ?? null, baseDefaults.inputPerMillion),
     outputPerMillion: parseCostPerMillion(
       query.output_cost ?? null,
-      DEFAULT_OUTPUT_COST_PER_MILLION,
+      baseDefaults.outputPerMillion,
     ),
   };
 
-  const modelCosts = parseBracketModelCosts(query, knownModels, defaultRates);
+  const modelCosts = parseBracketModelCosts(query, knownModels, defaultRates, savedRates);
 
   const sortKeyRaw = query.sort ?? 'totalTokens';
   const sortKey: SortKey = isSortKey(sortKeyRaw) ? sortKeyRaw : 'totalTokens';
@@ -118,11 +134,6 @@ export function buildDashboardUrl(
   overrides: DashboardUrlOverrides = {},
 ): string {
   const dateBucket = overrides.dateBucket ?? filters.dateBucket;
-  const defaultRates = {
-    ...filters.defaultRates,
-    ...overrides.defaultRates,
-  };
-  const modelCosts = overrides.modelCosts ?? filters.modelCosts;
   const sortKey = overrides.sortKey ?? filters.sortKey ?? 'totalTokens';
   const sortDir = overrides.sortDir ?? filters.sortDir ?? 'desc';
 
@@ -130,21 +141,6 @@ export function buildDashboardUrl(
 
   if (dateBucket !== 'all_time') {
     params.set('range', dateBucket);
-  }
-
-  if (defaultRates.inputPerMillion !== DEFAULT_INPUT_COST_PER_MILLION) {
-    params.set('input_cost', String(defaultRates.inputPerMillion));
-  }
-
-  if (defaultRates.outputPerMillion !== DEFAULT_OUTPUT_COST_PER_MILLION) {
-    params.set('output_cost', String(defaultRates.outputPerMillion));
-  }
-
-  for (const [model, rates] of modelCosts) {
-    if (!ratesEqual(rates, defaultRates)) {
-      params.set(`input_cost[${model}]`, String(rates.inputPerMillion));
-      params.set(`output_cost[${model}]`, String(rates.outputPerMillion));
-    }
   }
 
   if (sortKey !== 'totalTokens') {
