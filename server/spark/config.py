@@ -25,12 +25,12 @@ class Config:
     cf_tunnel_name: str = "llm"
     cf_tunnel_hostname: str = "llm.chrisvouga.dev"
 
-    # Atlas (Qwen3.6-35B-A3B-FP8 on GB10 — Atlas Recipe A)
+    # Atlas (Qwen3-Coder-Next NVFP4 on GB10)
     atlas_image: str = "avarok/atlas-gb10:latest"
-    atlas_model: str = "Qwen/Qwen3.6-35B-A3B-FP8"
+    atlas_model: str = "RedHatAI/Qwen3-Coder-Next-NVFP4"
     atlas_container: str = "atlas"
     atlas_port: int = 8888
-    atlas_max_seq_len: int = 65536
+    atlas_max_seq_len: int = 131072
     atlas_kv_cache_dtype: str = "fp8"
     atlas_speculative: bool = True
     atlas_num_drafts: int = 2

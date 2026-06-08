@@ -1,6 +1,6 @@
 # llm-server
 
-Local LLM inference server (Atlas + Qwen3.6-35B-A3B-FP8) with Cloudflare tunnel exposure, plus a Cloudflare Worker proxy that logs API usage.
+Local LLM inference server (Atlas + Qwen3-Coder-Next) with Cloudflare tunnel exposure, plus a Cloudflare Worker proxy that logs API usage.
 
 ## Layout
 
@@ -30,7 +30,7 @@ Requires Docker, NVIDIA container toolkit, and Doppler (`doppler login` + `doppl
 
 The launcher serves an OpenAI-compatible API over the Cloudflare tunnel using the **Atlas**
 engine (`avarok/atlas-gb10`, purpose-built for GB10/SM121) running
-`Qwen/Qwen3.6-35B-A3B-FP8` with fp8 KV cache, MTP speculative decoding, and a 64K
+`RedHatAI/Qwen3-Coder-Next-NVFP4` with fp8 KV cache, MTP speculative decoding, and a 128K
 context window. Hybrid reasoning is **off by default** for agentic coding latency; clients
 can opt in per request.
 
@@ -62,15 +62,15 @@ or legacy `BENCH_URL`. Use `CHECK_ARGS='--json'` for machine-readable output.
 
 | Env var | Default | Purpose |
 | --- | --- | --- |
-| `ATLAS_MODEL` | `Qwen/Qwen3.6-35B-A3B-FP8` | HF model id (pre-downloaded to `~/.cache/huggingface` before launch) |
-| `ATLAS_MAX_SEQ_LEN` | `65536` | Context window (64K; Atlas Recipe A for this model) |
+| `ATLAS_MODEL` | `RedHatAI/Qwen3-Coder-Next-NVFP4` | HF model id (pre-downloaded to `~/.cache/huggingface` before launch) |
+| `ATLAS_MAX_SEQ_LEN` | `131072` | Context window (128K) |
 | `ATLAS_KV_CACHE_DTYPE` | `fp8` | `bf16` / `fp8` / `turbo8` / `nvfp4` / `turbo4` / `turbo3` |
 | `ATLAS_NUM_DRAFTS` | `2` | MTP speculative depth (K); `ATLAS_NO_SPECULATIVE=1` to disable |
 | `ATLAS_MAX_THINKING_BUDGET` | `2048` | Cap reasoning tokens when thinking is enabled (`0` = unlimited) |
 | `ATLAS_FORCE_RESTART` | _(unset)_ | Set to `1` to recreate the container on next start |
 
-The public API model id is `atlas`. Expected single-stream speed is ~120–145 tok/s on GB10
-with Qwen3.6-35B-A3B-FP8 in non-thinking mode (sub-second TTFT per agentic step).
+The public API model id is `atlas`. Expected single-stream speed is ~80+ tok/s on GB10 with
+Qwen3-Coder-Next in non-thinking mode.
 
 ### Thinking mode
 
