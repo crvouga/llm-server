@@ -34,7 +34,14 @@ The launcher serves the OpenAI-compatible API publicly at `https://llm.chrisvoug
 ```bash
 make server-install   # one-time: install ruff + pyright + pytest (dev deps)
 make server-check     # lint + typecheck server/ and tests/
+make api-check        # smoke tests + throughput benchmark (default proxy)
+make server-test      # smoke tests only
+make bench            # throughput benchmark only
 ```
+
+`make api-check` validates harness compatibility (models, streaming, tool calling) and
+reports decode tok/s and TTFT. Override the target with `LLM_BASE_URL=http://localhost:8888`
+or legacy `BENCH_URL`. Use `CHECK_ARGS='--json'` for machine-readable output.
 
 ### Atlas tuning
 

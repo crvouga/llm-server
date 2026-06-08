@@ -1,4 +1,4 @@
-name: API Smoke Test
+name: API Check
 
 on:
   workflow_dispatch:
@@ -15,16 +15,20 @@ on:
         description: Skip tool-calling tests if the model lacks function support
         type: boolean
         default: false
+      run_benchmark:
+        description: Run throughput benchmark after smoke tests
+        type: boolean
+        default: false
       timeout:
         description: Per-request timeout in seconds
         required: false
         default: "120"
 
 jobs:
-  smoke-test:
-    name: Smoke test
+  api-check:
+    name: API check
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: ${{ inputs.run_benchmark && 25 || 15 }}
 
     steps:
       - name: Checkout
@@ -40,7 +44,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r server_test/requirements.txt
 
-      - name: Run smoke tests
+      - name: Run API check
         id: run
         env:
           LLM_BASE_URL: ${{ inputs.base_url }}
@@ -54,7 +58,10 @@ jobs:
           if [ "${{ inputs.skip_tools }}" = "true" ]; then
             args+=(--skip-tools)
           fi
-          python3 server_test/run_tests.py "${args[@]}"
+          if [ "${{ inputs.run_benchmark }}" != "true" ]; then
+            args+=(--smoke-only)
+          fi
+          python3 server_test/check_api.py "${args[@]}"
           exit_code=$?
           echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
           exit "$exit_code"
@@ -66,9 +73,9 @@ jobs:
             cat report.md >> "$GITHUB_STEP_SUMMARY"
           else
             {
-              echo "# OpenAI-compatible API smoke test"
+              echo "# OpenAI-compatible API check"
               echo ""
-              echo "No report was generated — the run may have crashed before tests finished."
+              echo "No report was generated — the run may have crashed before checks finished."
               echo ""
               echo "Check the job logs for errors."
             } >> "$GITHUB_STEP_SUMMARY"
@@ -78,7 +85,7 @@ jobs:
         if: always() && steps.run.outcome != 'cancelled'
         uses: actions/upload-artifact@v4
         with:
-          name: api-smoke-test-report
+          name: api-check-report
           path: |
             report.json
             report.md
