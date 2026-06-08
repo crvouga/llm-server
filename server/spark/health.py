@@ -45,6 +45,14 @@ def _gpu_oom_hint(cfg, logs: str) -> str:
             "\nHint: another process (often LM Studio) is using GPU memory. "
             "Stop it and run `make server-stop && make server-start` again.\n"
         )
+    if "capturing cudagraph" in lower or (
+        "cuda graph" in lower and ("out of memory" in lower or "capture" in lower)
+    ):
+        return (
+            "\nHint: CUDA graph capture failed/OOMed — lower the KV budget "
+            "(`VLLM_GPU_MEM_UTIL=0.7`) or force eager mode "
+            "(`VLLM_ENFORCE_EAGER=1`, slower decode) and rerun `make server-start`.\n"
+        )
     if "illegal instruction" in lower or "sigill" in lower:
         return (
             "\nHint: GB10/sm_121 PTX mismatch — try a GB10-tuned vLLM image "

@@ -19,7 +19,7 @@ CHAT_BIN := $(CURDIR)/.chat/bin/aichat
 	lm-studio-tunnel lm-studio-stop \
 	proxy-install proxy-dev proxy-check proxy-test proxy-deploy proxy-db bench \
 	chat chat-install \
-	remote-setup-mac remote-verify pull push gh
+	remote-setup-mac remote-verify pull push sync gh
 
 help:
 	@echo "Server (vLLM + Qwen3-Coder-Next, ENGINE=atlas for legacy):"
@@ -63,6 +63,7 @@ help:
 	@echo "Repo:"
 	@echo "  make pull          -> git pull (auto-stash local changes)"
 	@echo "  make push          -> git add, commit (COMMIT_MSG=...), push"
+	@echo "  make sync          -> pull, commit any changes (COMMIT_MSG, default 'changes'), push, pull"
 	@echo "  make gh            -> open GitHub repo in browser"
 
 server-start run start:
@@ -349,6 +350,35 @@ push:
 	else \
 		git push -u origin "$$branch"; \
 	fi
+
+sync:
+	@set -euo pipefail; \
+	branch="$$(git branch --show-current)"; \
+	if [ -z "$$branch" ]; then \
+		echo "Not on a branch (detached HEAD)."; \
+		exit 1; \
+	fi; \
+	msg="$(COMMIT_MSG)"; \
+	[ -n "$$msg" ] || msg="changes"; \
+	has_changes=false; \
+	if ! git diff --quiet || ! git diff --cached --quiet; then has_changes=true; fi; \
+	if [ -n "$$(git ls-files --others --exclude-standard)" ]; then has_changes=true; fi; \
+	if [ "$$has_changes" = true ]; then \
+		echo "Committing local changes..."; \
+		git add -A; \
+		git commit -m "$$msg"; \
+	else \
+		echo "No local changes to commit."; \
+	fi; \
+	echo "Pulling latest..."; \
+	git pull --no-edit; \
+	echo "Pushing..."; \
+	if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then \
+		git push; \
+	else \
+		git push -u origin "$$branch"; \
+	fi; \
+	echo "Sync complete."
 
 gh:
 	@git remote get-url origin | sed 's/.*github.com[:\/]//' | sed 's/\.git$$//' | xargs -I {} open "https://github.com/{}"
