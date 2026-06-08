@@ -91,6 +91,10 @@ jobs:
         working-directory: proxy
         run: bun install
 
+      - name: Build dashboard client
+        working-directory: proxy
+        run: bun run build:client
+
       - name: Deploy to Cloudflare Workers
         working-directory: proxy
         run: |
