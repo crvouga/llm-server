@@ -1,4 +1,4 @@
-"""spark — Atlas inference server for ASUS Ascent GX10 / DGX Spark / GB10.
+"""spark — LLM inference server for ASUS Ascent GX10 / DGX Spark / GB10.
 
 Boot order and wiring live in `app.py`. Everything else is a focused module:
 
@@ -12,7 +12,9 @@ Boot order and wiring live in `app.py`. Everything else is a focused module:
     vault          secret fetching
     cloudflare     tunnel API + cloudflared process
     health         readiness probes + boot wait loop
-    engine_atlas   Atlas container launch
+    engine_vllm    vLLM container launch (default)
+    engine_atlas   Atlas container launch (legacy)
+    engine_dispatch engine routing
     prechecks      fail-fast validation
     helpers        ~/.spark-serve/*.sh scripts
     summary        the "server is live" banner

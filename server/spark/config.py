@@ -7,6 +7,8 @@ from pathlib import Path
 # Docker label used to detect when a running container's launch config is stale.
 _CONFIG_HASH_LABEL = "spark-serve.config-hash"
 
+_VALID_ENGINES = frozenset({"vllm", "atlas"})
+
 
 @dataclass
 class Config:
@@ -26,6 +28,27 @@ class Config:
     # Cloudflare tunnel
     cf_tunnel_name: str = "llm"
     cf_tunnel_hostname: str = "llm.chrisvouga.dev"
+
+    # Inference engine: vllm (default) or atlas (legacy)
+    engine: str = "vllm"
+
+    # vLLM (Qwen3-Coder-Next NVFP4-GB10 + DFlash on GB10)
+    vllm_image: str = "nvcr.io/nvidia/vllm:26.01-py3"
+    vllm_model: str = "saricles/Qwen3-Coder-Next-NVFP4-GB10"
+    vllm_dflash_model: str = "z-lab/Qwen3-Coder-Next-DFlash"
+    vllm_container: str = "vllm"
+    vllm_port: int = 8888
+    vllm_served_model_name: str = "atlas"
+    vllm_max_model_len: int = 131072
+    vllm_kv_cache_dtype: str = "fp8"
+    vllm_gpu_mem_util: float = 0.60
+    vllm_speculative: bool = True
+    vllm_dflash_tokens: int = 15
+    vllm_enforce_eager: bool = True
+    vllm_attention_backend: str = "flashinfer"
+    vllm_load_format: str = "fastsafetensors"
+    vllm_moe_backend: str = "cutlass"
+    vllm_extra_env: dict[str, str] = field(default_factory=dict)
 
     # Atlas (Qwen3-Coder-Next NVFP4 on GB10)
     atlas_image: str = "avarok/atlas-gb10:latest"
@@ -54,15 +77,16 @@ class Config:
 
     @property
     def service_port(self) -> int:
-        return self.atlas_port
+        if self.engine == "atlas":
+            return self.atlas_port
+        return self.vllm_port
 
 
 def _should_remove_container(cfg: "Config") -> bool:
-    return os.environ.get("ATLAS_FORCE_RESTART", "").lower() in (
-        "1",
-        "true",
-        "yes",
-    )
+    for key in ("ENGINE_FORCE_RESTART", "VLLM_FORCE_RESTART", "ATLAS_FORCE_RESTART"):
+        if os.environ.get(key, "").lower() in ("1", "true", "yes"):
+            return True
+    return False
 
 
 def _apply_env_overrides(cfg: "Config") -> None:
@@ -78,6 +102,38 @@ def _apply_env_overrides(cfg: "Config") -> None:
         cfg.cf_tunnel_hostname = hostname
     if name := os.environ.get("CF_TUNNEL_NAME"):
         cfg.cf_tunnel_name = name
+    if engine := os.environ.get("ENGINE"):
+        engine = engine.strip().lower()
+        if engine in _VALID_ENGINES:
+            cfg.engine = engine
+    if img := os.environ.get("VLLM_IMAGE"):
+        cfg.vllm_image = img
+    if model := os.environ.get("VLLM_MODEL"):
+        cfg.vllm_model = model
+    if dflash := os.environ.get("VLLM_DFLASH_MODEL"):
+        cfg.vllm_dflash_model = dflash
+    if port := os.environ.get("VLLM_PORT"):
+        cfg.vllm_port = int(port)
+    if served := os.environ.get("VLLM_SERVED_MODEL_NAME"):
+        cfg.vllm_served_model_name = served
+    if seq := (os.environ.get("VLLM_MAX_MODEL_LEN") or os.environ.get("MAX_MODEL_LEN")):
+        cfg.vllm_max_model_len = int(seq)
+    if kv := (os.environ.get("VLLM_KV_CACHE_DTYPE") or os.environ.get("KV_CACHE_DTYPE")):
+        cfg.vllm_kv_cache_dtype = kv
+    if gmu := (os.environ.get("VLLM_GPU_MEM_UTIL") or os.environ.get("GPU_MEMORY_UTILIZATION")):
+        cfg.vllm_gpu_mem_util = float(gmu)
+    if os.environ.get("VLLM_NO_SPECULATIVE", "").lower() in ("1", "true", "yes"):
+        cfg.vllm_speculative = False
+    if tokens := os.environ.get("VLLM_DFLASH_TOKENS"):
+        cfg.vllm_dflash_tokens = int(tokens)
+    if os.environ.get("VLLM_ENFORCE_EAGER", "").lower() in ("0", "false", "no"):
+        cfg.vllm_enforce_eager = False
+    if backend := os.environ.get("VLLM_ATTENTION_BACKEND"):
+        cfg.vllm_attention_backend = backend
+    if load_fmt := os.environ.get("VLLM_LOAD_FORMAT"):
+        cfg.vllm_load_format = load_fmt
+    if moe := os.environ.get("VLLM_MOE_BACKEND"):
+        cfg.vllm_moe_backend = moe
     if img := os.environ.get("ATLAS_IMAGE"):
         cfg.atlas_image = img
     if model := os.environ.get("ATLAS_MODEL"):
@@ -105,4 +161,6 @@ def _apply_env_overrides(cfg: "Config") -> None:
     if slots := os.environ.get("ATLAS_SSM_CACHE_SLOTS"):
         cfg.atlas_ssm_cache_slots = int(slots)
 
-    cfg.container_name = cfg.atlas_container
+    cfg.container_name = (
+        cfg.atlas_container if cfg.engine == "atlas" else cfg.vllm_container
+    )

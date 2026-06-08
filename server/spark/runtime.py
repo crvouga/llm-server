@@ -72,8 +72,9 @@ def _containers_to_stop(cfg) -> list[str]:
         from .config import Config
 
         defaults = Config()
-        if defaults.atlas_container not in names:
-            names.append(defaults.atlas_container)
+        for legacy in (defaults.vllm_container, defaults.atlas_container):
+            if legacy not in names:
+                names.append(legacy)
     return names
 
 
@@ -192,10 +193,10 @@ def cleanup(cfg, *, stop_engine: bool = False):
         clear_runtime_state(cfg)
     elif _managed_containers or _container_status(cfg) == "running":
         names = _managed_containers or [cfg.container_name]
-        ok(f"Leaving Atlas container running: {', '.join(names)}")
+        ok(f"Leaving engine container running: {', '.join(names)}")
     (cfg.helper_dir / "server.pid").unlink(missing_ok=True)
     _runtime_active = False
     if stop_engine:
-        ok("Clean shutdown complete (Atlas + tunnel stopped).")
+        ok("Clean shutdown complete (engine + tunnel stopped).")
     else:
-        ok("Clean shutdown complete (tunnel stopped; Atlas container left running).")
+        ok("Clean shutdown complete (tunnel stopped; engine container left running).")

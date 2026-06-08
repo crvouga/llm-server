@@ -15,9 +15,11 @@ def write_helpers(cfg):
 
     docker = " ".join(cfg.docker_cmd)
 
+    engine = "vLLM" if cfg.engine == "vllm" else "Atlas"
+    port = cfg.service_port
     (d / "logs.sh").write_text(
         f"#!/usr/bin/env bash\n"
-        f'echo "=== Atlas (last 50 lines) ==="\n'
+        f'echo "=== {engine} (last 50 lines) ==="\n'
         f"{docker} logs --tail 50 {cfg.container_name}\n"
         f'echo ""\n'
         f'echo "=== Cloudflare tunnel (last 20 lines) ==="\n'
@@ -33,10 +35,10 @@ def write_helpers(cfg):
         f"#!/usr/bin/env bash\n"
         f"G='\\033[0;32m'; R='\\033[0;31m'; Y='\\033[1;33m'; X='\\033[0m'\n"
         f"{docker} ps --filter name={cfg.container_name} --format 'table {{{{.Names}}}}\\t{{{{.Status}}}}'\n"
-        f"curl -sf http://localhost:{cfg.atlas_port}/v1/models >/dev/null 2>&1 "
-        f'&& echo -e "${{G}}● Atlas healthy:{cfg.atlas_port}${{X}}" '
-        f'|| echo -e "${{R}}✗ Atlas not responding${{X}}"\n'
-        f"curl -s http://localhost:{cfg.atlas_port}/v1/models "
+        f"curl -sf http://localhost:{port}/v1/models >/dev/null 2>&1 "
+        f'&& echo -e "${{G}}● {engine} healthy:{port}${{X}}" '
+        f'|| echo -e "${{R}}✗ {engine} not responding${{X}}"\n'
+        f"curl -s http://localhost:{port}/v1/models "
         f"| python3 -c \"import sys,json; [print('  •', m['id']) for m in json.load(sys.stdin).get('data',[])]\" "
         f"2>/dev/null || echo '(not ready)'\n"
         f'if [ -f "{d}/cloudflared.pid" ]; then\n'

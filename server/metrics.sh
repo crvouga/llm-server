@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# metrics.sh — snapshot of CPU, RAM, GPU, disk, and Atlas server health.
+# metrics.sh — snapshot of CPU, RAM, GPU, disk, and LLM server health.
 #
 # Usage:
 #   ./server/metrics.sh           # human-readable report
@@ -10,7 +10,8 @@ set -euo pipefail
 
 JSON=false
 WATCH_INTERVAL=""
-ATLAS_CONTAINER="${ATLAS_CONTAINER:-atlas}"
+ENGINE_CONTAINER="${ENGINE_CONTAINER:-${ATLAS_CONTAINER:-vllm}}"
+ATLAS_CONTAINER="${ATLAS_CONTAINER:-$ENGINE_CONTAINER}"
 ATLAS_PORT="${ATLAS_PORT:-8888}"
 HEALTH_PATH="${HEALTH_PATH:-/v1/models}"
 MODEL_CACHE="${MODEL_CACHE:-${HOME}/.cache/huggingface}"
@@ -24,7 +25,7 @@ usage() {
   cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Print current system and Atlas server metrics.
+Print current system and LLM server metrics.
 
 Options:
   --json            Output JSON (for scripts / dashboards)
@@ -32,7 +33,8 @@ Options:
   -h, --help        Show this help
 
 Environment:
-  ATLAS_CONTAINER   Docker container name (default: atlas)
+  ENGINE_CONTAINER  Docker container name (default: vllm)
+  ATLAS_CONTAINER   Alias for ENGINE_CONTAINER (legacy)
   ATLAS_PORT        Server HTTP port (default: 8888)
   HEALTH_PATH       Health probe path (default: /v1/models)
   MODEL_CACHE       HF weights cache (default: ~/.cache/huggingface)

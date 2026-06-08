@@ -186,20 +186,33 @@ LIMIT 10;
 ## Development
 
 ```bash
-# Run locally with wrangler dev
+# Run locally (loads DATABASE_URL from vault secret/personal/dev)
+vault login
+vault setup --project personal --config dev
 bun run dev
+
+# Build dashboard client bundle (charts + sortable table)
+bun run build:client
 
 # Type-check without deploying
 bun run check
 ```
 
-## Usage Dashboard
+## Dashboard
 
-Open `/usage-dashboard` on the Worker (e.g. `https://llm-proxy.chrisvouga.dev/usage-dashboard`).
+Open `/dashboard` on the Worker (e.g. `https://llm-proxy.chrisvouga.dev/dashboard`). The legacy `/usage-dashboard` path redirects here.
 
-- **Pure HTML forms** — no client-side JavaScript
-- **Date range** — filter usage for any period (defaults to today)
-- **Per-model cloud rates** — defaults to $1 / 1M input tokens and $2 / 1M output tokens; override globally or per model
-- **Money saved** — `(prompt_tokens × input_rate) + (completion_tokens × output_rate)` assuming local inference is free
+- **All-time default** — loads full usage history on first visit; filter by date range as needed
+- **Per-model analytics** — requests, prompt/completion/total tokens, avg per request, share of total
+- **Charts** — tokens per model, stacked prompt vs completion, share doughnut, daily trend, estimated cost
+- **Sortable table** — click column headers to reorder per-model results
+- **Cost estimation** — parameterized as USD per 1M tokens (defaults: $1 input, $2 output); override globally or per model
+- **Est. cloud cost** — `(prompt_tokens × input $/1M + completion_tokens × output $/1M) ÷ 1,000,000`, assuming local inference is free
 
-Implementation lives in [`src/usage-dashboard.tsx`](src/usage-dashboard.tsx).
+Only non-streaming JSON responses with a `usage` field are included (streamed completions are not logged with token counts).
+
+Implementation lives in [`src/dashboard/`](src/dashboard/). Build the client bundle before deploy:
+
+```bash
+bun run build:client
+```

@@ -1,4 +1,4 @@
-"""Top-level orchestration: boot Atlas + tunnel, run the watchdog, handle CLI."""
+"""Top-level orchestration: boot inference engine + tunnel, run the watchdog."""
 
 import os
 import platform
@@ -17,7 +17,12 @@ from .config import Config, _apply_env_overrides
 from .console import die, err, info, ok, warn
 from .containers import _container_logs_tail
 from .docker_env import _resolve_docker_cmd, ensure_cloudflared, ensure_docker
-from .engine_atlas import ensure_atlas_model, pull_atlas_image, start_atlas
+from .engine_dispatch import (
+    engine_label,
+    ensure_engine_model,
+    pull_engine_image,
+    start_engine,
+)
 from .health import _gpu_oom_hint, wait_for_engine
 from .helpers import write_helpers
 from .prechecks import run_prechecks
@@ -58,12 +63,12 @@ def main():
         run_prechecks(cfg, docker_cmd)
         _exit_on_shutdown(cfg)
 
-        pull_atlas_image(cfg, docker_cmd)
+        pull_engine_image(cfg, docker_cmd)
         _exit_on_shutdown(cfg)
-        ensure_atlas_model(cfg, docker_cmd)
+        ensure_engine_model(cfg, docker_cmd)
         _exit_on_shutdown(cfg)
 
-        boot_mode = start_atlas(cfg, docker_cmd)
+        boot_mode = start_engine(cfg, docker_cmd)
         if boot_mode != "ready":
             wait_for_engine(cfg)
         _exit_on_shutdown(cfg)
@@ -79,7 +84,8 @@ def main():
         print_summary(cfg, cf_url)
 
         info(
-            "Running. Ctrl+C or `make server-stop` stops tunnel + Atlas container."
+            f"Running. Ctrl+C or `make server-stop` stops tunnel + "
+            f"{engine_label(cfg)} container."
         )
         while not runtime.is_shutdown_requested():
             r = subprocess.run(
@@ -95,14 +101,14 @@ def main():
             )
             if r.stdout.strip() not in ("running", ""):
                 logs = _container_logs_tail(cfg, lines=80)
-                oom_hint = _gpu_oom_hint(logs)
+                oom_hint = _gpu_oom_hint(cfg, logs)
                 if oom_hint:
                     die(
                         f"Container '{cfg.container_name}' exited (likely GPU memory)."
                         f"{oom_hint}\nRecent logs:\n{logs}"
                     )
                 warn("Container exited unexpectedly — restarting...")
-                boot_mode = start_atlas(cfg, docker_cmd)
+                boot_mode = start_engine(cfg, docker_cmd)
                 if boot_mode != "ready":
                     wait_for_engine(cfg)
             elif not tunnel_connector_running(cfg):
@@ -136,7 +142,7 @@ def main():
 
 
 def stop():
-    """Stop tunnel, launcher, and the Atlas container."""
+    """Stop tunnel, launcher, and the inference engine container."""
     cfg = Config()
     _apply_env_overrides(cfg)
     if not load_runtime_state(cfg):
@@ -146,7 +152,7 @@ def stop():
 
 
 def setup_tunnel_only():
-    """Configure DNS + ingress for Atlas without starting the server."""
+    """Configure DNS + ingress for the LLM server without starting it."""
     cfg = Config()
     _apply_env_overrides(cfg)
     fetch_vault_secrets(cfg)

@@ -4,6 +4,8 @@
   "main": "src/index.ts",
   "compatibility_date": "2025-06-03",
 
+  "assets": { "directory": "public" },
+
   "routes": [
     {
       "pattern": "llm-proxy.chrisvouga.dev",

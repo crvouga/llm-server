@@ -3,20 +3,24 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "deploy": "wrangler deploy",
-    "dev": "wrangler dev",
+    "deploy": "bun run build:client && wrangler deploy",
+    "dev": "bash scripts/dev.sh",
     "check": "tsc --noEmit",
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx}\""
+    "format:check": "prettier --check \"src/**/*.{ts,tsx}\"",
+    "build:client": "vite build --config vite.client.config.ts",
+    "build": "bun run build:client"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
     "hono": "^4",
-    "wrangler": "^3.82.0"
+    "wrangler": "^3.82.0",
+    "chart.js": "^4.4.1"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250603.1",
     "prettier": "^3.8.3",
-    "typescript": "^5.6.2"
+    "typescript": "^5.6.2",
+    "vite": "^6.0.0"
   }
 }

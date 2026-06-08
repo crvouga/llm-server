@@ -6,7 +6,7 @@ import { Hono } from 'hono';
 
 import { fetchBackendUrl } from './proxy-state';
 import { prepareProxyRequestBody } from './thinking-default';
-import { usageDashboardRoute } from './usage-dashboard';
+import { dashboardRoute } from './dashboard';
 
 export interface Env {
   DATABASE_URL: string;
@@ -135,7 +135,7 @@ export function createApp(): Hono<AppEnv> {
     await next();
   });
 
-  app.route('/', usageDashboardRoute);
+  app.route('/', dashboardRoute);
 
   app.all('*', async (c) => {
     const env = c.env;
@@ -145,10 +145,7 @@ export function createApp(): Hono<AppEnv> {
     const path = c.req.path || '/';
 
     if (!env.DATABASE_URL) {
-      return c.json(
-        { error: 'Proxy not configured', details: 'DATABASE_URL is not set' },
-        503,
-      );
+      return c.json({ error: 'Proxy not configured', details: 'DATABASE_URL is not set' }, 503);
     }
 
     const backendUrl = await fetchBackendUrl(env.DATABASE_URL);
@@ -165,8 +162,10 @@ export function createApp(): Hono<AppEnv> {
     const backendPath = requestUrl.pathname + requestUrl.search;
     const targetUrl = `${backendUrl}${backendPath}`;
 
-    const { body: requestBody, parsed: requestPayload } =
-      await prepareProxyRequestBody(request, path);
+    const { body: requestBody, parsed: requestPayload } = await prepareProxyRequestBody(
+      request,
+      path,
+    );
     const requestHeaders = buildBackendRequestHeaders(request, requestUrl);
     if (typeof requestBody === 'string') {
       requestHeaders.set('Content-Length', String(new TextEncoder().encode(requestBody).length));

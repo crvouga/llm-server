@@ -1,12 +1,12 @@
 # llm-server
 
-Local LLM inference server (Atlas + Qwen3-Coder-Next) with Cloudflare tunnel exposure, plus a Cloudflare Worker proxy that logs API usage.
+Local LLM inference server (vLLM + Qwen3-Coder-Next) with Cloudflare tunnel exposure, plus a Cloudflare Worker proxy that logs API usage.
 
 ## Layout
 
 | Path | Purpose |
 | --- | --- |
-| [`server/`](server/) | Atlas launcher (`server/server.py`) |
+| [`server/`](server/) | vLLM/Atlas launcher (`server/server.py`) |
 | [`proxy/`](proxy/) | Cloudflare Worker proxy + usage dashboard |
 | [`remote-access/`](remote-access/) | Mac ↔ Linux remote control setup (SSH, Tailscale, NoMachine) |
 
@@ -28,16 +28,16 @@ Inference runs on an **ASUS Ascent GX10 AI Supercomputer** (NVIDIA DGX Spark cla
 
 Requires Docker, NVIDIA container toolkit, and the secret store (`vault login` + `vault setup --project personal --config dev`).
 
-The launcher serves an OpenAI-compatible API over the Cloudflare tunnel using the **Atlas**
-engine (`avarok/atlas-gb10`, purpose-built for GB10/SM121) running
-`RedHatAI/Qwen3-Coder-Next-NVFP4` with fp8 KV cache, MTP speculative decoding, and a 128K
-context window. Hybrid reasoning is **off by default** for agentic coding latency; clients
-can opt in per request.
+The launcher serves an OpenAI-compatible API over the Cloudflare tunnel using **vLLM**
+(`nvcr.io/nvidia/vllm`, NVIDIA's DGX Spark stack) running
+`saricles/Qwen3-Coder-Next-NVFP4-GB10` with DFlash speculative decoding, fp8 KV cache, and
+a 128K context window. Set `ENGINE=atlas` for the legacy Atlas path. Hybrid reasoning is
+**off by default** for agentic coding latency; clients can opt in per request.
 
 ```bash
-make server-start        # start Atlas + tunnel
-make server-stop         # stop Atlas container + tunnel
-make server-metrics      # CPU/RAM/GPU/disk + Atlas health snapshot
+make server-start        # start vLLM + tunnel
+make server-stop         # stop engine container + tunnel
+make server-metrics      # CPU/RAM/GPU/disk + server health snapshot
 make logs                # tail container logs
 make status              # check process + container
 ```
@@ -58,24 +58,38 @@ make bench            # throughput benchmark only
 reports decode tok/s and TTFT. Override the target with `LLM_BASE_URL=http://localhost:8888`
 or legacy `BENCH_URL`. Use `CHECK_ARGS='--json'` for machine-readable output.
 
-### Atlas tuning
+### vLLM tuning (default)
 
 | Env var | Default | Purpose |
 | --- | --- | --- |
-| `ATLAS_MODEL` | `RedHatAI/Qwen3-Coder-Next-NVFP4` | HF model id (pre-downloaded to `~/.cache/huggingface` before launch) |
-| `ATLAS_MAX_SEQ_LEN` | `131072` | Context window (128K) |
-| `ATLAS_MAX_BATCH_SIZE` | `6` | Concurrent sequences (128K fp8 KV on GB10; raise only with shorter context) |
-| `ATLAS_KV_CACHE_DTYPE` | `fp8` | `bf16` / `fp8` / `turbo8` / `nvfp4` / `turbo4` / `turbo3` |
-| `ATLAS_NUM_DRAFTS` | `2` | MTP speculative depth (K); `ATLAS_NO_SPECULATIVE=1` to disable |
-| `ATLAS_MTP_QUANTIZATION` | `nvfp4` | MTP draft-head quant (required for qwen3_next MoE + speculative) |
-| `ATLAS_OOM_GUARD_MB` | `1024` | Headroom Atlas keeps free on GPU during inference |
-| `ATLAS_SSM_CACHE_SLOTS` | `0` | GDN/SSM snapshot slots (`0` saves memory on qwen3_next) |
-| `ATLAS_GPU_MEM_UTIL` | `0.88` | Fraction of GPU memory Atlas may use |
-| `ATLAS_MAX_THINKING_BUDGET` | _(unset)_ | Cap reasoning tokens when thinking is enabled (`0` = omit flag) |
-| `ATLAS_FORCE_RESTART` | _(unset)_ | Set to `1` to recreate the container on next start |
+| `ENGINE` | `vllm` | Inference engine (`vllm` or `atlas`) |
+| `VLLM_IMAGE` | `nvcr.io/nvidia/vllm:26.01-py3` | Docker image (GB10-optimized alternatives: `avarok/dgx-vllm-nvfp4-kernel:v22`) |
+| `VLLM_MODEL` | `saricles/Qwen3-Coder-Next-NVFP4-GB10` | HF target model (pre-downloaded before launch) |
+| `VLLM_DFLASH_MODEL` | `z-lab/Qwen3-Coder-Next-DFlash` | DFlash drafter for speculative decoding |
+| `VLLM_MAX_MODEL_LEN` | `131072` | Context window (128K) |
+| `VLLM_KV_CACHE_DTYPE` | `fp8` | KV cache dtype |
+| `VLLM_GPU_MEM_UTIL` | `0.60` | Fraction of GPU memory vLLM may use |
+| `VLLM_DFLASH_TOKENS` | `15` | DFlash speculative depth; `VLLM_NO_SPECULATIVE=1` to disable |
+| `VLLM_ENFORCE_EAGER` | `1` | Safer boot (`0` enables CUDA graphs after warmup) |
+| `VLLM_SERVED_MODEL_NAME` | `atlas` | Public API model id (backward compatible) |
+| `ENGINE_FORCE_RESTART` | _(unset)_ | Set to `1` to recreate the container on next start |
 
-The public API model id is `atlas`. Expected single-stream speed is ~80+ tok/s on GB10 with
-Qwen3-Coder-Next in non-thinking mode.
+Quality-first fallback: `VLLM_MODEL=unsloth/Qwen3-Coder-Next-FP8-Dynamic` on the same engine.
+
+The public API model id is `atlas`. Expected single-stream speed is ~88-108 tok/s on GB10 with
+DFlash in non-thinking mode.
+
+### Atlas tuning (legacy, `ENGINE=atlas`)
+
+| Env var | Default | Purpose |
+| --- | --- | --- |
+| `ATLAS_MODEL` | `RedHatAI/Qwen3-Coder-Next-NVFP4` | HF model id (requires weight-compat shim) |
+| `ATLAS_MAX_SEQ_LEN` | `131072` | Context window (128K) |
+| `ATLAS_MAX_BATCH_SIZE` | `6` | Concurrent sequences |
+| `ATLAS_KV_CACHE_DTYPE` | `fp8` | KV cache dtype |
+| `ATLAS_NUM_DRAFTS` | `2` | MTP speculative depth; `ATLAS_NO_SPECULATIVE=1` to disable |
+| `ATLAS_GPU_MEM_UTIL` | `0.88` | Fraction of GPU memory Atlas may use |
+| `ATLAS_FORCE_RESTART` | _(unset)_ | Set to `1` to recreate the container on next start |
 
 ### Thinking mode
 
@@ -83,7 +97,7 @@ Hybrid reasoning models emit a long internal chain before the first answer token
 agentic coding (many sequential tool calls), that dominates wall-clock latency.
 
 - **Proxy default:** chat requests without explicit thinking intent get
-  `chat_template_kwargs.enable_thinking: false` injected before forwarding to Atlas.
+  `chat_template_kwargs.enable_thinking: false` injected before forwarding to the server.
 - **Client opt-in:** pass `reasoning_effort`, `enable_thinking: true`,
   `chat_template_kwargs.enable_thinking: true`, or `/think` in the last user message.
 - **Server cap:** `ATLAS_MAX_THINKING_BUDGET` bounds reasoning length when thinking is on.
@@ -93,7 +107,7 @@ agentic coding (many sequential tool calls), that dominates wall-clock latency.
 
 ## Proxy
 
-Transparent forwarder to Atlas with request logging. For `/v1/chat/completions` and
+Transparent forwarder to the LLM server with request logging. For `/v1/chat/completions` and
 `/v1/messages`, the proxy injects `enable_thinking: false` unless the client opts into
 reasoning (see **Thinking mode** above).
 

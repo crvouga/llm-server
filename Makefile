@@ -1,7 +1,8 @@
 SHELL := /usr/bin/env bash
 
 VENV ?= $(CURDIR)/.venv
-ATLAS_CONTAINER ?= atlas
+ENGINE_CONTAINER ?= vllm
+ATLAS_CONTAINER ?= $(ENGINE_CONTAINER)
 COMMIT_MSG ?=
 REMOTE_ACCESS_MD ?= remote-access/REMOTE-ACCESS.md
 REMOTE_USER ?=
@@ -21,11 +22,11 @@ CHAT_BIN := $(CURDIR)/.chat/bin/aichat
 	remote-setup-mac remote-verify pull push gh
 
 help:
-	@echo "Server (Atlas + Qwen3-Coder-Next):"
-	@echo "  make server-start  -> start Atlas + tunnel (python3 server/server.py)"
-	@echo "                         ATLAS_MAX_SEQ_LEN / ATLAS_MAX_BATCH_SIZE / ATLAS_KV_CACHE_DTYPE / ATLAS_NUM_DRAFTS to tune"
-	@echo "  make server-stop       -> stop tunnel + launcher + Atlas container"
-	@echo "  make server-metrics -> CPU/RAM/GPU/disk + Atlas health snapshot"
+	@echo "Server (vLLM + Qwen3-Coder-Next, ENGINE=atlas for legacy):"
+	@echo "  make server-start  -> start vLLM + tunnel (python3 server/server.py)"
+	@echo "                         VLLM_MAX_MODEL_LEN / VLLM_GPU_MEM_UTIL / VLLM_DFLASH_TOKENS to tune"
+	@echo "  make server-stop       -> stop tunnel + launcher + engine container"
+	@echo "  make server-metrics -> CPU/RAM/GPU/disk + server health snapshot"
 	@echo "                         METRICS_ARGS='--json' or '--watch 5' for options"
 	@echo "  make server-install -> create .venv + install ruff, pyright, pytest (dev deps)"
 	@echo "  make server-check  -> lint + typecheck server code (ruff + pyright)"
@@ -42,7 +43,7 @@ help:
 	@echo ""
 	@echo "Proxy (Cloudflare Worker):"
 	@echo "  make proxy-install -> bun install in proxy/"
-	@echo "  make proxy-dev     -> wrangler dev"
+	@echo "  make proxy-dev     -> wrangler dev (vault personal/dev)"
 	@echo "  make proxy-check   -> type-check proxy"
 	@echo "  make proxy-deploy  -> deploy worker (requires vault)"
 	@echo "  make proxy-db      -> run database migrations"
@@ -67,7 +68,7 @@ server-start run start:
 	@set -euo pipefail; \
 	command -v python3 >/dev/null || { echo "Missing: python3"; exit 1; }; \
 	command -v docker >/dev/null || { echo "Missing: docker"; exit 1; }; \
-	echo "Starting Atlas server..."; \
+	echo "Starting LLM server (ENGINE=$${ENGINE:-vllm})..."; \
 	PYTHONUNBUFFERED=1 python3 "$(CURDIR)/server/server.py"
 
 server-stop stop kill:
@@ -97,7 +98,7 @@ server-stop stop kill:
 			sleep 1; \
 		done; \
 	fi; \
-	echo "Stopping Atlas + tunnel..."; \
+	echo "Stopping engine + tunnel..."; \
 	python3 "$(CURDIR)/server/server.py" --stop
 
 server-metrics:
