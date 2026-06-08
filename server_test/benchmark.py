@@ -284,6 +284,15 @@ def _fmt_tps(value: float | None) -> str:
     return f"{value:.1f}"
 
 
+def _reliable_generation_tps(summary: BenchmarkSummary) -> float | None:
+    if summary.generation_tps is None or summary.ttft_s is None:
+        return None
+    decode_window = summary.latency_s - summary.ttft_s
+    if decode_window < 2.0:
+        return None
+    return summary.generation_tps
+
+
 def print_benchmark(summary: BenchmarkSummary) -> None:
     section("Throughput")
     if summary.error:
@@ -300,8 +309,9 @@ def print_benchmark(summary: BenchmarkSummary) -> None:
     print(f"{'Metric':<28} {'Value':>14}")
     print(f"{'-' * 28} {'-' * 14}")
     print(f"{'Overall tok/s':<28} {_fmt_tps(summary.overall_tps):>14}")
-    if summary.generation_tps is not None:
-        print(f"{'Generation tok/s':<28} {_fmt_tps(summary.generation_tps):>14}")
+    generation_tps = _reliable_generation_tps(summary)
+    if generation_tps is not None:
+        print(f"{'Generation tok/s':<28} {_fmt_tps(generation_tps):>14}")
     if summary.server_tps is not None:
         print(f"{'Server-reported tok/s':<28} {_fmt_tps(summary.server_tps):>14}")
     if summary.ttft_s is not None:
@@ -319,8 +329,8 @@ def print_benchmark(summary: BenchmarkSummary) -> None:
     print("Overall tok/s = completion_tokens / total wall time (best single-stream estimate).")
     if summary.server_tps is not None:
         print("Server-reported tok/s comes from the API usage block (Atlas/vLLM).")
-    if summary.stream and summary.stream_chunks <= 2:
-        print("Note: few stream chunks — backend may batch tokens; trust overall/server tok/s.")
+    if summary.stream and summary.ttft_s is not None and (summary.latency_s - summary.ttft_s) < 2.0:
+        print("Note: output batched after TTFT — overall/server tok/s are the reliable metrics.")
     if summary.runs > 1:
         print(f"Averaged over {summary.runs} runs.")
 
@@ -384,7 +394,7 @@ def benchmark_to_markdown_section(summary: BenchmarkSummary) -> list[str]:
             f"| **max_tokens** | {summary.max_tokens} |",
             f"| **Depth** | {summary.depth_tokens} |",
             f"| **Overall tok/s** | {summary.overall_tps:.1f} |",
-            f"| **Generation tok/s** | {_fmt_tps(summary.generation_tps)} |",
+            f"| **Generation tok/s** | {_fmt_tps(_reliable_generation_tps(summary))} |",
             f"| **Server-reported tok/s** | {_fmt_tps(summary.server_tps)} |",
             f"| **TTFT (client)** | {summary.ttft_s:.2f}s |" if summary.ttft_s is not None else "| **TTFT (client)** | — |",
             f"| **TTFT (server)** | {summary.server_ttft_ms:.0f}ms |" if summary.server_ttft_ms is not None else "| **TTFT (server)** | — |",

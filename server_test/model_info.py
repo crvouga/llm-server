@@ -39,10 +39,13 @@ def _api_origin(client: OpenAI) -> str:
 
 
 def _client_headers(client: OpenAI) -> dict[str, str]:
-    headers = dict(getattr(client, "default_headers", None) or {})
+    raw = dict(getattr(client, "default_headers", None) or {})
+    headers = {k: v for k, v in raw.items() if isinstance(v, (str, bytes))}
     api_key = getattr(client, "api_key", None)
-    if api_key:
+    if api_key and isinstance(api_key, str):
         headers["Authorization"] = f"Bearer {api_key}"
+    if "User-Agent" not in headers:
+        headers["User-Agent"] = "llm-server-check/1.0"
     return headers
 
 
