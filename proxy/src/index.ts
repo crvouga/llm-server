@@ -5,6 +5,7 @@ import { neon, NeonDbError } from '@neondatabase/serverless';
 import { Hono } from 'hono';
 
 import { fetchBackendUrl } from './proxy-state';
+import { parseSseStream } from './stream-logging';
 import { prepareProxyRequestBody } from './thinking-default';
 import { dashboardRoute } from './dashboard';
 
@@ -179,6 +180,38 @@ export function createApp(): Hono<AppEnv> {
 
     try {
       const response = await fetch(targetUrl, init);
+      const contentType = response.headers.get('content-type') || '';
+
+      if (contentType.includes('text/event-stream') && response.body) {
+        const [clientStream, logStream] = response.body.tee();
+
+        c.executionCtx.waitUntil(
+          (async () => {
+            const responseBody = await parseSseStream(logStream);
+            await logRequest(
+              env,
+              requestId,
+              request.method,
+              path,
+              requestUrl.searchParams,
+              request.headers,
+              requestPayload,
+              response.status,
+              response.headers,
+              responseBody,
+            );
+          })(),
+        );
+
+        console.log(`[${requestId}] ${response.status} ${path} (stream)`);
+
+        return new Response(clientStream, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        });
+      }
+
       const responseBody = await readJsonResponseBody(response);
 
       c.executionCtx.waitUntil(

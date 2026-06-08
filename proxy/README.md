@@ -223,7 +223,7 @@ Open `/dashboard` on the Worker (e.g. `https://llm-proxy.chrisvouga.dev/dashboar
 - **Cost estimation** — parameterized as USD per 1M tokens (defaults: $1 input, $2 output); override globally or per model
 - **Est. cloud cost** — `(prompt_tokens × input $/1M + completion_tokens × output $/1M) ÷ 1,000,000`, assuming local inference is free
 
-Only non-streaming JSON responses with a `usage` field are included (streamed completions are not logged with token counts).
+Only responses with a `usage` field are included in dashboard totals. For streaming chat completions (`text/event-stream`), the proxy tees the stream, parses SSE chunks after the response completes, and logs usage from the final chunk. The proxy also injects `stream_options.include_usage: true` on outbound streaming requests when the client omits it, so compatible backends emit token counts in the stream.
 
 Implementation lives in [`src/dashboard/`](src/dashboard/). Build the client bundle before deploy:
 

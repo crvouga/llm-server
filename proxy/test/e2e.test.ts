@@ -114,6 +114,77 @@ describe('proxy usage tracking e2e', () => {
     expect(requestBody.chat_template_kwargs?.enable_thinking).toBe(false);
   });
 
+  test('logs streaming chat completion usage and reports it in fetchUsageRows', async () => {
+    const streamModel = sentinelModel(runId, 'stream');
+    const streamMock = startMockBackend({
+      model: streamModel,
+      streamChatCompletions: true,
+      promptTokens: 55,
+      completionTokens: 23,
+    });
+
+    const prevBackend = await getBackendUrl();
+    await setBackendUrl(streamMock.url);
+
+    try {
+      const app = createApp();
+      const { ctx, drain } = createTestCtx();
+
+      const response = await proxyRequest({
+        app,
+        databaseUrl,
+        ctx,
+        drain,
+        model: streamModel,
+        body: {
+          model: streamModel,
+          stream: true,
+          messages: [{ role: 'user', content: 'hello' }],
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toContain('text/event-stream');
+
+      const sseText = await response.text();
+      expect(sseText).toContain('data:');
+      expect(sseText).toContain('[DONE]');
+
+      const logRow = await fetchLatestLogRowByModel(streamModel);
+      expect(logRow?.request_path).toBe('/v1/chat/completions');
+      expect(logRow?.response_status_code).toBe(200);
+
+      const requestBody = logRow?.request_body as {
+        stream?: boolean;
+        stream_options?: { include_usage?: boolean };
+      };
+      expect(requestBody.stream).toBe(true);
+      expect(requestBody.stream_options?.include_usage).toBe(true);
+
+      const responseBody = logRow?.response_body as {
+        usage?: { prompt_tokens?: number; completion_tokens?: number };
+      };
+      expect(responseBody.usage?.prompt_tokens).toBe(55);
+      expect(responseBody.usage?.completion_tokens).toBe(23);
+
+      const today = await todayIsoDate();
+      const usageRows = await fetchUsageRows(databaseUrl, today, today);
+      const modelRow = usageRows.find((row) => row.model === streamModel);
+
+      expect(modelRow).toEqual({
+        model: streamModel,
+        requestCount: 1,
+        promptTokens: 55,
+        completionTokens: 23,
+      });
+    } finally {
+      streamMock.stop();
+      if (prevBackend) {
+        await setBackendUrl(prevBackend);
+      }
+    }
+  });
+
   test('does not count non-chat paths in usage aggregation', async () => {
     const app = createApp();
     const { ctx, drain } = createTestCtx();

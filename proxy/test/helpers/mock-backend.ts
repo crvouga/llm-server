@@ -13,6 +13,7 @@ export interface MockBackendOptions {
   promptTokens?: number;
   completionTokens?: number;
   usageForRequest?: (request: Request) => { promptTokens: number; completionTokens: number };
+  streamChatCompletions?: boolean;
   routes?: MockRouteOverride[];
 }
 
@@ -55,9 +56,9 @@ async function defaultChatResponse(
   request: Request,
   options: MockBackendOptions,
 ): Promise<Response> {
-  let body: { model?: string } = {};
+  let body: { model?: string; stream?: boolean } = {};
   try {
-    body = (await request.json()) as { model?: string };
+    body = (await request.json()) as { model?: string; stream?: boolean };
   } catch {
     // GET and non-JSON bodies fall through
   }
@@ -67,6 +68,49 @@ async function defaultChatResponse(
     promptTokens: options.promptTokens ?? 0,
     completionTokens: options.completionTokens ?? 0,
   };
+
+  const shouldStream = options.streamChatCompletions || body.stream === true;
+  if (shouldStream) {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({
+              id: 'chatcmpl-test',
+              object: 'chat.completion.chunk',
+              created: Math.floor(Date.now() / 1000),
+              model,
+              choices: [{ index: 0, delta: { content: 'test response' }, finish_reason: null }],
+            })}\n\n`,
+          ),
+        );
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({
+              id: 'chatcmpl-test',
+              object: 'chat.completion.chunk',
+              created: Math.floor(Date.now() / 1000),
+              model,
+              choices: [],
+              usage: {
+                prompt_tokens: usage.promptTokens,
+                completion_tokens: usage.completionTokens,
+                total_tokens: usage.promptTokens + usage.completionTokens,
+              },
+            })}\n\n`,
+          ),
+        );
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      },
+    });
+
+    return new Response(stream, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    });
+  }
 
   return Response.json({
     id: 'chatcmpl-test',

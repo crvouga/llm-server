@@ -99,6 +99,22 @@ export function applyThinkingDefault(body: Record<string, unknown>): Record<stri
   return { ...body, chat_template_kwargs: templateKwargs };
 }
 
+export function applyStreamUsageDefault(body: Record<string, unknown>): Record<string, unknown> {
+  if (body.stream !== true) {
+    return body;
+  }
+
+  const existing = body.stream_options;
+  const streamOptions =
+    existing && typeof existing === 'object' ? { ...(existing as Record<string, unknown>) } : {};
+
+  if ('include_usage' in streamOptions) {
+    return body;
+  }
+
+  return { ...body, stream_options: { ...streamOptions, include_usage: true } };
+}
+
 export async function prepareProxyRequestBody(
   request: Request,
   path: string,
@@ -119,7 +135,8 @@ export async function prepareProxyRequestBody(
 
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const outbound = hasThinkingIntent(parsed) ? parsed : applyThinkingDefault(parsed);
+    const withThinking = hasThinkingIntent(parsed) ? parsed : applyThinkingDefault(parsed);
+    const outbound = applyStreamUsageDefault(withThinking);
     const serialized = JSON.stringify(outbound);
     return { body: serialized, parsed: outbound };
   } catch {
