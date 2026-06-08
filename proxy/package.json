@@ -9,7 +9,9 @@
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx}\"",
     "build:client": "vite build --config vite.client.config.ts",
-    "build": "bun run build:client"
+    "build": "bun run build:client",
+    "test": "bun test",
+    "test:vault": "vault run --project personal --config dev -- bun test"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
@@ -19,6 +21,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250603.1",
+    "bun-types": "^1.3.14",
     "prettier": "^3.8.3",
     "typescript": "^5.6.2",
     "vite": "^6.0.0"

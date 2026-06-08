@@ -1,0 +1,349 @@
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { createApp } from '../src/index';
+import { fetchUsageRows } from '../src/dashboard/db/queries';
+import { createTestCtx } from './helpers/ctx';
+import {
+  cleanupTestRows,
+  createRunId,
+  fetchLatestLogRowByModel,
+  fetchLatestLogRowByPath,
+  getBackendUrl,
+  requireDatabaseUrl,
+  sentinelModel,
+  setBackendUrl,
+  todayIsoDate,
+} from './helpers/db';
+import { startMockBackend } from './helpers/mock-backend';
+import { proxyRequest } from './helpers/proxy';
+
+const runId = createRunId();
+let databaseUrl = '';
+const model = sentinelModel(runId, 'e2e');
+const promptTokens = 42;
+const completionTokens = 17;
+
+describe('proxy usage tracking e2e', () => {
+  let originalBackendUrl: string | null;
+  let mock: ReturnType<typeof startMockBackend>;
+  const extraLogIds: string[] = [];
+
+  beforeAll(async () => {
+    databaseUrl = requireDatabaseUrl();
+    originalBackendUrl = await getBackendUrl();
+    mock = startMockBackend({ model, promptTokens, completionTokens });
+    await setBackendUrl(mock.url);
+  });
+
+  afterAll(async () => {
+    mock.stop();
+    if (originalBackendUrl) {
+      await setBackendUrl(originalBackendUrl);
+    }
+    await cleanupTestRows(runId, extraLogIds);
+  });
+
+  test('logs chat completion usage and reports it in fetchUsageRows', async () => {
+    const app = createApp();
+    const { ctx, drain } = createTestCtx();
+
+    const response = await proxyRequest({
+      app,
+      databaseUrl,
+      ctx,
+      drain,
+      model,
+    });
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      usage: { prompt_tokens: number; completion_tokens: number };
+    };
+    expect(payload.usage.prompt_tokens).toBe(promptTokens);
+    expect(payload.usage.completion_tokens).toBe(completionTokens);
+
+    const logRow = await fetchLatestLogRowByModel(model);
+    expect(logRow).not.toBeNull();
+    expect(logRow?.request_path).toBe('/v1/chat/completions');
+    expect(logRow?.response_status_code).toBe(200);
+
+    const requestBody = logRow?.request_body as { model?: string };
+    const responseBody = logRow?.response_body as {
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
+    };
+
+    expect(requestBody.model).toBe(model);
+    expect(responseBody.usage?.prompt_tokens).toBe(promptTokens);
+    expect(responseBody.usage?.completion_tokens).toBe(completionTokens);
+
+    const today = await todayIsoDate();
+    const usageRows = await fetchUsageRows(databaseUrl, today, today);
+    const modelRow = usageRows.find((row) => row.model === model);
+
+    expect(modelRow).toEqual({
+      model,
+      requestCount: 1,
+      promptTokens,
+      completionTokens,
+    });
+  });
+
+  test('injects thinking default while preserving client model in logged body', async () => {
+    const app = createApp();
+    const { ctx, drain } = createTestCtx();
+    const thinkingModel = sentinelModel(runId, 'thinking');
+
+    await proxyRequest({
+      app,
+      databaseUrl,
+      ctx,
+      drain,
+      model: thinkingModel,
+      body: {
+        model: thinkingModel,
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+    });
+
+    const logRow = await fetchLatestLogRowByModel(thinkingModel);
+    const requestBody = logRow?.request_body as {
+      model?: string;
+      chat_template_kwargs?: { enable_thinking?: boolean };
+    };
+
+    expect(requestBody.model).toBe(thinkingModel);
+    expect(requestBody.chat_template_kwargs?.enable_thinking).toBe(false);
+  });
+
+  test('does not count non-chat paths in usage aggregation', async () => {
+    const app = createApp();
+    const { ctx, drain } = createTestCtx();
+
+    const response = await app.fetch(
+      new Request('http://proxy.test/v1/models', { method: 'GET' }),
+      { DATABASE_URL: databaseUrl },
+      ctx,
+    );
+
+    expect(response.status).toBe(200);
+    await drain();
+
+    const modelsLogRow = await fetchLatestLogRowByPath('/v1/models');
+    if (modelsLogRow?.id) {
+      extraLogIds.push(String(modelsLogRow.id));
+    }
+
+    const today = await todayIsoDate();
+    const usageRows = await fetchUsageRows(databaseUrl, today, today);
+    const modelRow = usageRows.find((row) => row.model === model);
+    expect(modelRow?.requestCount ?? 0).toBe(1);
+  });
+});
+
+describe('proxy usage tracking e2e - multi request', () => {
+  let originalBackendUrl: string | null;
+  let mock: ReturnType<typeof startMockBackend>;
+  const multiModel = sentinelModel(runId, 'multi');
+  const perRequestPrompt = 11;
+  const perRequestCompletion = 7;
+
+  beforeAll(async () => {
+    databaseUrl = requireDatabaseUrl();
+    originalBackendUrl = await getBackendUrl();
+    mock = startMockBackend({
+      model: multiModel,
+      usageForRequest: () => ({
+        promptTokens: perRequestPrompt,
+        completionTokens: perRequestCompletion,
+      }),
+    });
+    await setBackendUrl(mock.url);
+  });
+
+  afterAll(async () => {
+    mock.stop();
+    if (originalBackendUrl) {
+      await setBackendUrl(originalBackendUrl);
+    }
+    await cleanupTestRows(runId);
+  });
+
+  test('accumulates three sequential completions', async () => {
+    const app = createApp();
+
+    for (let i = 0; i < 3; i += 1) {
+      const { ctx, drain } = createTestCtx();
+      await proxyRequest({ app, databaseUrl, ctx, drain, model: multiModel });
+    }
+
+    const today = await todayIsoDate();
+    const usageRows = await fetchUsageRows(databaseUrl, today, today);
+    const modelRow = usageRows.find((row) => row.model === multiModel);
+
+    expect(modelRow).toEqual({
+      model: multiModel,
+      requestCount: 3,
+      promptTokens: perRequestPrompt * 3,
+      completionTokens: perRequestCompletion * 3,
+    });
+  });
+});
+
+describe('proxy usage tracking e2e - response edge cases', () => {
+  let originalBackendUrl: string | null;
+  const extraLogIds: string[] = [];
+
+  beforeAll(async () => {
+    databaseUrl = requireDatabaseUrl();
+    originalBackendUrl = await getBackendUrl();
+  });
+
+  afterAll(async () => {
+    if (originalBackendUrl) {
+      await setBackendUrl(originalBackendUrl);
+    }
+    await cleanupTestRows(runId, extraLogIds);
+  });
+
+  test('logs but excludes 200 responses without usage', async () => {
+    const noUsageModel = sentinelModel(runId, 'no-usage');
+    const mock = startMockBackend({
+      model: noUsageModel,
+      routes: [
+        {
+          pathSuffix: '/chat/completions',
+          body: { id: 'x', choices: [], model: noUsageModel },
+        },
+      ],
+    });
+
+    await setBackendUrl(mock.url);
+    const app = createApp();
+    const { ctx, drain } = createTestCtx();
+    await proxyRequest({ app, databaseUrl, ctx, drain, model: noUsageModel });
+    mock.stop();
+
+    const logRow = await fetchLatestLogRowByModel(noUsageModel);
+    expect(logRow?.response_status_code).toBe(200);
+    expect((logRow?.response_body as { usage?: unknown })?.usage).toBeUndefined();
+
+    const today = await todayIsoDate();
+    const usageRows = await fetchUsageRows(databaseUrl, today, today);
+    expect(usageRows.find((row) => row.model === noUsageModel)).toBeUndefined();
+  });
+
+  test('logs but excludes 500 responses even when body contains usage', async () => {
+    const errorModel = sentinelModel(runId, 'server-error');
+    const mock = startMockBackend({
+      model: errorModel,
+      routes: [
+        {
+          pathSuffix: '/chat/completions',
+          status: 500,
+          body: {
+            error: 'server error',
+            usage: { prompt_tokens: 99, completion_tokens: 88 },
+          },
+        },
+      ],
+    });
+
+    await setBackendUrl(mock.url);
+    const app = createApp();
+    const { ctx, drain } = createTestCtx();
+    const response = await proxyRequest({ app, databaseUrl, ctx, drain, model: errorModel });
+    mock.stop();
+
+    expect(response.status).toBe(500);
+    const logRow = await fetchLatestLogRowByModel(errorModel);
+    expect(logRow?.response_status_code).toBe(500);
+
+    const today = await todayIsoDate();
+    const usageRows = await fetchUsageRows(databaseUrl, today, today);
+    expect(usageRows.find((row) => row.model === errorModel)).toBeUndefined();
+  });
+
+  test('logs null body for text/plain and excludes from aggregation', async () => {
+    const plainModel = sentinelModel(runId, 'plain');
+    const mock = startMockBackend({
+      model: plainModel,
+      routes: [
+        {
+          pathSuffix: '/chat/completions',
+          contentType: 'text/plain',
+          body: 'plain response',
+        },
+      ],
+    });
+
+    await setBackendUrl(mock.url);
+    const app = createApp();
+    const { ctx, drain } = createTestCtx();
+    await proxyRequest({ app, databaseUrl, ctx, drain, model: plainModel });
+    mock.stop();
+
+    const logRow = await fetchLatestLogRowByModel(plainModel);
+    expect(logRow?.response_body).toBeNull();
+
+    const today = await todayIsoDate();
+    const usageRows = await fetchUsageRows(databaseUrl, today, today);
+    expect(usageRows.find((row) => row.model === plainModel)).toBeUndefined();
+  });
+
+  test('logs /v1/messages with usage but excludes from aggregation', async () => {
+    const messagesModel = sentinelModel(runId, 'messages');
+    const mock = startMockBackend({
+      model: messagesModel,
+      promptTokens: 30,
+      completionTokens: 12,
+    });
+
+    await setBackendUrl(mock.url);
+    const app = createApp();
+    const { ctx, drain } = createTestCtx();
+    const response = await proxyRequest({
+      app,
+      databaseUrl,
+      ctx,
+      drain,
+      path: '/v1/messages',
+      model: messagesModel,
+    });
+    mock.stop();
+
+    expect(response.status).toBe(200);
+    const logRow = await fetchLatestLogRowByModel(messagesModel);
+    expect(logRow?.request_path).toBe('/v1/messages');
+    expect(
+      (logRow?.response_body as { usage?: { prompt_tokens?: number } })?.usage?.prompt_tokens,
+    ).toBe(30);
+
+    const today = await todayIsoDate();
+    const usageRows = await fetchUsageRows(databaseUrl, today, today);
+    expect(usageRows.find((row) => row.model === messagesModel)).toBeUndefined();
+  });
+
+  test('logs backend failure with error message and excludes from aggregation', async () => {
+    const failModel = sentinelModel(runId, 'backend-down');
+    await setBackendUrl('http://127.0.0.1:1');
+
+    const app = createApp();
+    const { ctx, drain } = createTestCtx();
+    const response = await proxyRequest({ app, databaseUrl, ctx, drain, model: failModel });
+
+    expect(response.status).toBe(503);
+
+    const logRow = await fetchLatestLogRowByPath('/v1/chat/completions');
+    expect(logRow).not.toBeNull();
+    if (logRow?.id) {
+      extraLogIds.push(String(logRow.id));
+    }
+
+    expect(logRow?.response_status_code).toBe(503);
+    expect(logRow?.response_error_message).toBeTruthy();
+    expect(logRow?.request_body).toBeNull();
+
+    const today = await todayIsoDate();
+    const usageRows = await fetchUsageRows(databaseUrl, today, today);
+    expect(usageRows.find((row) => row.model === failModel)).toBeUndefined();
+  });
+});

@@ -68,3 +68,9 @@ export async function fetchBackendUrl(databaseUrl: string): Promise<string | nul
   cacheExpiresAt = now + CACHE_TTL_MS;
   return backendUrl;
 }
+
+/** Clears the in-isolate backend URL cache (for tests). */
+export function resetBackendUrlCache(): void {
+  cachedBackendUrl = undefined;
+  cacheExpiresAt = 0;
+}

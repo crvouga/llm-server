@@ -31,6 +31,23 @@ jobs:
         working-directory: proxy
         run: bun run check
 
+      - name: Import secrets from Vault
+        uses: hashicorp/vault-action@v3
+        with:
+          url: https://secret-store.chrisvouga.dev
+          method: jwt
+          path: jwt
+          role: github-actions
+          jwtGithubAudience: https://secret-store.chrisvouga.dev
+          secrets: |
+            secret/data/personal/dev DATABASE_URL | DATABASE_URL
+
+      - name: Run proxy usage tracking tests
+        working-directory: proxy
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: bun test
+
   deploy-llm-proxy:
     name: Deploy LLM Proxy
     runs-on: ubuntu-latest

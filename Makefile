@@ -17,7 +17,7 @@ CHAT_BIN := $(CURDIR)/.chat/bin/aichat
 
 .PHONY: help server-start server-stop server-metrics server-install server-check api-check server-test run start stop kill logs status ssh \
 	lm-studio-tunnel lm-studio-stop \
-	proxy-install proxy-dev proxy-check proxy-deploy proxy-db bench \
+	proxy-install proxy-dev proxy-check proxy-test proxy-deploy proxy-db bench \
 	chat chat-install \
 	remote-setup-mac remote-verify pull push gh
 
@@ -45,6 +45,7 @@ help:
 	@echo "  make proxy-install -> bun install in proxy/"
 	@echo "  make proxy-dev     -> wrangler dev (vault personal/dev)"
 	@echo "  make proxy-check   -> type-check proxy"
+	@echo "  make proxy-test    -> usage tracking e2e + query tests (vault personal/dev)"
 	@echo "  make proxy-deploy  -> deploy worker (requires vault)"
 	@echo "  make proxy-db      -> run database migrations"
 	@echo ""
@@ -192,6 +193,9 @@ proxy-dev:
 
 proxy-check:
 	@cd "$(CURDIR)/proxy" && bun run check
+
+proxy-test:
+	@cd "$(CURDIR)/proxy" && vault run --project personal --config dev -- bun test
 
 proxy-deploy:
 	@cd "$(CURDIR)/proxy" && vault run --config prd -- wrangler deploy

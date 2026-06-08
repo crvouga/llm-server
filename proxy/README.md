@@ -198,6 +198,20 @@ bun run build:client
 bun run check
 ```
 
+## Testing
+
+Usage tracking tests hit the real dev database (`vault personal/dev` `DATABASE_URL`) and a local mock OpenAI-compatible backend. Test rows use sentinel model names (`__test__<runId>-*`) and are deleted after each suite.
+
+```bash
+# From repo root
+make proxy-test
+
+# Or from proxy/
+bun run test:vault
+```
+
+Pure summarization tests run without a database. Query and e2e suites seed rows in isolated date windows (or assert on sentinel models only) so real usage data does not affect assertions.
+
 ## Dashboard
 
 Open `/dashboard` on the Worker (e.g. `https://llm-proxy.chrisvouga.dev/dashboard`). The legacy `/usage-dashboard` path redirects here.
