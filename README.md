@@ -12,6 +12,20 @@ Local LLM inference server (Atlas + Qwen3-Coder-Next) with Cloudflare tunnel exp
 
 ## LLM server
 
+### Hardware
+
+Inference runs on an **ASUS Ascent GX10 AI Supercomputer** (NVIDIA DGX Spark class):
+
+| | |
+| --- | --- |
+| **System** | ASUS Ascent GX10 AI Supercomputer, stackable chassis |
+| **Platform** | DGX Spark · DGX OS |
+| **SoC** | NVIDIA GB10 Superchip (SM121) |
+| **Memory** | 128 GB LPDDR5x |
+| **Storage** | 1 TB PCIe Gen4 NVMe SSD |
+| **Network** | Wi-Fi 7, Bluetooth 5.4 |
+| **Agentic AI** | Agentic AI ready; supports OpenClaw, NemoClaw |
+
 Requires Docker, NVIDIA container toolkit, and Doppler (`doppler login` + `doppler setup`).
 
 The launcher serves an OpenAI-compatible API over the Cloudflare tunnel using the **Atlas**

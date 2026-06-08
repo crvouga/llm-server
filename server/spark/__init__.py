@@ -1,4 +1,4 @@
-"""spark — Atlas inference server for DGX Spark / GB10.
+"""spark — Atlas inference server for ASUS Ascent GX10 / DGX Spark / GB10.
 
 Boot order and wiring live in `app.py`. Everything else is a focused module:
 
