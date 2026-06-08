@@ -64,29 +64,37 @@ export const FilterForm: FC<{
 
       <fieldset>
         <legend>Default cloud rates (USD per 1M tokens)</legend>
-        <div class="form-row">
-          <label>
-            Input
-            <input
-              type="number"
-              name="input_cost"
-              value={filters.defaultRates.inputPerMillion}
-              min={0}
-              step={0.01}
-              required
-            />
-          </label>
-          <label>
-            Output
-            <input
-              type="number"
-              name="output_cost"
-              value={filters.defaultRates.outputPerMillion}
-              min={0}
-              step={0.01}
-              required
-            />
-          </label>
+        <div class="cost-input-grid">
+          <div class="input-field">
+            <span class="input-field-label">Input</span>
+            <div class="input-shell">
+              <span class="input-prefix">$</span>
+              <input
+                type="number"
+                class="number-input"
+                name="input_cost"
+                value={filters.defaultRates.inputPerMillion}
+                min={0}
+                step={0.01}
+                required
+              />
+            </div>
+          </div>
+          <div class="input-field">
+            <span class="input-field-label">Output</span>
+            <div class="input-shell">
+              <span class="input-prefix">$</span>
+              <input
+                type="number"
+                class="number-input"
+                name="output_cost"
+                value={filters.defaultRates.outputPerMillion}
+                min={0}
+                step={0.01}
+                required
+              />
+            </div>
+          </div>
         </div>
         <p class="muted">
           Built-in defaults: {formatUsd(DEFAULT_INPUT_COST_PER_MILLION)} / 1M input,{' '}

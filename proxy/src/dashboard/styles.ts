@@ -129,7 +129,7 @@ export const dashboardStyles = `
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
     gap: 1rem;
-    margin-bottom: 1.5rem;
+    margin-bottom: 0.75rem;
   }
 
   .stat-card {
@@ -138,6 +138,45 @@ export const dashboardStyles = `
     border-radius: 12px;
     box-shadow: var(--shadow);
     padding: 1.25rem;
+  }
+
+  .stat-card-hero {
+    grid-column: 1 / -1;
+    padding: 1.5rem 1.75rem;
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+    background: linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent-soft) 80%, var(--surface)) 0%,
+      var(--surface) 100%
+    );
+    box-shadow: var(--shadow-lg);
+  }
+
+  .stat-card-hero .stat-label {
+    font-size: 0.8rem;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+  }
+
+  .stat-card-hero .stat-value {
+    font-size: 2.75rem;
+    font-weight: 800;
+    color: var(--accent);
+    line-height: 1.1;
+    margin-top: 0.15rem;
+  }
+
+  .stat-card-hero .stat-detail {
+    margin-top: 0.5rem;
+    font-size: 0.875rem;
+  }
+
+  .summary-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
   }
 
   .stat-label {
@@ -179,7 +218,60 @@ export const dashboardStyles = `
     display: flex;
     flex-wrap: wrap;
     gap: 1rem 2rem;
+    align-items: flex-end;
+  }
+
+  .cost-input-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem 1.5rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .input-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .input-field-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+  }
+
+  .input-shell {
+    display: flex;
     align-items: center;
+    gap: 0.35rem;
+    padding: 0.15rem 0.15rem 0.15rem 0.85rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04) inset;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+  }
+
+  .input-shell:hover {
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+    background: color-mix(in srgb, var(--accent-soft) 25%, var(--bg));
+  }
+
+  .input-shell:focus-within {
+    border-color: var(--accent);
+    background: var(--surface);
+    box-shadow:
+      0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent),
+      0 1px 2px rgba(15, 23, 42, 0.04) inset;
+  }
+
+  .input-prefix {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--muted);
+    user-select: none;
   }
 
   .date-buckets {
@@ -222,19 +314,84 @@ export const dashboardStyles = `
     font-size: 0.9rem;
   }
 
-  input[type="date"],
-  input[type="number"] {
+  input[type="date"] {
     font: inherit;
-    padding: 0.4rem 0.6rem;
+    padding: 0.5rem 0.8rem;
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 999px;
     background: var(--bg);
     color: var(--text);
     min-width: 0;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04) inset;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
   }
 
-  input[type="number"] {
-    width: 7rem;
+  input[type="date"]:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+  }
+
+  input[type="number"],
+  .number-input {
+    font: inherit;
+    font-variant-numeric: tabular-nums;
+    padding: 0.5rem 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg);
+    color: var(--text);
+    min-width: 0;
+    width: 7.5rem;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04) inset;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+  }
+
+  input[type="number"]:hover,
+  .number-input:hover {
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+    background: color-mix(in srgb, var(--accent-soft) 25%, var(--bg));
+  }
+
+  input[type="number"]:focus,
+  .number-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    background: var(--surface);
+    box-shadow:
+      0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent),
+      0 1px 2px rgba(15, 23, 42, 0.04) inset;
+  }
+
+  .input-shell .number-input {
+    flex: 1;
+    width: auto;
+    min-width: 5rem;
+    border: none;
+    border-radius: 999px;
+    background: transparent;
+    box-shadow: none;
+    padding: 0.45rem 0.75rem 0.45rem 0;
+  }
+
+  .input-shell .number-input:hover,
+  .input-shell .number-input:focus {
+    border: none;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .input-shell:focus-within .number-input {
+    background: transparent;
+  }
+
+  table .input-shell {
+    width: fit-content;
+    min-width: 8.5rem;
+  }
+
+  table .input-shell .number-input {
+    min-width: 4.5rem;
   }
 
   .btn-primary {

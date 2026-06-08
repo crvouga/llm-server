@@ -10,6 +10,13 @@ export const SummaryCards: FC<{
 }> = ({ summary, filters }) => (
   <>
     <div class="summary-grid">
+      <div class="stat-card stat-card-hero">
+        <div class="stat-label">Est. cloud cost</div>
+        <div class="stat-value">{formatUsd(summary.totals.estCostUsd)}</div>
+        <div class="stat-detail">
+          What this proxy would have cost on cloud — local inference assumed free
+        </div>
+      </div>
       <div class="stat-card">
         <div class="stat-label">Total requests</div>
         <div class="stat-value">{formatInt(summary.totals.requestCount)}</div>
@@ -26,12 +33,9 @@ export const SummaryCards: FC<{
         <div class="stat-label">Models queried</div>
         <div class="stat-value">{formatInt(summary.totals.modelCount)}</div>
       </div>
-      <div class="stat-card">
-        <div class="stat-label">Est. cloud cost</div>
-        <div class="stat-value">{formatUsd(summary.totals.estCostUsd)}</div>
-        <div class="stat-detail">Local inference assumed free</div>
-      </div>
     </div>
-    <span class="range-badge">{formatDateRangeLabel(filters)}</span>
+    <div class="summary-meta">
+      <span class="range-badge">{formatDateRangeLabel(filters)}</span>
+    </div>
   </>
 );

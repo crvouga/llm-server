@@ -30,22 +30,30 @@ export const ModelCostTable: FC<{ models: string[]; filters: DashboardFilters }>
                   <code>{model}</code>
                 </td>
                 <td>
-                  <input
-                    type="number"
-                    name={`input_cost[${model}]`}
-                    value={rates.inputPerMillion}
-                    min={0}
-                    step={0.01}
-                  />
+                  <div class="input-shell">
+                    <span class="input-prefix">$</span>
+                    <input
+                      type="number"
+                      class="number-input"
+                      name={`input_cost[${model}]`}
+                      value={rates.inputPerMillion}
+                      min={0}
+                      step={0.01}
+                    />
+                  </div>
                 </td>
                 <td>
-                  <input
-                    type="number"
-                    name={`output_cost[${model}]`}
-                    value={rates.outputPerMillion}
-                    min={0}
-                    step={0.01}
-                  />
+                  <div class="input-shell">
+                    <span class="input-prefix">$</span>
+                    <input
+                      type="number"
+                      class="number-input"
+                      name={`output_cost[${model}]`}
+                      value={rates.outputPerMillion}
+                      min={0}
+                      step={0.01}
+                    />
+                  </div>
                 </td>
               </tr>
             );

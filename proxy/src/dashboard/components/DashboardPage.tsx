@@ -44,8 +44,6 @@ export const DashboardPage: FC<{
           {errorMessage ? <p class="error">{errorMessage}</p> : null}
           {flashMessage ? <p class="success">{flashMessage}</p> : null}
 
-          <FilterForm filters={filters} models={models} savedCostRates={savedCostRates} />
-
           {summary === null ? null : (
             <>
               <SummaryCards summary={summary} filters={filters} />
@@ -56,6 +54,8 @@ export const DashboardPage: FC<{
               )}
             </>
           )}
+
+          <FilterForm filters={filters} models={models} savedCostRates={savedCostRates} />
         </div>
 
         {scriptData ? (
