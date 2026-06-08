@@ -1,12 +1,10 @@
-"""Readiness probes + the boot wait loop, engine-aware."""
+"""Readiness probes + the boot wait loop."""
 
 import json
 import os
 import urllib.request
 
-from .config import _boot_time_hint
 from .console import die, info, ok, section
-from .constants import _SERVED_MODEL
 from .containers import (
     _container_logs_tail,
     _container_restart_count,
@@ -14,29 +12,6 @@ from .containers import (
     _latest_container_log_line,
 )
 from .runtime import _exit_on_shutdown, _sleep
-
-
-def _health_ok(cfg) -> bool:
-    url = f"http://localhost:{cfg.vllm_port}/health"
-    try:
-        with urllib.request.urlopen(url, timeout=3) as r:
-            return r.status == 200
-    except Exception:
-        return False
-
-
-def _vllm_ready(cfg) -> bool:
-    if not _health_ok(cfg):
-        return False
-    url = f"http://localhost:{cfg.vllm_port}/v1/models"
-    try:
-        with urllib.request.urlopen(url, timeout=5) as r:
-            data = json.loads(r.read())
-            return any(
-                m.get("id") == _SERVED_MODEL for m in data.get("data", [])
-            )
-    except Exception:
-        return False
 
 
 def _atlas_models_ok(url: str) -> bool:
@@ -51,33 +26,9 @@ def _atlas_models_ok(url: str) -> bool:
 
 
 def _atlas_ready(cfg) -> bool:
-    """Atlas serves the OpenAI API on its engine port; readiness = /v1/models."""
     return _atlas_models_ok(
-        f"http://localhost:{cfg.atlas_internal_port}/v1/models"
+        f"http://localhost:{cfg.atlas_port}/v1/models"
     )
-
-
-def _atlas_legacy_public_ready(cfg) -> bool:
-    """Pre-proxy Atlas bound directly on the public port (not behind local_proxy)."""
-    if cfg.atlas_internal_port == cfg.atlas_port or _atlas_ready(cfg):
-        return False
-    return _atlas_models_ok(f"http://localhost:{cfg.atlas_port}/v1/models")
-
-
-def _server_ready(cfg) -> bool:
-    return _atlas_ready(cfg) if cfg.engine == "atlas" else _vllm_ready(cfg)
-
-
-def _health_max_wait(cfg) -> int:
-    if cfg.engine == "atlas":
-        # The checkpoint is downloaded before boot (ensure_atlas_model), so Atlas
-        # itself cold-starts in <2 min — keep headroom for kernel init regardless.
-        return int(os.environ.get("ATLAS_READY_TIMEOUT", "900"))
-    return {0: 180, 1: 480, 2: 720}.get(cfg.optimization_level, 480)
-
-
-def _health_poll_interval(elapsed: int) -> int:
-    return 2 if elapsed < 60 else 5
 
 
 def _gpu_oom_hint(logs: str) -> str:
@@ -94,14 +45,10 @@ def _gpu_oom_hint(logs: str) -> str:
     return ""
 
 
-def wait_for_vllm(cfg):
-    label = "Atlas" if cfg.engine == "atlas" else "vLLM"
-    section(f"Waiting for {label} to be ready")
-    if cfg.engine == "atlas":
-        info("Polling /v1/models — Atlas boots in <2 min (longer on first model download)")
-    else:
-        info(f"Polling /health + /v1/models — {_boot_time_hint(cfg)}")
-    max_wait = _health_max_wait(cfg)
+def wait_for_engine(cfg):
+    section("Waiting for Atlas to be ready")
+    info("Polling /v1/models — Atlas boots in <2 min")
+    max_wait = int(os.environ.get("ATLAS_READY_TIMEOUT", "900"))
     elapsed = 0
 
     while elapsed < max_wait:
@@ -123,9 +70,8 @@ def wait_for_vllm(cfg):
                 f"Recent logs:\n{logs}"
             )
 
-        if _server_ready(cfg):
-            label = "Atlas" if cfg.engine == "atlas" else "vLLM"
-            ok(f"{label} ready after {elapsed}s")
+        if _atlas_ready(cfg):
+            ok(f"Atlas ready after {elapsed}s")
             return
 
         if elapsed > 0 and elapsed % 15 == 0:
@@ -135,13 +81,13 @@ def wait_for_vllm(cfg):
                 msg += f"\n    latest: {hint}"
             info(msg)
         _exit_on_shutdown(cfg)
-        interval = _health_poll_interval(elapsed)
+        interval = 2 if elapsed < 60 else 5
         if not _sleep(interval):
             _exit_on_shutdown(cfg)
         elapsed += interval
 
     die(
-        f"{label} not ready after {max_wait}s.\n"
+        f"Atlas not ready after {max_wait}s.\n"
         f"Container status: {_container_status(cfg)}\n"
         f"Recent logs:\n{_container_logs_tail(cfg)}"
     )

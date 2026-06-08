@@ -1,4 +1,4 @@
-"""Ensure host dependencies are present: Docker (+ NVIDIA runtime), cloudflared, git-lfs."""
+"""Ensure host dependencies are present: Docker (+ NVIDIA runtime), cloudflared."""
 
 import os
 import platform
@@ -185,15 +185,3 @@ def ensure_cloudflared():
     run(["sudo", "dpkg", "-i", tmp])
     os.unlink(tmp)
     ok("cloudflared installed")
-
-
-def ensure_git_lfs():
-    section("Checking git-lfs")
-    if shutil.which("git-lfs"):
-        r = subprocess.run(["git-lfs", "version"], capture_output=True, text=True)
-        ok(r.stdout.strip())
-        return
-    info("git-lfs not found — installing...")
-    run(["sudo", "apt-get", "install", "-y", "-q", "git-lfs"])
-    run(["git", "lfs", "install"])
-    ok("git-lfs installed")

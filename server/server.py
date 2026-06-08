@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
 """
-spark_serve — Atlas (default) / vLLM + Cloudflare Tunnel for DGX Spark / GB10
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Thin entrypoint. All logic lives in the `spark/` package (one small module per
-concern); start with `spark/app.py` to follow the boot order.
+spark_serve — Atlas + Cloudflare Tunnel for DGX Spark / GB10
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Thin entrypoint. All logic lives in the `spark/` package; start with
+`spark/app.py` to follow the boot order.
 
-Default engine:  Atlas (Qwen3.6-35B-A3B-FP8) — set ENGINE=vllm for the legacy path.
+Default model: Qwen3-Coder-Next NVFP4 via Atlas (OpenAI-compatible API).
 
 Idempotent. Manages its own process group. Ctrl+C or `make server-stop` stops
-the tunnel, launcher, and engine container.
+the tunnel, launcher, and Atlas container.
 
 Usage:
     python3 server/server.py                  # run the server
-    python3 server/server.py --stop           # stop tunnel + engine container
+    python3 server/server.py --stop           # stop tunnel + Atlas container
     python3 server/server.py --setup-tunnel   # configure DNS/ingress only
-    python3 server/server.py --clear-compile-cache
 
 Secrets via Doppler CLI (`doppler login` + `doppler setup`) or DOPPLER_TOKEN.
 Doppler secrets (project=personal, config=dev):
@@ -26,7 +25,6 @@ Doppler secrets (project=personal, config=dev):
 import sys
 from pathlib import Path
 
-# Allow `python3 server/server.py` from any cwd to import the spark package.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from spark.app import dispatch  # noqa: E402

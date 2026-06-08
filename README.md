@@ -1,12 +1,12 @@
 # llm-server
 
-Local LLM inference server (Atlas engine by default) with Cloudflare tunnel exposure, plus a Cloudflare Worker proxy that logs API usage.
+Local LLM inference server (Atlas + Qwen3-Coder-Next) with Cloudflare tunnel exposure, plus a Cloudflare Worker proxy that logs API usage.
 
 ## Layout
 
 | Path | Purpose |
 | --- | --- |
-| [`server/`](server/) | Atlas / vLLM launcher (`server/server.py`) |
+| [`server/`](server/) | Atlas launcher (`server/server.py`) |
 | [`proxy/`](proxy/) | Cloudflare Worker proxy + usage dashboard |
 | [`remote-access/`](remote-access/) | Mac ↔ Linux remote control setup (SSH, Tailscale, NoMachine) |
 
@@ -14,21 +14,17 @@ Local LLM inference server (Atlas engine by default) with Cloudflare tunnel expo
 
 Requires Docker, NVIDIA container toolkit, and Doppler (`doppler login` + `doppler setup`).
 
-The launcher serves an OpenAI-compatible API over the Cloudflare tunnel. It defaults to the
-**Atlas** engine (`avarok/atlas-gb10`, purpose-built for GB10/SM121) running
-`Qwen/Qwen3.6-35B-A3B-FP8` with native fp8 KV cache, MTP speculative decoding, and a 128K
-context window. The legacy **vLLM + DFlash** path is kept as a one-env-var fallback.
+The launcher serves an OpenAI-compatible API over the Cloudflare tunnel using the **Atlas**
+engine (`avarok/atlas-gb10`, purpose-built for GB10/SM121) running
+`Qwen/Qwen3-Coder-Next-NVFP4` with fp8 KV cache, MTP speculative decoding, and a 128K
+context window.
 
 ```bash
-make server-start        # start the engine + tunnel (Atlas by default)
-make server-stop         # stop engine container + tunnel
-make server-free-ram     # reclaim RAM/GPU (LM Studio, Docker, page cache)
-make server-metrics      # CPU/RAM/GPU/disk + LLM health snapshot
-make server-tune         # sweep Atlas KV dtype x num-drafts x context for best decode tok/s
+make server-start        # start Atlas + tunnel
+make server-stop         # stop Atlas container + tunnel
+make server-metrics      # CPU/RAM/GPU/disk + Atlas health snapshot
 make logs                # tail container logs
 make status              # check process + container
-
-ENGINE=vllm make server-start    # use the legacy vLLM + DFlash engine instead
 ```
 
 The launcher serves the OpenAI-compatible API publicly at `https://llm.chrisvouga.dev`.
@@ -40,19 +36,18 @@ make server-install   # one-time: install ruff + pyright + pytest (dev deps)
 make server-check     # lint + typecheck server/ and tests/
 ```
 
-### Engine selection & Atlas tuning
+### Atlas tuning
 
 | Env var | Default | Purpose |
 | --- | --- | --- |
-| `ENGINE` | `atlas` | `atlas` or `vllm` |
-| `ATLAS_MODEL` | `Qwen/Qwen3.6-35B-A3B-FP8` | HF model id (pre-downloaded to `~/.cache/huggingface` before launch) |
+| `ATLAS_MODEL` | `Qwen/Qwen3-Coder-Next-NVFP4` | HF model id (pre-downloaded to `~/.cache/huggingface` before launch) |
 | `ATLAS_MAX_SEQ_LEN` | `131072` | Context window (128K) |
 | `ATLAS_KV_CACHE_DTYPE` | `fp8` | `bf16` / `fp8` / `turbo8` / `nvfp4` / `turbo4` / `turbo3` |
 | `ATLAS_NUM_DRAFTS` | `2` | MTP speculative depth (K); `ATLAS_NO_SPECULATIVE=1` to disable |
-| `ATLAS_HIGH_SPEED_SWAP_DIR` | _(unset)_ | NVMe path for KV offload to push context toward 256K |
+| `ATLAS_FORCE_RESTART` | _(unset)_ | Set to `1` to recreate the container on next start |
 
-The public API model id is `atlas`. Expected single-stream speed is ~130-140 tok/s — the GB10
-memory-bandwidth ceiling for a smart 35B-A3B model.
+The public API model id is `atlas`. Expected single-stream speed is ~80+ tok/s on GB10 with
+Qwen3-Coder-Next.
 
 ## Proxy
 

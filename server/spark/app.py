@@ -1,9 +1,4 @@
-"""Top-level orchestration: boot the engine + tunnel, run the watchdog, handle
-the CLI subcommands (stop / setup-tunnel / clear-compile-cache).
-
-This is the only module that wires everything together. Read this first to
-understand the boot order; each step lives in its own focused module.
-"""
+"""Top-level orchestration: boot Atlas + tunnel, run the watchdog, handle CLI."""
 
 import os
 import platform
@@ -17,28 +12,14 @@ from .cloudflare import (
     resolve_cf_tunnel_token,
     start_cf_tunnel,
 )
-from .compile_cache import (
-    _clear_compile_cache,
-    _ensure_compile_cache,
-    _prepare_compile_cache_dir,
-    _resolve_optimization_profile,
-)
-from .config import Config, _apply_env_overrides, engine_label
-from .console import die, err, info, ok, section, warn
+from .config import Config, _apply_env_overrides
+from .console import die, err, info, ok, warn
 from .containers import _container_logs_tail
-from .docker_env import (
-    _resolve_docker_cmd,
-    ensure_cloudflared,
-    ensure_docker,
-    ensure_git_lfs,
-)
+from .docker_env import _resolve_docker_cmd, ensure_cloudflared, ensure_docker
 from .doppler import fetch_doppler_secrets
 from .engine_atlas import ensure_atlas_model, pull_atlas_image, start_atlas
-from .engine_vllm import pull_vllm_image, start_vllm, warmup_vllm
-from .health import _gpu_oom_hint, wait_for_vllm
+from .health import _gpu_oom_hint, wait_for_engine
 from .helpers import write_helpers
-from .local_proxy import start_local_proxy, stop_local_proxy
-from .models import _resolve_model_dir, ensure_models
 from .prechecks import run_prechecks
 from .runtime import (
     _exit_on_shutdown,
@@ -53,24 +34,8 @@ from .summary import print_summary
 from .webapi import CloudflareAPIError
 
 
-def _boot_engine(cfg, docker_cmd) -> str:
-    """Start the selected engine, wait for readiness, warm up (vLLM only)."""
-    if cfg.engine == "atlas":
-        boot_mode = start_atlas(cfg, docker_cmd)
-        if boot_mode != "ready":
-            wait_for_vllm(cfg)
-        start_local_proxy(cfg.service_port, cfg.atlas_internal_port)
-        return boot_mode
-    boot_mode = start_vllm(cfg, docker_cmd)
-    if boot_mode != "ready":
-        wait_for_vllm(cfg)
-        warmup_vllm(cfg)
-    return boot_mode
-
-
 def main():
     cfg = Config()
-    cfg.model_dir = _resolve_model_dir()
     _apply_env_overrides(cfg)
     cfg.doppler_token = os.environ.get("DOPPLER_TOKEN", "")
 
@@ -89,25 +54,17 @@ def main():
         docker_cmd = ensure_docker(cfg)
         _exit_on_shutdown(cfg)
         ensure_cloudflared()
-        if cfg.engine != "atlas":
-            ensure_git_lfs()
         run_prechecks(cfg, docker_cmd)
         _exit_on_shutdown(cfg)
 
-        if cfg.engine == "atlas":
-            pull_atlas_image(cfg, docker_cmd)
-            _exit_on_shutdown(cfg)
-            ensure_atlas_model(cfg, docker_cmd)
-            _exit_on_shutdown(cfg)
-            _boot_engine(cfg, docker_cmd)
-        else:
-            _ensure_compile_cache(cfg, docker_cmd)
-            _exit_on_shutdown(cfg)
-            _resolve_optimization_profile(cfg)
-            pull_vllm_image(cfg, docker_cmd)
-            _exit_on_shutdown(cfg)
-            ensure_models(cfg, docker_cmd)
-            _boot_engine(cfg, docker_cmd)
+        pull_atlas_image(cfg, docker_cmd)
+        _exit_on_shutdown(cfg)
+        ensure_atlas_model(cfg, docker_cmd)
+        _exit_on_shutdown(cfg)
+
+        boot_mode = start_atlas(cfg, docker_cmd)
+        if boot_mode != "ready":
+            wait_for_engine(cfg)
         _exit_on_shutdown(cfg)
 
         tunnel_token = resolve_cf_tunnel_token(cfg)
@@ -121,10 +78,9 @@ def main():
         print_summary(cfg, cf_url)
 
         info(
-            f"Running. Ctrl+C or `make server-stop` stops tunnel + {engine_label(cfg)} container."
+            "Running. Ctrl+C or `make server-stop` stops tunnel + Atlas container."
         )
         while not runtime.is_shutdown_requested():
-            # Watchdog: restart container if it exits unexpectedly
             r = subprocess.run(
                 [
                     *docker_cmd,
@@ -145,8 +101,9 @@ def main():
                         f"{oom_hint}\nRecent logs:\n{logs}"
                     )
                 warn("Container exited unexpectedly — restarting...")
-                stop_local_proxy()
-                _boot_engine(cfg, docker_cmd)
+                boot_mode = start_atlas(cfg, docker_cmd)
+                if boot_mode != "ready":
+                    wait_for_engine(cfg)
             if not runtime._sleep(30):
                 break
 
@@ -161,45 +118,32 @@ def main():
         raise SystemExit(1) from e
     except Exception as e:
         err(f"Unexpected error: {e}")
-        cleanup(cfg, stop_vllm=True)
+        cleanup(cfg, stop_engine=True)
         raise
     finally:
         if runtime.is_shutdown_requested() or runtime.is_runtime_active():
-            cleanup(cfg, stop_vllm=True)
+            cleanup(cfg, stop_engine=True)
 
 
 def stop():
-    """Stop tunnel, launcher, and the engine container."""
+    """Stop tunnel, launcher, and the Atlas container."""
     cfg = Config()
-    cfg.model_dir = _resolve_model_dir()
     _apply_env_overrides(cfg)
     if not load_runtime_state(cfg):
         cfg.docker_cmd = _resolve_docker_cmd() or ["docker"]
     register_container(cfg.container_name)
-    cleanup(cfg, stop_vllm=True)
+    cleanup(cfg, stop_engine=True)
 
 
 def setup_tunnel_only():
-    """Configure DNS + ingress for the engine without starting the server."""
+    """Configure DNS + ingress for Atlas without starting the server."""
     cfg = Config()
-    cfg.model_dir = _resolve_model_dir()
     _apply_env_overrides(cfg)
     fetch_doppler_secrets(cfg)
     ensure_cloudflared()
     precheck_cf_tunnel(cfg)
     resolve_cf_tunnel_token(cfg)
     ok(f"Public API will be at {_cf_public_url(cfg)}/v1 (start with: make run)")
-
-
-def clear_compile_cache_only():
-    """Remove vLLM torch/Triton compile artifacts (forces a cold recompile)."""
-    cfg = Config()
-    cfg.model_dir = _resolve_model_dir()
-    _apply_env_overrides(cfg)
-    cfg.docker_cmd = _resolve_docker_cmd() or ["docker"]
-    section("Clearing compile cache")
-    _prepare_compile_cache_dir(cfg, cfg.docker_cmd)
-    _clear_compile_cache(cfg)
 
 
 def dispatch(argv):
@@ -209,7 +153,5 @@ def dispatch(argv):
         setup_tunnel_only()
     elif arg in ("--stop", "stop"):
         stop()
-    elif arg in ("--clear-compile-cache", "clear-compile-cache"):
-        clear_compile_cache_only()
     else:
         main()
