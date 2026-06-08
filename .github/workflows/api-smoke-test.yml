@@ -1,0 +1,86 @@
+name: API Smoke Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: OpenAI-compatible API base URL
+        required: false
+        default: https://llm-proxy.chrisvouga.dev/v1
+      model:
+        description: Model id (leave empty to auto-resolve from /v1/models)
+        required: false
+        default: ""
+      skip_tools:
+        description: Skip tool-calling tests if the model lacks function support
+        type: boolean
+        default: false
+      timeout:
+        description: Per-request timeout in seconds
+        required: false
+        default: "120"
+
+jobs:
+  smoke-test:
+    name: Smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: server_test/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r server_test/requirements.txt
+
+      - name: Run smoke tests
+        id: run
+        env:
+          LLM_BASE_URL: ${{ inputs.base_url }}
+          LLM_MODEL: ${{ inputs.model }}
+          LLM_TIMEOUT: ${{ inputs.timeout }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set +e
+          export OPENAI_API_KEY="${OPENAI_API_KEY:-sk-local}"
+          args=(--json-out report.json --markdown-out report.md)
+          if [ "${{ inputs.skip_tools }}" = "true" ]; then
+            args+=(--skip-tools)
+          fi
+          python3 server_test/run_tests.py "${args[@]}"
+          exit_code=$?
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          exit "$exit_code"
+
+      - name: Publish workflow summary
+        if: always()
+        run: |
+          if [ -f report.md ]; then
+            cat report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "# OpenAI-compatible API smoke test"
+              echo ""
+              echo "No report was generated — the run may have crashed before tests finished."
+              echo ""
+              echo "Check the job logs for errors."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload reports
+        if: always() && steps.run.outcome != 'cancelled'
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-smoke-test-report
+          path: |
+            report.json
+            report.md
+          if-no-files-found: ignore
+          retention-days: 14

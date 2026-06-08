@@ -408,6 +408,57 @@ def summary_to_json(summary: RunSummary) -> dict[str, Any]:
     }
 
 
+_TEST_LABELS: dict[str, str] = {
+    "list_models": "List models",
+    "basic_completion": "Basic completion",
+    "system_prompt": "System prompt",
+    "multi_turn_context": "Multi-turn context",
+    "streaming": "Streaming",
+    "tool_calling": "Tool calling",
+    "tool_round_trip": "Tool round-trip",
+    "max_tokens_cap": "max_tokens cap",
+}
+
+
+def summary_to_markdown(summary: RunSummary) -> str:
+    ok_overall = summary.failed == 0
+    status_line = "✅ **All tests passed**" if ok_overall else "❌ **Some tests failed**"
+    lines = [
+        "# OpenAI-compatible API smoke test",
+        "",
+        status_line,
+        "",
+        "| | |",
+        "|---|---|",
+        f"| **Target** | `{summary.base_url}` |",
+        f"| **Model** | `{summary.model}` |",
+        f"| **Passed** | {summary.passed} |",
+        f"| **Failed** | {summary.failed} |",
+        f"| **Skipped** | {summary.skipped} |",
+        "",
+        "## Results",
+        "",
+        "| Test | Status | Duration | Details |",
+        "| --- | --- | ---: | --- |",
+    ]
+    for r in summary.results:
+        label = _TEST_LABELS.get(r.name, r.name)
+        if r.skipped:
+            status = "⏭️ skipped"
+            details = r.error or ""
+        elif r.passed:
+            status = "✅ pass"
+            details = ""
+        else:
+            status = "❌ fail"
+            details = (r.error or "unknown error").replace("|", "\\|").replace("\n", " ")
+        lines.append(
+            f"| {label} | {status} | {r.duration_s:.1f}s | {details} |"
+        )
+    lines.extend(["", "---", "", "*Harness compatibility: Cursor, Claude Code, and similar OpenAI clients.*"])
+    return "\n".join(lines) + "\n"
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Smoke-test an OpenAI-compatible API for harness compatibility.",
@@ -424,7 +475,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--api-key",
-        default=os.environ.get("OPENAI_API_KEY", DEFAULT_API_KEY),
+        default=os.environ.get("OPENAI_API_KEY") or DEFAULT_API_KEY,
         help="API key (default: sk-local, env OPENAI_API_KEY)",
     )
     parser.add_argument(
@@ -436,7 +487,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--json",
         action="store_true",
-        help="Output machine-readable JSON summary",
+        help="Print machine-readable JSON summary to stdout",
+    )
+    parser.add_argument(
+        "--json-out",
+        metavar="PATH",
+        help="Write JSON summary to a file",
+    )
+    parser.add_argument(
+        "--markdown-out",
+        metavar="PATH",
+        help="Write GitHub-friendly Markdown report to a file",
     )
     parser.add_argument(
         "--skip-tools",
@@ -468,10 +529,20 @@ def main(argv: list[str] | None = None) -> int:
         info(f"Target: {base_url}")
 
     summary = run_tests(ctx)
+    payload = summary_to_json(summary)
+
+    if args.json_out:
+        with open(args.json_out, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2)
+            fh.write("\n")
+
+    if args.markdown_out:
+        with open(args.markdown_out, "w", encoding="utf-8") as fh:
+            fh.write(summary_to_markdown(summary))
 
     if args.json:
-        print(json.dumps(summary_to_json(summary), indent=2))
-    else:
+        print(json.dumps(payload, indent=2))
+    elif not args.markdown_out and not args.json_out:
         print_summary(summary)
 
     return 0 if summary.failed == 0 else 1
