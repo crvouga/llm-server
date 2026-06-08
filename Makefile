@@ -21,7 +21,7 @@ help:
 	@echo "  make server-install -> pip install ruff, pyright, pytest (dev deps)"
 	@echo "  make server-check  -> lint + typecheck server code (ruff + pyright)"
 	@echo "  make server-test   -> smoke-test OpenAI-compatible API (Cursor/Claude Code compat)"
-	@echo "                         TEST_ARGS='--json' or LLM_BASE_URL=... for options"
+	@echo "                         LLM_BASE_URL=... TEST_ARGS='--skip-tools' for options"
 	@echo "  make logs          -> tail Atlas Docker container logs"
 	@echo "  make status        -> check server process + container"
 	@echo ""
@@ -115,6 +115,7 @@ server-check:
 server-test:
 	@set -euo pipefail; \
 	command -v python3 >/dev/null || { echo "Missing: python3"; exit 1; }; \
+	python3 -m pip install -q -r "$(CURDIR)/server_test/requirements.txt"; \
 	python3 "$(CURDIR)/server_test/run_tests.py" $(TEST_ARGS)
 
 logs:
