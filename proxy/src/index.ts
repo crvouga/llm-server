@@ -5,6 +5,7 @@ import { neon, NeonDbError } from '@neondatabase/serverless';
 import { Hono } from 'hono';
 
 import { fetchBackendUrl } from './proxy-state';
+import { prepareProxyRequestBody } from './thinking-default';
 import { usageDashboardRoute } from './usage-dashboard';
 
 export interface Env {
@@ -164,10 +165,17 @@ export function createApp(): Hono<AppEnv> {
     const backendPath = requestUrl.pathname + requestUrl.search;
     const targetUrl = `${backendUrl}${backendPath}`;
 
+    const { body: requestBody, parsed: requestPayload } =
+      await prepareProxyRequestBody(request, path);
+    const requestHeaders = buildBackendRequestHeaders(request, requestUrl);
+    if (typeof requestBody === 'string') {
+      requestHeaders.set('Content-Length', String(new TextEncoder().encode(requestBody).length));
+    }
+
     const init: RequestInit = {
       method: request.method,
-      headers: buildBackendRequestHeaders(request, requestUrl),
-      body: request.body,
+      headers: requestHeaders,
+      body: requestBody,
     };
 
     try {
@@ -182,7 +190,7 @@ export function createApp(): Hono<AppEnv> {
           path,
           requestUrl.searchParams,
           request.headers,
-          null,
+          requestPayload,
           response.status,
           response.headers,
           responseBody,

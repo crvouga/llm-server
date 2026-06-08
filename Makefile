@@ -11,7 +11,7 @@ CHAT_MODEL ?=
 AICHAT_VERSION ?= v0.30.0
 CHAT_BIN := $(CURDIR)/.chat/bin/aichat
 
-.PHONY: help server-start server-stop server-metrics server-install server-check server-test run start stop kill logs status ssh \
+.PHONY: help server-start server-stop server-metrics server-install server-check api-check server-test run start stop kill logs status ssh \
 	lm-studio-tunnel lm-studio-stop \
 	proxy-install proxy-dev proxy-check proxy-deploy proxy-db bench \
 	chat chat-install \
@@ -26,8 +26,10 @@ help:
 	@echo "                         METRICS_ARGS='--json' or '--watch 5' for options"
 	@echo "  make server-install -> create .venv + install ruff, pyright, pytest (dev deps)"
 	@echo "  make server-check  -> lint + typecheck server code (ruff + pyright)"
-	@echo "  make server-test   -> smoke-test OpenAI-compatible API (Cursor/Claude Code compat)"
-	@echo "                         LLM_BASE_URL=... TEST_ARGS='--skip-tools' for options"
+	@echo "  make api-check     -> smoke-test + benchmark OpenAI-compatible API"
+	@echo "                         LLM_BASE_URL=... CHECK_ARGS='--json' for options"
+	@echo "  make server-test   -> smoke tests only (alias for api-check --smoke-only)"
+	@echo "  make bench         -> throughput benchmark only (alias for api-check --bench-only)"
 	@echo "  make logs          -> tail Atlas Docker container logs"
 	@echo "  make status        -> check server process + container"
 	@echo ""
@@ -41,8 +43,6 @@ help:
 	@echo "  make proxy-check   -> type-check proxy"
 	@echo "  make proxy-deploy  -> deploy worker ( requires Doppler)"
 	@echo "  make proxy-db      -> run database migrations"
-	@echo "  make bench         -> benchmark llm-proxy (model + tokens/sec)"
-	@echo "                         BENCH_ARGS='--json' or BENCH_RUNS=3 for options"
 	@echo ""
 	@echo "Chat:"
 	@echo "  make chat          -> interactive REPL against CHAT_URL (auto-installs aichat)"
@@ -130,11 +130,19 @@ server-check:
 	"$(VENV)/bin/ruff" check server lm-studio server_test tests; \
 	"$(VENV)/bin/pyright"
 
-server-test:
+api-check:
 	@set -euo pipefail; \
 	command -v python3 >/dev/null || { echo "Missing: python3"; exit 1; }; \
 	python3 -m pip install -q -r "$(CURDIR)/server_test/requirements.txt"; \
-	python3 "$(CURDIR)/server_test/run_tests.py" $(TEST_ARGS)
+	python3 "$(CURDIR)/server_test/check_api.py" $(CHECK_ARGS)
+
+server-test:
+	@set -euo pipefail; \
+	$(MAKE) api-check CHECK_ARGS="--smoke-only $(TEST_ARGS)"
+
+bench:
+	@set -euo pipefail; \
+	$(MAKE) api-check CHECK_ARGS="--bench-only $(BENCH_ARGS)"
 
 logs:
 	@set -euo pipefail; \
@@ -182,10 +190,6 @@ proxy-deploy:
 
 proxy-db:
 	@cd "$(CURDIR)/proxy" && doppler run -- bash database/setup.sh
-
-bench:
-	@set -euo pipefail; \
-	"$(CURDIR)/proxy/bench.sh" $(BENCH_ARGS)
 
 chat-install:
 	@set -euo pipefail; \

@@ -12,12 +12,27 @@ Local LLM inference server (Atlas + Qwen3-Coder-Next) with Cloudflare tunnel exp
 
 ## LLM server
 
+### Hardware
+
+Inference runs on an **ASUS Ascent GX10 AI Supercomputer** (NVIDIA DGX Spark class):
+
+| | |
+| --- | --- |
+| **System** | ASUS Ascent GX10 AI Supercomputer, stackable chassis |
+| **Platform** | DGX Spark · DGX OS |
+| **SoC** | NVIDIA GB10 Superchip (SM121) |
+| **Memory** | 128 GB LPDDR5x |
+| **Storage** | 1 TB PCIe Gen4 NVMe SSD |
+| **Network** | Wi-Fi 7, Bluetooth 5.4 |
+| **Agentic AI** | Agentic AI ready; supports OpenClaw, NemoClaw |
+
 Requires Docker, NVIDIA container toolkit, and Doppler (`doppler login` + `doppler setup`).
 
 The launcher serves an OpenAI-compatible API over the Cloudflare tunnel using the **Atlas**
 engine (`avarok/atlas-gb10`, purpose-built for GB10/SM121) running
 `RedHatAI/Qwen3-Coder-Next-NVFP4` with fp8 KV cache, MTP speculative decoding, and a 128K
-context window.
+context window. Hybrid reasoning is **off by default** for agentic coding latency; clients
+can opt in per request.
 
 ```bash
 make server-start        # start Atlas + tunnel
@@ -34,7 +49,14 @@ The launcher serves the OpenAI-compatible API publicly at `https://llm.chrisvoug
 ```bash
 make server-install   # one-time: install ruff + pyright + pytest (dev deps)
 make server-check     # lint + typecheck server/ and tests/
+make api-check        # smoke tests + throughput benchmark (default proxy)
+make server-test      # smoke tests only
+make bench            # throughput benchmark only
 ```
+
+`make api-check` validates harness compatibility (models, streaming, tool calling) and
+reports decode tok/s and TTFT. Override the target with `LLM_BASE_URL=http://localhost:8888`
+or legacy `BENCH_URL`. Use `CHECK_ARGS='--json'` for machine-readable output.
 
 ### Atlas tuning
 
@@ -44,12 +66,31 @@ make server-check     # lint + typecheck server/ and tests/
 | `ATLAS_MAX_SEQ_LEN` | `131072` | Context window (128K) |
 | `ATLAS_KV_CACHE_DTYPE` | `fp8` | `bf16` / `fp8` / `turbo8` / `nvfp4` / `turbo4` / `turbo3` |
 | `ATLAS_NUM_DRAFTS` | `2` | MTP speculative depth (K); `ATLAS_NO_SPECULATIVE=1` to disable |
+| `ATLAS_MAX_THINKING_BUDGET` | `2048` | Cap reasoning tokens when thinking is enabled (`0` = unlimited) |
 | `ATLAS_FORCE_RESTART` | _(unset)_ | Set to `1` to recreate the container on next start |
 
 The public API model id is `atlas`. Expected single-stream speed is ~80+ tok/s on GB10 with
-Qwen3-Coder-Next.
+Qwen3-Coder-Next in non-thinking mode.
+
+### Thinking mode
+
+Hybrid reasoning models emit a long internal chain before the first answer token. For
+agentic coding (many sequential tool calls), that dominates wall-clock latency.
+
+- **Proxy default:** chat requests without explicit thinking intent get
+  `chat_template_kwargs.enable_thinking: false` injected before forwarding to Atlas.
+- **Client opt-in:** pass `reasoning_effort`, `enable_thinking: true`,
+  `chat_template_kwargs.enable_thinking: true`, or `/think` in the last user message.
+- **Server cap:** `ATLAS_MAX_THINKING_BUDGET` bounds reasoning length when thinking is on.
+
+`make api-check` benchmarks production (non-thinking) mode by default. Use
+`--thinking` or `LLM_BENCH_THINKING=1` to measure thinking latency on demand.
 
 ## Proxy
+
+Transparent forwarder to Atlas with request logging. For `/v1/chat/completions` and
+`/v1/messages`, the proxy injects `enable_thinking: false` unless the client opts into
+reasoning (see **Thinking mode** above).
 
 Requires [Bun](https://bun.sh) and Doppler secrets (`DATABASE_URL`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`).
 

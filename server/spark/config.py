@@ -35,6 +35,7 @@ class Config:
     atlas_speculative: bool = True
     atlas_num_drafts: int = 2
     atlas_gpu_mem_util: float = 0.90
+    atlas_max_thinking_budget: int = 2048
 
     # Runtime
     helper_dir: Path = field(default_factory=lambda: Path.home() / ".spark-serve")
@@ -75,5 +76,7 @@ def _apply_env_overrides(cfg: "Config") -> None:
         cfg.atlas_num_drafts = int(drafts)
     if gmu := (os.environ.get("ATLAS_GPU_MEM_UTIL") or os.environ.get("GPU_MEMORY_UTILIZATION")):
         cfg.atlas_gpu_mem_util = float(gmu)
+    if budget := os.environ.get("ATLAS_MAX_THINKING_BUDGET"):
+        cfg.atlas_max_thinking_budget = int(budget)
 
     cfg.container_name = cfg.atlas_container
