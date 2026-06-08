@@ -41,13 +41,17 @@ class Config:
     vllm_served_model_name: str = "atlas"
     vllm_max_model_len: int = 131072
     vllm_kv_cache_dtype: str = "fp8"
-    vllm_gpu_mem_util: float = 0.60
+    # GB10 has 128 GB unified memory; NVFP4 weights are ~43 GB, so leave a wide
+    # KV-cache budget for batching/concurrency. Lower via VLLM_GPU_MEM_UTIL if OOM.
+    vllm_gpu_mem_util: float = 0.85
     vllm_speculative: bool = True
     # auto: off on NVIDIA 26.01 (vLLM 0.13), mtp on 0.18+, dflash on 0.20+
     vllm_speculative_method: str = "auto"
     vllm_dflash_tokens: int = 15
     vllm_mtp_tokens: int = 2
-    vllm_enforce_eager: bool = True
+    # CUDA graphs give a large single-stream decode speedup; only force eager
+    # (VLLM_ENFORCE_EAGER=1) if graph capture OOMs or crashes on boot.
+    vllm_enforce_eager: bool = False
     vllm_attention_backend: str = "flashinfer"
     # auto = vLLM default loader; fastsafetensors needs vllm[fastsafetensors]
     # (not present in nvcr.io/nvidia/vllm:26.01).
@@ -151,8 +155,11 @@ def _apply_env_overrides(cfg: "Config") -> None:
         cfg.vllm_dflash_tokens = int(tokens)
     if tokens := os.environ.get("VLLM_MTP_TOKENS"):
         cfg.vllm_mtp_tokens = int(tokens)
-    if os.environ.get("VLLM_ENFORCE_EAGER", "").lower() in ("0", "false", "no"):
-        cfg.vllm_enforce_eager = False
+    if (eager := os.environ.get("VLLM_ENFORCE_EAGER", "").lower()):
+        if eager in ("1", "true", "yes"):
+            cfg.vllm_enforce_eager = True
+        elif eager in ("0", "false", "no"):
+            cfg.vllm_enforce_eager = False
     if backend := os.environ.get("VLLM_ATTENTION_BACKEND"):
         cfg.vllm_attention_backend = backend
     if load_fmt := os.environ.get("VLLM_LOAD_FORMAT"):
