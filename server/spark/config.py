@@ -43,13 +43,15 @@ class Config:
     vllm_kv_cache_dtype: str = "fp8"
     vllm_gpu_mem_util: float = 0.60
     vllm_speculative: bool = True
-    # auto: qwen3_next_mtp on NVIDIA 26.01 (vLLM 0.13), dflash on newer images
+    # auto: off on NVIDIA 26.01 (vLLM 0.13), mtp on 0.18+, dflash on 0.20+
     vllm_speculative_method: str = "auto"
     vllm_dflash_tokens: int = 15
     vllm_mtp_tokens: int = 2
     vllm_enforce_eager: bool = True
     vllm_attention_backend: str = "flashinfer"
-    vllm_load_format: str = "fastsafetensors"
+    # auto = vLLM default loader; fastsafetensors needs vllm[fastsafetensors]
+    # (not present in nvcr.io/nvidia/vllm:26.01).
+    vllm_load_format: str = "auto"
     vllm_extra_env: dict[str, str] = field(default_factory=dict)
 
     # Atlas (Qwen3-Coder-Next NVFP4 on GB10)
@@ -91,10 +93,13 @@ class Config:
         if method in ("none", "off", "0"):
             return None
         if method == "auto":
-            # NVIDIA 26.01-py3 ships vLLM 0.13 — DFlash landed in upstream 0.20+.
-            if "nvcr.io/nvidia/vllm:26.01" in self.vllm_image.lower():
-                return "qwen3_next_mtp"
-            return "dflash"
+            image = self.vllm_image.lower()
+            # NVIDIA 26.01-py3 ships vLLM 0.13 — no DFlash/MTP+NVFP4 support.
+            if "nvcr.io/nvidia/vllm:26.01" in image:
+                return None
+            if any(tag in image for tag in ("v0.20", ":26.02", ":26.03")):
+                return "dflash"
+            return "mtp"
         return method
 
 
