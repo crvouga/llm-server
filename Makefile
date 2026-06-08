@@ -277,7 +277,7 @@ pull:
 		exit 1; \
 	fi; \
 	stashed=false; \
-	if ! git diff --quiet || ! git diff --cached -- || [ -n "$$(git ls-files --others --exclude-standa")"; then \
+	if ! git diff --quiet || ! git diff --cached --quiet || [ -n "$$(git ls-files --others --exclude-standard)" ]; then \
 		echo "Stashing local changes before pull..."; \
 		git stash push -u -m "make pull ($$(date -u +%Y-%m-%dT%H:%M:%SZ))"; \
 		stashed=true; \
@@ -304,7 +304,7 @@ push:
 	fi; \
 	has_changes=false; \
 	if ! git diff --quiet || ! git diff --cached --quiet; then has_changes=true; fi; \
-	if [ -n "$$(git ls-files --others --exclude-standa")"; then has_changes=true; fi; \
+	if [ -n "$$(git ls-files --others --exclude-standard)" ]; then has_changes=true; fi; \
 	if [ "$$has_changes" = true ]; then \
 		if [ -z "$(COMMIT_MSG)" ]; then \
 			echo "Changes detected. Set COMMIT_MSG, e.g. COMMIT_MSG='fix tunnel' make push"; \
