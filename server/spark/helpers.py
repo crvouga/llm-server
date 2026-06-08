@@ -39,8 +39,17 @@ def write_helpers(cfg):
         f"curl -s http://localhost:{cfg.atlas_port}/v1/models "
         f"| python3 -c \"import sys,json; [print('  •', m['id']) for m in json.load(sys.stdin).get('data',[])]\" "
         f"2>/dev/null || echo '(not ready)'\n"
-        f'if [ -f "{d}/cloudflared.pid" ] && kill -0 "$(cat "{d}/cloudflared.pid")" 2>/dev/null; then\n'
-        f'  echo -e "${{G}}● tunnel running${{X}}"\n'
+        f'if [ -f "{d}/cloudflared.pid" ]; then\n'
+        f'  tunnel_pid="$(cat "{d}/cloudflared.pid" 2>/dev/null || true)"\n'
+        f'  tunnel_state=""\n'
+        f'  if [ -n "$tunnel_pid" ] && kill -0 "$tunnel_pid" 2>/dev/null; then\n'
+        f'    tunnel_state="$(awk \'{{print $3}}\' "/proc/$tunnel_pid/stat" 2>/dev/null || true)"\n'
+        f'  fi\n'
+        f'  if [ "$tunnel_state" != "" ] && [ "$tunnel_state" != "Z" ]; then\n'
+        f'    echo -e "${{G}}● tunnel running (pid $tunnel_pid)${{X}}"\n'
+        f'  else\n'
+        f'    echo -e "${{R}}✗ tunnel not running${{X}}"\n'
+        f'  fi\n'
         f"else\n"
         f'  echo -e "${{R}}✗ tunnel not running${{X}}"\n'
         f"fi\n"

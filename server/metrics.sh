@@ -212,9 +212,13 @@ collect_metrics() {
 
   tunnel_running="no"
   if [[ -f "${HELPER_DIR}/cloudflared.pid" ]]; then
-    local tunnel_pid
+    local tunnel_pid tunnel_state
     tunnel_pid="$(cat "${HELPER_DIR}/cloudflared.pid" 2>/dev/null || true)"
+    tunnel_state=""
     if [[ -n "${tunnel_pid}" ]] && kill -0 "${tunnel_pid}" 2>/dev/null; then
+      tunnel_state="$(awk '{print $3}' "/proc/${tunnel_pid}/stat" 2>/dev/null || true)"
+    fi
+    if [[ -n "${tunnel_state}" && "${tunnel_state}" != "Z" ]]; then
       tunnel_running="yes"
     fi
   fi

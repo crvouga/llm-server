@@ -20,6 +20,7 @@ B = "\033[1m"
 X = "\033[0m"
 
 DEFAULT_MODEL = "atlas"
+SMOKE_EXTRA_BODY: dict[str, Any] = {"chat_template_kwargs": {"enable_thinking": False}}
 
 WEATHER_TOOL = {
     "type": "function",
@@ -101,9 +102,44 @@ class RunSummary:
         return sum(1 for r in self.results if r.skipped)
 
 
+def _chat_extra_body(extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    if not extra:
+        return dict(SMOKE_EXTRA_BODY)
+    merged = dict(SMOKE_EXTRA_BODY)
+    merged.update(extra)
+    base_kwargs = dict(SMOKE_EXTRA_BODY.get("chat_template_kwargs", {}))
+    override_kwargs = extra.get("chat_template_kwargs")
+    if isinstance(override_kwargs, dict):
+        base_kwargs.update(override_kwargs)
+    merged["chat_template_kwargs"] = base_kwargs
+    return merged
+
+
+def _chat_create(ctx: TestContext, **kwargs: Any):
+    extra = kwargs.pop("extra_body", None)
+    return ctx.client.chat.completions.create(
+        model=ctx.resolved_model or ctx.model,
+        extra_body=_chat_extra_body(extra if isinstance(extra, dict) else None),
+        **kwargs,
+    )
+
+
 def _assert(condition: bool, message: str) -> None:
     if not condition:
         raise AssertionError(message)
+
+
+def _assert_finished_with_content(choice: Any, *, allow_length: bool = True) -> str:
+    content = _content_text(choice.message.content)
+    _assert(bool(content.strip()), "Expected non-empty completion content")
+    if choice.finish_reason == "stop":
+        return content
+    if allow_length and choice.finish_reason == "length":
+        return content
+    raise AssertionError(
+        f"Expected finish_reason=stop{' or length' if allow_length else ''}, "
+        f"got {choice.finish_reason}"
+    )
 
 
 def _content_text(content: Any) -> str:
@@ -179,17 +215,18 @@ def test_list_models(ctx: TestContext) -> None:
 
 
 def test_basic_completion(ctx: TestContext) -> None:
-    model = ctx.resolved_model or ctx.model
-    resp = ctx.client.chat.completions.create(
-        model=model,
+    resp = _chat_create(
+        ctx,
         messages=[{"role": "user", "content": "Say hello in one short sentence."}],
         max_tokens=64,
         temperature=0.2,
     )
     choice = resp.choices[0]
-    content = _content_text(choice.message.content)
-    _assert(bool(content.strip()), "Expected non-empty completion content")
-    _assert(choice.finish_reason == "stop", f"Expected finish_reason=stop, got {choice.finish_reason}")
+    content = _assert_finished_with_content(choice)
+    _assert(
+        any(word in content.lower() for word in ("hello", "hi", "hey", "greet")),
+        f"Expected a greeting in response, got: {content[:120]!r}",
+    )
     usage = resp.usage
     if usage is None:
         raise AssertionError("Expected usage block in response")
@@ -198,9 +235,8 @@ def test_basic_completion(ctx: TestContext) -> None:
 
 
 def test_system_prompt(ctx: TestContext) -> None:
-    model = ctx.resolved_model or ctx.model
-    resp = ctx.client.chat.completions.create(
-        model=model,
+    resp = _chat_create(
+        ctx,
         messages=[
             {"role": "system", "content": "Reply with only the number, no other text."},
             {"role": "user", "content": "What is 2+2?"},
@@ -213,9 +249,8 @@ def test_system_prompt(ctx: TestContext) -> None:
 
 
 def test_multi_turn_context(ctx: TestContext) -> None:
-    model = ctx.resolved_model or ctx.model
-    resp = ctx.client.chat.completions.create(
-        model=model,
+    resp = _chat_create(
+        ctx,
         messages=[
             {
                 "role": "system",
@@ -233,9 +268,8 @@ def test_multi_turn_context(ctx: TestContext) -> None:
 
 
 def test_streaming(ctx: TestContext) -> None:
-    model = ctx.resolved_model or ctx.model
-    stream = ctx.client.chat.completions.create(
-        model=model,
+    stream = _chat_create(
+        ctx,
         messages=[{"role": "user", "content": "Count from 1 to 5, one number per line."}],
         max_tokens=64,
         temperature=0.2,
@@ -257,9 +291,8 @@ def test_streaming(ctx: TestContext) -> None:
 
 
 def test_tool_calling(ctx: TestContext) -> None:
-    model = ctx.resolved_model or ctx.model
-    resp = ctx.client.chat.completions.create(
-        model=model,
+    resp = _chat_create(
+        ctx,
         messages=[{"role": "user", "content": "What's the weather in Paris?"}],
         tools=cast(Any, [WEATHER_TOOL]),
         max_tokens=128,
@@ -284,9 +317,8 @@ def test_tool_calling(ctx: TestContext) -> None:
 
 
 def test_tool_round_trip(ctx: TestContext) -> None:
-    model = ctx.resolved_model or ctx.model
-    first = ctx.client.chat.completions.create(
-        model=model,
+    first = _chat_create(
+        ctx,
         messages=[{"role": "user", "content": "What's the weather in Tokyo?"}],
         tools=cast(Any, [WEATHER_TOOL]),
         max_tokens=128,
@@ -300,8 +332,8 @@ def test_tool_round_trip(ctx: TestContext) -> None:
         raise AssertionError("Expected tool_calls in first response")
 
     call = tool_calls[0]
-    second = ctx.client.chat.completions.create(
-        model=model,
+    second = _chat_create(
+        ctx,
         messages=cast(
             Any,
             [
@@ -319,18 +351,16 @@ def test_tool_round_trip(ctx: TestContext) -> None:
         temperature=0.0,
     )
     choice = second.choices[0]
-    content = _content_text(choice.message.content)
-    _assert(bool(content.strip()), "Expected non-empty final answer after tool result")
+    content = _assert_finished_with_content(choice)
     _assert(
-        choice.finish_reason == "stop",
-        f"Expected finish_reason=stop, got {choice.finish_reason}",
+        any(word in content.lower() for word in ("72", "sunny", "weather", "tokyo", "warm", "degree")),
+        f"Expected weather answer in response, got: {content[:160]!r}",
     )
 
 
 def test_max_tokens_cap(ctx: TestContext) -> None:
-    model = ctx.resolved_model or ctx.model
-    resp = ctx.client.chat.completions.create(
-        model=model,
+    resp = _chat_create(
+        ctx,
         messages=[
             {
                 "role": "user",

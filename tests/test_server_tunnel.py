@@ -81,3 +81,10 @@ def test_tunnel_ingress_from_config_response_existing_ingress():
     ]
     resp = {"result": {"config": {"ingress": ingress}}}
     assert mod._tunnel_ingress_from_config_response(resp) == ingress
+
+
+def test_pid_alive_rejects_invalid_and_zero():
+    mod = _load_server()
+    assert mod._pid_alive(0) is False
+    assert mod._pid_alive(-1) is False
+    assert mod._pid_alive(999999999) is False

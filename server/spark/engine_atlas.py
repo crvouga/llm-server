@@ -154,8 +154,8 @@ def start_atlas(cfg, docker_cmd) -> str:
     )
     section(f"Starting Atlas  [{cfg.atlas_model}, {spec}]")
     info(
-        f"Context: {cfg.atlas_max_seq_len} tokens  |  KV: {cfg.atlas_kv_cache_dtype}  |  "
-        f"GPU budget: {cfg.atlas_gpu_mem_util:.0%}"
+        f"Context: {cfg.atlas_max_seq_len} tokens  |  batch: {cfg.atlas_max_batch_size}  |  "
+        f"KV: {cfg.atlas_kv_cache_dtype}  |  GPU budget: {cfg.atlas_gpu_mem_util:.0%}"
     )
     info("Atlas cold-starts in <2 min (no torch.compile)")
 

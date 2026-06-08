@@ -6,7 +6,10 @@ COMMIT_MSG ?=
 REMOTE_ACCESS_MD ?= remote-access/REMOTE-ACCESS.md
 REMOTE_USER ?=
 REMOTE_HOST ?=
-CHAT_URL ?= https://llm-proxy.chrisvouga.dev
+LLM_BASE_URL ?= https://llm-proxy.chrisvouga.dev
+CHAT_REMOTE_URL ?= $(LLM_BASE_URL)
+CHAT_URL ?=
+ATLAS_PORT ?= 8888
 CHAT_MODEL ?=
 AICHAT_VERSION ?= v0.30.0
 CHAT_BIN := $(CURDIR)/.chat/bin/aichat
@@ -26,7 +29,7 @@ help:
 	@echo "                         METRICS_ARGS='--json' or '--watch 5' for options"
 	@echo "  make server-install -> create .venv + install ruff, pyright, pytest (dev deps)"
 	@echo "  make server-check  -> lint + typecheck server code (ruff + pyright)"
-	@echo "  make api-check     -> smoke-test + benchmark OpenAI-compatible API"
+	@echo "  make api-check     -> e2e smoke-test + benchmark via llm-proxy"
 	@echo "                         LLM_BASE_URL=... CHECK_ARGS='--json' for options"
 	@echo "  make server-test   -> smoke tests only (alias for api-check --smoke-only)"
 	@echo "  make bench         -> throughput benchmark only (alias for api-check --bench-only)"
@@ -45,9 +48,9 @@ help:
 	@echo "  make proxy-db      -> run database migrations"
 	@echo ""
 	@echo "Chat:"
-	@echo "  make chat          -> interactive REPL against CHAT_URL (auto-installs aichat)"
+	@echo "  make chat          -> interactive REPL via llm-proxy (e2e)"
 	@echo "  make chat-install  -> download aichat binary to .chat/bin/ (Ubuntu/macOS)"
-	@echo "                         CHAT_URL=... CHAT_MODEL=... to override defaults"
+	@echo "                         CHAT_URL=http://127.0.0.1:8888 for local Atlas"
 	@echo ""
 	@echo "Remote access (Mac controls Linux):"
 	@echo "  make ssh              -> SSH into Linux target (from REMOTE-ACCESS.md)"
@@ -133,8 +136,12 @@ server-check:
 api-check:
 	@set -euo pipefail; \
 	command -v python3 >/dev/null || { echo "Missing: python3"; exit 1; }; \
-	python3 -m pip install -q -r "$(CURDIR)/server_test/requirements.txt"; \
-	python3 "$(CURDIR)/server_test/check_api.py" $(CHECK_ARGS)
+	if [ ! -d "$(VENV)" ]; then \
+		echo "Creating virtual environment at $(VENV)..."; \
+		python3 -m venv "$(VENV)"; \
+	fi; \
+	"$(VENV)/bin/pip" install -q -r "$(CURDIR)/server_test/requirements.txt"; \
+	LLM_BASE_URL="$(LLM_BASE_URL)" "$(VENV)/bin/python" "$(CURDIR)/server_test/check_api.py" $(CHECK_ARGS)
 
 server-test:
 	@set -euo pipefail; \
@@ -237,11 +244,21 @@ chat:
 		"$(MAKE)" chat-install; \
 		aichat_bin="$(CHAT_BIN)"; \
 	fi; \
-	chat_url="$(CHAT_URL)"; \
+	if [ -n "$(strip $(CHAT_URL))" ]; then \
+		chat_url="$(CHAT_URL)"; \
+	else \
+		chat_url="$(CHAT_REMOTE_URL)"; \
+	fi; \
 	chat_url="$${chat_url%/}"; \
 	model="$(CHAT_MODEL)"; \
 	if [ -z "$$model" ]; then \
-		model="$$(curl -fsSL "$$chat_url/v1/models" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'][0]['id'])")"; \
+		if ! models_json=$$(curl -fsSL "$$chat_url/v1/models" 2>&1); then \
+			echo "Cannot reach $$chat_url/v1/models"; \
+			echo "  E2E (default):  make chat"; \
+			echo "  Local Atlas:    CHAT_URL=http://127.0.0.1:$(ATLAS_PORT) make chat"; \
+			exit 1; \
+		fi; \
+		model=$$(printf '%s' "$$models_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'][0]['id'])"); \
 	fi; \
 	mkdir -p "$(CURDIR)/.chat"; \
 	CHAT_DIR="$(CURDIR)/.chat" CHAT_URL="$$chat_url" CHAT_MODEL="$$model" python3 -c 'import os, pathlib; model=os.environ["CHAT_MODEL"]; url=os.environ["CHAT_URL"].rstrip("/"); p=pathlib.Path(os.environ["CHAT_DIR"])/"config.yaml"; p.write_text("model: llm-proxy:%s\nclients:\n  - type: openai-compatible\n    name: llm-proxy\n    api_base: %s/v1\n    api_key: sk-no-auth\n    models:\n      - name: %s\n" % (model, url, model))'; \
