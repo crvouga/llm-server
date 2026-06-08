@@ -42,6 +42,17 @@ def _gpu_oom_hint(logs: str) -> str:
             "\nHint: another process (often LM Studio) is using GPU memory. "
             "Stop it and run `make server-stop && make server-start` again.\n"
         )
+    if "not found in store" in lower:
+        return (
+            "\nHint: Atlas failed while mapping NVFP4 weights. For "
+            "RedHatAI/Qwen3-Coder-Next-NVFP4 this usually means the attention "
+            "weight-compat sidecar was not built — rerun `make server-start` "
+            "(the launcher materializes missing BF16 Q/K/V tensors automatically). "
+            "If it persists after a fresh start, run "
+            "`make server-stop && ATLAS_FORCE_RESTART=1 make server-start`, "
+            "pull the latest image (`ATLAS_PULL=always make server-start`), "
+            "or lower `ATLAS_MAX_SEQ_LEN` / set `ATLAS_NO_SPECULATIVE=1`.\n"
+        )
     return ""
 
 
