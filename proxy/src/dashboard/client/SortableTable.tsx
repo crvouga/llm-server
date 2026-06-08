@@ -11,6 +11,7 @@ const COLUMNS = [
   { key: 'completionTokens', label: 'Completion', numeric: true },
   { key: 'totalTokens', label: 'Total', numeric: true },
   { key: 'avgTokensPerRequest', label: 'Avg / req', numeric: true },
+  { key: 'avgTokensPerSecond', label: 'Avg tok/s', numeric: true },
   { key: 'avgOverallTps', label: 'Overall tok/s', numeric: true },
   { key: 'avgGenerationTps', label: 'Gen tok/s', numeric: true },
   { key: 'percentOfTotal', label: '% of total', numeric: true },
@@ -20,6 +21,7 @@ const COLUMNS = [
 function cellValue(row: ModelUsageRow, key: SortKey): string | number {
   if (key === 'model') return row.model;
   if (key === 'avgTokensPerRequest') return Math.round(row.avgTokensPerRequest);
+  if (key === 'avgTokensPerSecond') return row.avgTokensPerSecond ?? -1;
   if (key === 'avgOverallTps') return row.avgOverallTps ?? -1;
   if (key === 'avgGenerationTps') return row.avgGenerationTps ?? -1;
   return row[key];
@@ -30,6 +32,7 @@ function formatCell(row: ModelUsageRow, key: SortKey): string {
   if (key === 'percentOfTotal') return formatPercent(row.percentOfTotal);
   if (key === 'estCostUsd') return formatUsd(row.estCostUsd);
   if (key === 'avgTokensPerRequest') return formatInt(Math.round(row.avgTokensPerRequest));
+  if (key === 'avgTokensPerSecond') return formatTps(row.avgTokensPerSecond);
   if (key === 'avgOverallTps') return formatTps(row.avgOverallTps);
   if (key === 'avgGenerationTps') return formatTps(row.avgGenerationTps);
   return formatInt(row[key]);
@@ -129,6 +132,9 @@ export function SortableTable({
               <strong>{formatInt(totals.totalTokens)}</strong>
             </td>
             <td class="num">—</td>
+            <td class="num">
+              <strong>{formatTps(totals.avgTokensPerSecond)}</strong>
+            </td>
             <td class="num">
               <strong>{formatTps(totals.avgOverallTps)}</strong>
             </td>

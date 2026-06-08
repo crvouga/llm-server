@@ -57,6 +57,7 @@ describe('summarizeUsage', () => {
       totalTokens: 0,
       estCostUsd: 0,
       modelCount: 0,
+      avgTokensPerSecond: null,
       avgOverallTps: null,
       avgGenerationTps: null,
     });
@@ -177,8 +178,10 @@ describe('summarizeUsage timing', () => {
 
     expect(alpha?.avgOverallTps).toBeCloseTo(40, 5);
     expect(alpha?.avgGenerationTps).toBeCloseTo(66.666, 2);
+    expect(alpha?.avgTokensPerSecond).toBeCloseTo(40, 5);
     expect(summary.totals.avgOverallTps).toBeCloseTo(40, 5);
     expect(summary.totals.avgGenerationTps).toBeCloseTo(66.666, 2);
+    expect(summary.totals.avgTokensPerSecond).toBeCloseTo(40, 5);
   });
 
   test('returns null TPS when no timed rows exist', () => {
@@ -190,8 +193,10 @@ describe('summarizeUsage timing', () => {
 
     expect(summary.rows[0]?.avgOverallTps).toBeNull();
     expect(summary.rows[0]?.avgGenerationTps).toBeNull();
+    expect(summary.rows[0]?.avgTokensPerSecond).toBeNull();
     expect(summary.totals.avgOverallTps).toBeNull();
     expect(summary.totals.avgGenerationTps).toBeNull();
+    expect(summary.totals.avgTokensPerSecond).toBeNull();
   });
 
   test('streaming model has both TPS metrics; blocking model has overall only', () => {
@@ -228,6 +233,26 @@ describe('summarizeUsage timing', () => {
     expect(block?.avgGenerationTps).toBeNull();
     expect(summary.totals.avgOverallTps).toBeCloseTo(50, 5);
     expect(summary.totals.avgGenerationTps).toBeCloseTo(75, 5);
+  });
+
+  test('avgTokensPerSecond uses prompt and completion tokens', () => {
+    const rawRows: RawModelUsageRow[] = [
+      {
+        model: 'alpha',
+        requestCount: 1,
+        promptTokens: 90,
+        completionTokens: 60,
+        timedCompletionTokens: 60,
+        totalDurationMs: 1500,
+        generationCompletionTokens: 60,
+        totalGenerationMs: 900,
+      },
+    ];
+
+    const summary = summarizeUsage(rawRows, makeFilters());
+
+    expect(summary.rows[0]?.avgTokensPerSecond).toBeCloseTo(100, 5);
+    expect(summary.rows[0]?.avgOverallTps).toBeCloseTo(40, 5);
   });
 
   test('partial timing uses timed completion tokens not full completion total', () => {

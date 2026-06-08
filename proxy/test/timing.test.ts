@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  computeAvgTokensPerSecond,
   computeGenerationTps,
   computeOverallTps,
   isValidTimingRow,
@@ -31,6 +32,29 @@ describe('computeOverallTps', () => {
   test('returns null for Infinity inputs', () => {
     expect(computeOverallTps(Number.POSITIVE_INFINITY, 1000)).toBeNull();
     expect(computeOverallTps(10, Number.POSITIVE_INFINITY)).toBeNull();
+  });
+});
+
+describe('computeAvgTokensPerSecond', () => {
+  test('returns total tokens per second', () => {
+    expect(computeAvgTokensPerSecond(150, 1500)).toBeCloseTo(100, 5);
+  });
+
+  test('returns null for zero duration', () => {
+    expect(computeAvgTokensPerSecond(10, 0)).toBeNull();
+  });
+
+  test('returns null for negative duration', () => {
+    expect(computeAvgTokensPerSecond(10, -1)).toBeNull();
+  });
+
+  test('returns zero when total tokens are zero', () => {
+    expect(computeAvgTokensPerSecond(0, 1000)).toBe(0);
+  });
+
+  test('returns null for NaN inputs', () => {
+    expect(computeAvgTokensPerSecond(Number.NaN, 1000)).toBeNull();
+    expect(computeAvgTokensPerSecond(10, Number.NaN)).toBeNull();
   });
 });
 

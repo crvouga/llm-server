@@ -15,6 +15,21 @@ export function computeOverallTps(
   return timedCompletionTokens / (totalDurationMs / 1000);
 }
 
+export function computeAvgTokensPerSecond(
+  totalTokens: number,
+  totalDurationMs: number,
+): number | null {
+  if (
+    !Number.isFinite(totalTokens) ||
+    !Number.isFinite(totalDurationMs) ||
+    totalTokens < 0 ||
+    totalDurationMs <= 0
+  ) {
+    return null;
+  }
+  return totalTokens / (totalDurationMs / 1000);
+}
+
 export function computeGenerationTps(
   timedCompletionTokens: number,
   totalGenerationMs: number,

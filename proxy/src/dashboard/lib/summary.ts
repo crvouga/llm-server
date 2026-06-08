@@ -8,7 +8,11 @@ import type {
   UsageSummary,
 } from '../types';
 import { rowCostUsd, rowRates } from './cost';
-import { computeGenerationTps, computeOverallTps } from './timing';
+import {
+  computeAvgTokensPerSecond,
+  computeGenerationTps,
+  computeOverallTps,
+} from './timing';
 
 export function summarizeUsage(
   rawRows: RawModelUsageRow[],
@@ -41,6 +45,7 @@ export function summarizeUsage(
       completionTokens: row.completionTokens,
       totalTokens,
       avgTokensPerRequest: row.requestCount > 0 ? totalTokens / row.requestCount : 0,
+      avgTokensPerSecond: computeAvgTokensPerSecond(totalTokens, row.totalDurationMs),
       avgOverallTps: computeOverallTps(row.timedCompletionTokens, row.totalDurationMs),
       avgGenerationTps: computeGenerationTps(row.generationCompletionTokens, row.totalGenerationMs),
       percentOfTotal: 0,
@@ -62,6 +67,7 @@ export function summarizeUsage(
       totalTokens: grandTotal,
       estCostUsd,
       modelCount: rows.length,
+      avgTokensPerSecond: computeAvgTokensPerSecond(grandTotal, totalDurationMs),
       avgOverallTps: computeOverallTps(timedCompletionTokens, totalDurationMs),
       avgGenerationTps: computeGenerationTps(generationCompletionTokens, totalGenerationMs),
     },

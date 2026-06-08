@@ -16,6 +16,7 @@ export interface ModelUsageRow {
   completionTokens: number;
   totalTokens: number;
   avgTokensPerRequest: number;
+  avgTokensPerSecond: number | null;
   avgOverallTps: number | null;
   avgGenerationTps: number | null;
   percentOfTotal: number;
@@ -38,6 +39,7 @@ export const SORT_KEYS = [
   'completionTokens',
   'totalTokens',
   'avgTokensPerRequest',
+  'avgTokensPerSecond',
   'avgOverallTps',
   'avgGenerationTps',
   'percentOfTotal',
@@ -71,6 +73,7 @@ export interface UsageSummary {
     totalTokens: number;
     estCostUsd: number;
     modelCount: number;
+    avgTokensPerSecond: number | null;
     avgOverallTps: number | null;
     avgGenerationTps: number | null;
   };
