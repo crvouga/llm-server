@@ -1,13 +1,9 @@
-"""Generic Docker container helpers, shared by both engines.
-
-All functions target `cfg.container_name` via `cfg.docker_cmd`, so they work for
-whichever engine is running (the Atlas/vLLM unification happens in config).
-"""
+"""Generic Docker container helpers for the Atlas engine."""
 
 import subprocess
 
+from .config import _CONFIG_HASH_LABEL
 from .console import info
-from .constants import _CONFIG_HASH_LABEL
 from .shell import run
 
 

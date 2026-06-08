@@ -1,9 +1,4 @@
-"""Process registry, signal handling, graceful shutdown + cleanup.
-
-Owns all shared mutable runtime state. Other modules must touch shutdown/active
-state through the accessor functions here (never by importing the booleans), so
-reassignment stays visible across modules.
-"""
+"""Process registry, signal handling, graceful shutdown + cleanup."""
 
 import json
 import os
@@ -12,10 +7,9 @@ import subprocess
 import sys
 import time
 
-from .config import _should_remove_container, engine_label
+from .config import _should_remove_container
 from .console import B, X, Y, info, ok, warn
 from .containers import _container_status, _named_container_status
-from .local_proxy import stop_local_proxy
 
 _RUNTIME_STATE = "runtime.json"
 
@@ -48,7 +42,6 @@ def write_runtime_state(cfg) -> None:
             {
                 "container_name": cfg.container_name,
                 "docker_cmd": cfg.docker_cmd,
-                "engine": cfg.engine,
             }
         )
     )
@@ -66,8 +59,6 @@ def load_runtime_state(cfg) -> bool:
         cfg.container_name = name
     if isinstance(cmd := data.get("docker_cmd"), list) and cmd:
         cfg.docker_cmd = cmd
-    if engine := data.get("engine"):
-        cfg.engine = engine
     return True
 
 
@@ -81,9 +72,8 @@ def _containers_to_stop(cfg) -> list[str]:
         from .config import Config
 
         defaults = Config()
-        for name in (defaults.atlas_container, defaults.container_name):
-            if name not in names:
-                names.append(name)
+        if defaults.atlas_container not in names:
+            names.append(defaults.atlas_container)
     return names
 
 
@@ -138,7 +128,6 @@ def _handle_sigterm(signum, frame):
 
 
 def _sleep(seconds: float) -> bool:
-    """Sleep in short chunks so Ctrl+C is felt within ~200ms. Returns False if interrupted."""
     end = time.monotonic() + seconds
     while time.monotonic() < end:
         if _shutdown_requested:
@@ -149,7 +138,7 @@ def _sleep(seconds: float) -> bool:
 
 def _exit_on_shutdown(cfg) -> None:
     if _shutdown_requested:
-        cleanup(cfg, stop_vllm=True)
+        cleanup(cfg, stop_engine=True)
         sys.exit(130)
 
 
@@ -183,32 +172,30 @@ def _kill_pid(pid: int, label: str, timeout: float = 5) -> None:
 
 
 def _stop_spark_tunnel(cfg):
-    """Stop the spark tunnel (uses ~/.spark-serve; never touches lm-studio)."""
     from .cloudflare import stop_tunnel_connector
 
     stop_tunnel_connector(cfg, managed_procs=_managed)
 
 
-def cleanup(cfg, *, stop_vllm: bool = False):
+def cleanup(cfg, *, stop_engine: bool = False):
     global _cleanup_done, _runtime_active
     if _cleanup_done:
         return
     _cleanup_done = True
     print(f"\n{B}━━━  Shutting down  ━━━{X}", flush=True)
-    stop_local_proxy()
     _stop_spark_tunnel(cfg)
     for proc in _managed:
         if proc.poll() is None:
             _kill_pid(proc.pid, f"process {proc.pid}")
-    if stop_vllm:
+    if stop_engine:
         _stop_engine_containers(cfg)
         clear_runtime_state(cfg)
     elif _managed_containers or _container_status(cfg) == "running":
         names = _managed_containers or [cfg.container_name]
-        ok(f"Leaving {engine_label(cfg)} container running: {', '.join(names)}")
+        ok(f"Leaving Atlas container running: {', '.join(names)}")
     (cfg.helper_dir / "server.pid").unlink(missing_ok=True)
     _runtime_active = False
-    if stop_vllm:
-        ok(f"Clean shutdown complete ({engine_label(cfg)} + tunnel stopped).")
+    if stop_engine:
+        ok("Clean shutdown complete (Atlas + tunnel stopped).")
     else:
-        ok(f"Clean shutdown complete (tunnel stopped; {engine_label(cfg)} container left running).")
+        ok("Clean shutdown complete (tunnel stopped; Atlas container left running).")

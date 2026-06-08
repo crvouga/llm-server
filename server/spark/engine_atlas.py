@@ -1,4 +1,4 @@
-"""Atlas engine (default): image pull + container launch on port 8888."""
+"""Atlas engine: image pull + container launch."""
 
 import hashlib
 import json
@@ -6,9 +6,8 @@ import os
 import subprocess
 from pathlib import Path
 
-from .config import _should_remove_container
+from .config import _CONFIG_HASH_LABEL, _should_remove_container
 from .console import info, ok, section, warn
-from .constants import _CONFIG_HASH_LABEL
 from .containers import (
     _container_config_hash,
     _container_restart_count,
@@ -17,7 +16,7 @@ from .containers import (
     remove_container,
 )
 from .gpu import _gpu_run_flags
-from .health import _atlas_legacy_public_ready, _atlas_ready
+from .health import _atlas_ready
 from .runtime import register_container
 from .shell import run
 
@@ -33,9 +32,7 @@ def _atlas_model_cached(cfg) -> bool:
 
 
 def ensure_atlas_model(cfg, docker_cmd):
-    """Atlas needs the checkpoint pre-downloaded into the mounted HF hub cache
-    (it does NOT download on its own — it crash-loops with "Download it first").
-    """
+    """Atlas needs the checkpoint pre-downloaded into the mounted HF hub cache."""
     section("Checking Atlas model")
     hf_cache = Path.home() / ".cache" / "huggingface"
     hf_cache.mkdir(parents=True, exist_ok=True)
@@ -43,10 +40,7 @@ def ensure_atlas_model(cfg, docker_cmd):
         ok(f"Model cached: {cfg.atlas_model}")
         return
 
-    info(f"Downloading {cfg.atlas_model} into HF cache  (~35 GB FP8 — grab a coffee)")
-    # snapshot_download() with no local_dir lands in /root/.cache/huggingface/hub
-    # in the standard hub layout Atlas expects (== `huggingface-cli download <repo>`).
-    # Mirrors the vLLM downloader (huggingface_hub + Xet) — proven on this box.
+    info(f"Downloading {cfg.atlas_model} into HF cache  (~20 GB NVFP4 — grab a coffee)")
     py_cmd = (
         "from huggingface_hub import snapshot_download; "
         "snapshot_download('" + cfg.atlas_model + "')"
@@ -106,7 +100,7 @@ def _atlas_serve_args(cfg) -> list:
         "serve",
         cfg.atlas_model,
         "--port",
-        str(cfg.atlas_internal_port),
+        str(cfg.atlas_port),
         "--max-seq-len",
         str(cfg.atlas_max_seq_len),
         "--kv-cache-dtype",
@@ -114,30 +108,15 @@ def _atlas_serve_args(cfg) -> list:
         "--gpu-memory-utilization",
         str(cfg.atlas_gpu_mem_util),
         "--scheduling-policy",
-        str(cfg.atlas_scheduling_policy),
+        "slai",
         "--tool-call-parser",
-        str(cfg.atlas_tool_call_parser),
+        "qwen3_coder",
+        "--enable-prefix-caching",
     ]
     if cfg.atlas_kv_cache_dtype != "bf16":
-        args.extend(["--kv-high-precision-layers", str(cfg.atlas_kv_high_precision_layers)])
-    if cfg.atlas_enable_prefix_caching:
-        args.append("--enable-prefix-caching")
+        args.extend(["--kv-high-precision-layers", "auto"])
     if cfg.atlas_speculative:
         args.extend(["--speculative", "--num-drafts", str(cfg.atlas_num_drafts)])
-    if cfg.atlas_max_num_seqs > 0:
-        args.extend(["--max-num-seqs", str(cfg.atlas_max_num_seqs)])
-    if cfg.atlas_oom_guard_mb > 0:
-        args.extend(["--oom-guard-mb", str(cfg.atlas_oom_guard_mb)])
-    if cfg.atlas_high_speed_swap and cfg.atlas_high_speed_swap_dir:
-        args.extend(
-            [
-                "--high-speed-swap",
-                "--high-speed-swap-dir",
-                cfg.atlas_high_speed_swap_dir,
-                "--high-speed-swap-cache-blocks-per-seq",
-                str(cfg.atlas_hss_cache_blocks_per_seq),
-            ]
-        )
     return args
 
 
@@ -146,7 +125,7 @@ def _atlas_launch_fingerprint(cfg) -> str:
         {
             "image": cfg.atlas_image,
             "model": cfg.atlas_model,
-            "port": cfg.atlas_internal_port,
+            "port": cfg.atlas_port,
             "serve": _atlas_serve_args(cfg),
         },
         sort_keys=True,
@@ -155,7 +134,7 @@ def _atlas_launch_fingerprint(cfg) -> str:
 
 
 def start_atlas(cfg, docker_cmd) -> str:
-    """Start or reuse the Atlas container (return values mirror start_vllm)."""
+    """Start or reuse the Atlas container."""
     spec = (
         f"MTP K={cfg.atlas_num_drafts}" if cfg.atlas_speculative else "no speculative"
     )
@@ -164,7 +143,7 @@ def start_atlas(cfg, docker_cmd) -> str:
         f"Context: {cfg.atlas_max_seq_len} tokens  |  KV: {cfg.atlas_kv_cache_dtype}  |  "
         f"GPU budget: {cfg.atlas_gpu_mem_util:.0%}"
     )
-    info("Atlas cold-starts in <2 min (no torch.compile); first run downloads the model")
+    info("Atlas cold-starts in <2 min (no torch.compile)")
 
     force_restart = _should_remove_container(cfg)
     status = _container_status(cfg)
@@ -175,12 +154,6 @@ def start_atlas(cfg, docker_cmd) -> str:
             register_container(cfg.container_name)
             ok(f"Container '{cfg.container_name}' already healthy — skipping restart")
             return "ready"
-        if _atlas_legacy_public_ready(cfg):
-            warn(
-                f"Container '{cfg.container_name}' is on the public port "
-                f"({cfg.atlas_port}) — recreating behind the local proxy"
-            )
-            remove_container(cfg, docker_cmd)
         if _container_config_hash(cfg) != fingerprint:
             warn("Running container has stale config — recreating")
             remove_container(cfg, docker_cmd)
@@ -211,11 +184,6 @@ def start_atlas(cfg, docker_cmd) -> str:
     hf_cache = Path.home() / ".cache" / "huggingface"
     hf_cache.mkdir(parents=True, exist_ok=True)
 
-    extra_flags: list = []
-    if cfg.atlas_high_speed_swap and cfg.atlas_high_speed_swap_dir:
-        # io_uring NVMe offload needs an unconfined seccomp profile.
-        extra_flags = ["--security-opt", "seccomp=unconfined"]
-
     run(
         [
             *docker_cmd,
@@ -234,7 +202,6 @@ def start_atlas(cfg, docker_cmd) -> str:
             "memlock=-1:-1",
             "--restart",
             "unless-stopped",
-            *extra_flags,
             "-v",
             f"{hf_cache}:/root/.cache/huggingface",
             "-e",

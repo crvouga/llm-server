@@ -60,7 +60,7 @@ def precheck_cf_tunnel(cfg):
         )
     except CloudflareAPIError as e:
         die(
-            "Cloudflare tunnel precheck failed — refusing to start vLLM.\n\n"
+            "Cloudflare tunnel precheck failed — refusing to start Atlas.\n\n"
             f"  API error: HTTP {e.code}: {e.message}\n\n"
             "  Your CLOUDFLARE_API_TOKEN is valid but lacks tunnel permissions.\n"
             f"  Fix: {_cf_api_token_help(cfg)}"

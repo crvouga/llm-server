@@ -11,14 +11,14 @@ py-modules = []
 
 [tool.ruff]
 target-version = "py311"
-src = ["server", "lm-studio", "tests"]
+src = ["server", "lm-studio", "server_test", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 ignore = ["E501"]
 
 [tool.pyright]
-include = ["server", "lm-studio", "tests"]
+include = ["server", "lm-studio", "server_test", "tests"]
 extraPaths = ["server", "lm-studio"]
 pythonVersion = "3.11"
 typeCheckingMode = "basic"

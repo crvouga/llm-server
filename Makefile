@@ -1,31 +1,28 @@
 SHELL := /usr/bin/env bash
 
-VLLM_CONTAINER ?= atlas
+ATLAS_CONTAINER ?= atlas
 COMMIT_MSG ?=
 REMOTE_ACCESS_MD ?= remote-access/REMOTE-ACCESS.md
 REMOTE_USER ?=
 REMOTE_HOST ?=
 
-.PHONY: help server-start server-stop server-free server-metrics server-clear-compile-cache server-tune server-install server-check run start stop kill logs status ssh \
+.PHONY: help server-start server-stop server-metrics server-install server-check server-test run start stop kill logs status ssh \
 	lm-studio-tunnel lm-studio-stop \
 	proxy-install proxy-dev proxy-check proxy-deploy proxy-db bench \
 	remote-setup-mac remote-verify pull push gh
 
 help:
-	@echo "Server (Atlas engine by default; ENGINE=vllm for the legacy vLLM+DFlash path):"
-	@echo "  make server-start  -> start LLM server (python3 server/server.py)"
-	@echo "                         ENGINE=vllm to use the vLLM+DFlash fallback"
-	@echo "                         ATLAS_MAX_SEQ_LEN / ATLAS_KV_CACHE_DTYPE / ATLAS_NUM_DRAFTS to tune Atlas"
-	@echo "  make server-stop       -> stop tunnel + launcher + engine container"
-	@echo "  make server-free -> reclaim RAM/GPU before starting (./server/free.sh)"
-	@echo "  make server-metrics -> CPU/RAM/GPU/disk + LLM health snapshot"
+	@echo "Server (Atlas + Qwen3-Coder-Next):"
+	@echo "  make server-start  -> start Atlas + tunnel (python3 server/server.py)"
+	@echo "                         ATLAS_MAX_SEQ_LEN / ATLAS_KV_CACHE_DTYPE / ATLAS_NUM_DRAFTS to tune"
+	@echo "  make server-stop       -> stop tunnel + launcher + Atlas container"
+	@echo "  make server-metrics -> CPU/RAM/GPU/disk + Atlas health snapshot"
 	@echo "                         METRICS_ARGS='--json' or '--watch 5' for options"
-	@echo "  make server-tune -> sweep Atlas KV dtype x num-drafts x context, report decode tok/s"
-	@echo "                         TUNE_ARGS='--quick' for a faster sweep"
-	@echo "  make server-clear-compile-cache -> wipe torch/Triton cache (vLLM only)"
 	@echo "  make server-install -> pip install ruff, pyright, pytest (dev deps)"
 	@echo "  make server-check  -> lint + typecheck server code (ruff + pyright)"
-	@echo "  make logs          -> tail engine Docker container logs"
+	@echo "  make server-test   -> smoke-test OpenAI-compatible API (Cursor/Claude Code compat)"
+	@echo "                         TEST_ARGS='--json' or LLM_BASE_URL=... for options"
+	@echo "  make logs          -> tail Atlas Docker container logs"
 	@echo "  make status        -> check server process + container"
 	@echo ""
 	@echo "LM Studio tunnel:"
@@ -56,7 +53,7 @@ server-start run start:
 	@set -euo pipefail; \
 	command -v python3 >/dev/null || { echo "Missing: python3"; exit 1; }; \
 	command -v docker >/dev/null || { echo "Missing: docker"; exit 1; }; \
-	echo "Starting vLLM + DFlash server..."; \
+	echo "Starting Atlas server..."; \
 	PYTHONUNBUFFERED=1 python3 "$(CURDIR)/server/server.py"
 
 server-stop stop kill:
@@ -86,24 +83,12 @@ server-stop stop kill:
 			sleep 1; \
 		done; \
 	fi; \
-	echo "Stopping engine + tunnel..."; \
+	echo "Stopping Atlas + tunnel..."; \
 	python3 "$(CURDIR)/server/server.py" --stop
-
-server-free:
-	@set -euo pipefail; \
-	"$(CURDIR)/server/free.sh" $(FREE_RAM_ARGS)
 
 server-metrics:
 	@set -euo pipefail; \
 	"$(CURDIR)/server/metrics.sh" $(METRICS_ARGS)
-
-server-tune:
-	@set -euo pipefail; \
-	"$(CURDIR)/server/tune.sh" $(TUNE_ARGS)
-
-server-clear-compile-cache:
-	@set -euo pipefail; \
-	python3 "$(CURDIR)/server/server.py" --clear-compile-cache
 
 lm-studio-tunnel:
 	@set -euo pipefail; \
@@ -124,8 +109,13 @@ server-check:
 	@set -euo pipefail; \
 	command -v ruff >/dev/null || { echo "Missing ruff — run: make server-install"; exit 1; }; \
 	command -v pyright >/dev/null || { echo "Missing pyright — run: make server-install"; exit 1; }; \
-	ruff check server lm-studio tests; \
+	ruff check server lm-studio server_test tests; \
 	pyright
+
+server-test:
+	@set -euo pipefail; \
+	command -v python3 >/dev/null || { echo "Missing: python3"; exit 1; }; \
+	python3 "$(CURDIR)/server_test/run_tests.py" $(TEST_ARGS)
 
 logs:
 	@set -euo pipefail; \
@@ -133,11 +123,11 @@ logs:
 	if [ -f "$(HOME)/.spark-serve/runtime.json" ]; then \
 		docker_cmd="$$(python3 -c "import json; print(' '.join(json.load(open('$(HOME)/.spark-serve/runtime.json'))['docker_cmd']))")"; \
 	elif ! docker info >/dev/null 2>&1; then docker_cmd="sudo docker"; fi; \
-	if ! $$docker_cmd ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$(VLLM_CONTAINER)"; then \
-		echo "Container $(VLLM_CONTAINER) not found. Run: make server-start"; \
+	if ! $$docker_cmd ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$(ATLAS_CONTAINER)"; then \
+		echo "Container $(ATLAS_CONTAINER) not found. Run: make server-start"; \
 		exit 1; \
 	fi; \
-	$$docker_cmd logs -f "$(VLLM_CONTAINER)"
+	$$docker_cmd logs -f "$(ATLAS_CONTAINER)"
 
 status:
 	@set -euo pipefail; \
@@ -151,12 +141,12 @@ status:
 	if [ -f "$(HOME)/.spark-serve/runtime.json" ]; then \
 		docker_cmd="$$(python3 -c "import json; print(' '.join(json.load(open('$(HOME)/.spark-serve/runtime.json'))['docker_cmd']))")"; \
 	elif ! docker info >/dev/null 2>&1; then docker_cmd="sudo docker"; fi; \
-	if $$docker_cmd ps --format '{{.Names}}' 2>/dev/null | grep -qx "$(VLLM_CONTAINER)"; then \
-		echo "Container $(VLLM_CONTAINER): running"; \
-	elif $$docker_cmd ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$(VLLM_CONTAINER)"; then \
-		echo "Container $(VLLM_CONTAINER): stopped"; \
+	if $$docker_cmd ps --format '{{.Names}}' 2>/dev/null | grep -qx "$(ATLAS_CONTAINER)"; then \
+		echo "Container $(ATLAS_CONTAINER): running"; \
+	elif $$docker_cmd ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$(ATLAS_CONTAINER)"; then \
+		echo "Container $(ATLAS_CONTAINER): stopped"; \
 	else \
-		echo "Container $(VLLM_CONTAINER): not found"; \
+		echo "Container $(ATLAS_CONTAINER): not found"; \
 	fi
 
 proxy-install:
