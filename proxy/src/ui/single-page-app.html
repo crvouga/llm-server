@@ -1045,21 +1045,45 @@
         const messagesRef = useRef(null);
         const textareaRef = useRef(null);
         const abortControllerRef = useRef(null);
-        const [messages, setMessages] = useState([]);
+        const STORAGE_KEY_MESSAGES = 'llm-chat-messages';
+        const STORAGE_KEY_MODEL = 'llm-chat-model';
+
+        const [messages, setMessages] = useState(() => {
+          try {
+            const saved = localStorage.getItem(STORAGE_KEY_MESSAGES);
+            return saved ? JSON.parse(saved) : [];
+          } catch {
+            return [];
+          }
+        });
         const [input, setInput] = useState('');
-        const [model, setModel] = useState('');
+        const [model, setModel] = useState(() => {
+          try {
+            return localStorage.getItem(STORAGE_KEY_MODEL) || '';
+          } catch {
+            return '';
+          }
+        });
         const [models, setModels] = useState([]);
         const [loading, setLoading] = useState(false);
         const [loadingModels, setLoadingModels] = useState(true);
         const [error, setError] = useState(null);
 
         useEffect(() => {
+          localStorage.setItem(STORAGE_KEY_MESSAGES, JSON.stringify(messages));
+        }, [messages]);
+
+        useEffect(() => {
+          if (model) localStorage.setItem(STORAGE_KEY_MODEL, model);
+        }, [model]);
+
+        useEffect(() => {
           let cancelled = false;
           fetchAvailableModels().then((availableModels) => {
             if (cancelled) return;
             setModels(availableModels);
-            if (availableModels.length > 0) {
-              setModel((current) => current || availableModels[0]);
+            if (availableModels.length > 0 && !model) {
+              setModel(availableModels[0]);
             }
             setLoadingModels(false);
           }).catch(() => {
@@ -1127,6 +1151,7 @@
             abortControllerRef.current = null;
           }
           setMessages([]);
+          localStorage.removeItem(STORAGE_KEY_MESSAGES);
           setError(null);
           setInput('');
         }
