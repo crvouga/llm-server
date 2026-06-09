@@ -52,23 +52,40 @@
       .markdown-body ol {
         padding-left: 1.4rem;
       }
-      .markdown-body code {
+      .markdown-body pre {
+        overflow-x: auto;
+        padding: 0;
+        border-radius: 8px;
+        border: 1px solid rgba(128, 128, 128, 0.25);
+        margin: 0 0 0.85rem;
+        background: #0d1117;
+      }
+      .markdown-body pre code,
+      .markdown-body pre code.hljs {
+        display: block;
+        padding: 0.85rem 1rem;
+        overflow-x: auto;
+        background: transparent;
+        font-size: 0.85em;
+        line-height: 1.55;
+        border-radius: 8px;
+      }
+      .markdown-body :not(pre) > code {
         font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
         font-size: 0.85em;
         background: rgba(128, 128, 128, 0.15);
         padding: 0.15rem 0.35rem;
         border-radius: 4px;
       }
-      .markdown-body pre {
-        overflow-x: auto;
-        padding: 0.85rem 1rem;
-        border-radius: 8px;
-        background: rgba(128, 128, 128, 0.1);
-        border: 1px solid rgba(128, 128, 128, 0.2);
+      .markdown-body pre code .hljs-comment,
+      .markdown-body pre code .hljs-quote {
+        font-style: italic;
       }
-      .markdown-body pre code {
-        background: none;
-        padding: 0;
+      @media (prefers-color-scheme: light) {
+        .markdown-body pre {
+          background: #f6f8fa;
+          border-color: rgba(128, 128, 128, 0.35);
+        }
       }
       .markdown-body blockquote {
         border-left: 3px solid rgba(128, 128, 128, 0.35);
@@ -109,25 +126,169 @@
         height: 2.25rem;
         border-width: 3px;
       }
+      html,
+      body,
+      #root {
+        width: 100%;
+        max-width: 100%;
+      }
+      .dashboard-shell {
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        box-sizing: border-box;
+      }
       .chart-wrap {
         position: relative;
-        height: 280px;
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        height: 220px;
+        max-height: 320px;
+        overflow: hidden;
+        box-sizing: border-box;
       }
       .chart-wrap.tall {
-        height: 320px;
+        height: 260px;
+        max-height: 360px;
+      }
+      .chart-wrap canvas {
+        display: block;
+        box-sizing: border-box;
+        max-width: 100% !important;
+      }
+      @media (min-width: 768px) {
+        .chart-wrap {
+          height: 280px;
+        }
+        .chart-wrap.tall {
+          height: 320px;
+        }
       }
     </style>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/marked@18.0.0/marked.min.js"></script>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/styles/github.min.css"
+      media="(prefers-color-scheme: light)"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/styles/github-dark.min.css"
+      media="(prefers-color-scheme: dark)"
+    />
+    <script src="https://cdn.jsdelivr.net/npm/marked/lib/marked.umd.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js"></script>
   </head>
   <body class="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
     <div id="root"></div>
     <script type="text/babel">
       const { useState, useEffect, useRef, useCallback, useMemo } = React;
-      const marked = typeof window !== 'undefined' && window.marked ? window.marked : null;
+      const markedLib = typeof window !== 'undefined' && window.marked ? window.marked : null;
+      let markedConfigured = false;
+
+      function escapeHtml(text) {
+        return String(text)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      }
+
+      const LANGUAGE_ALIASES = {
+        js: 'javascript',
+        jsx: 'javascript',
+        mjs: 'javascript',
+        cjs: 'javascript',
+        ts: 'typescript',
+        tsx: 'typescript',
+        py: 'python',
+        sh: 'bash',
+        shell: 'bash',
+        zsh: 'bash',
+        yml: 'yaml',
+        md: 'markdown',
+        'c++': 'cpp',
+        'c#': 'csharp',
+        cs: 'csharp',
+        golang: 'go',
+        rs: 'rust',
+        html: 'xml',
+        svg: 'xml',
+        htm: 'xml',
+      };
+
+      function normalizeLanguage(lang) {
+        if (!lang || typeof lang !== 'string') return '';
+        const normalized = lang.trim().toLowerCase();
+        return LANGUAGE_ALIASES[normalized] || normalized;
+      }
+
+      function highlightCode(text, lang) {
+        const hljs = typeof window !== 'undefined' ? window.hljs : null;
+        if (!hljs) return { html: escapeHtml(text), language: 'plaintext' };
+
+        const language = normalizeLanguage(lang);
+        try {
+          if (language && hljs.getLanguage(language)) {
+            return {
+              html: hljs.highlight(text, { language, ignoreIllegals: true }).value,
+              language,
+            };
+          }
+          const auto = hljs.highlightAuto(text, [
+            'javascript',
+            'typescript',
+            'python',
+            'bash',
+            'json',
+            'css',
+            'xml',
+            'markdown',
+            'rust',
+            'go',
+            'java',
+            'csharp',
+            'cpp',
+            'sql',
+            'yaml',
+            'php',
+            'ruby',
+            'kotlin',
+            'swift',
+          ]);
+          return { html: auto.value, language: auto.language || 'plaintext' };
+        } catch {
+          return { html: escapeHtml(text), language: 'plaintext' };
+        }
+      }
+
+      function configureMarked() {
+        if (!markedLib || markedConfigured) return;
+        markedLib.use({
+          breaks: true,
+          gfm: true,
+          renderer: {
+            code({ text, lang }) {
+              const { html, language } = highlightCode(text, lang);
+              return `<pre><code class="hljs language-${language}">${html}</code></pre>`;
+            },
+          },
+        });
+        markedConfigured = true;
+      }
+
+      function renderMarkdown(content) {
+        if (!content.trim()) return '';
+        if (markedLib) {
+          configureMarked();
+          return markedLib.parse(content, { async: false });
+        }
+        return escapeHtml(content).replace(/\n/g, '<br>');
+      }
 
       const TAB_DASHBOARD = 'dashboard';
       const TAB_CHAT = 'chat';
@@ -467,8 +628,8 @@
       function SummaryCards({ summary, filters }) {
         return (
           <>
-            <div className="mb-3 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <div className="rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50 to-white p-5 shadow-md dark:border-blue-900 dark:from-blue-950 dark:to-slate-900 md:col-span-2 xl:col-span-4">
+            <div className="mb-3 grid min-w-0 w-full grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <div className="min-w-0 w-full rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50 to-white p-5 shadow-md dark:border-blue-900 dark:from-blue-950 dark:to-slate-900 md:col-span-2 xl:col-span-4">
                 <div className="text-xs font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-400">
                   Est. cloud cost
                 </div>
@@ -479,18 +640,18 @@
                   What this proxy would have cost on cloud — local inference assumed free
                 </div>
               </div>
-              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+              <div className="min-w-0 w-full rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total requests</div>
                 <div className="mt-1 text-2xl font-bold tabular-nums">{formatInt(summary.totals.requestCount)}</div>
               </div>
-              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+              <div className="min-w-0 w-full rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total tokens</div>
                 <div className="mt-1 text-2xl font-bold tabular-nums">{formatInt(summary.totals.totalTokens)}</div>
                 <div className="mt-1 text-sm text-slate-500">
                   {formatInt(summary.totals.promptTokens)} prompt · {formatInt(summary.totals.completionTokens)} completion
                 </div>
               </div>
-              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+              <div className="min-w-0 w-full rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Models queried</div>
                 <div className="mt-1 text-2xl font-bold tabular-nums">{formatInt(summary.totals.modelCount)}</div>
               </div>
@@ -505,19 +666,57 @@
       }
 
       function Charts({ data }) {
+        const chartsContainerRef = useRef(null);
+
         useEffect(() => {
           if (!data || (data.labels.length === 0 && data.dailyLabels.length === 0)) return;
 
           const textColor = '#64748b';
           const gridColor = 'rgba(128,128,128,0.15)';
+          const isMobile = window.innerWidth < 768;
           const charts = [];
+          let resizeObserver = null;
+          let resizeFrame = null;
+
+          function scheduleChartResize() {
+            if (resizeFrame) cancelAnimationFrame(resizeFrame);
+            resizeFrame = requestAnimationFrame(() => {
+              for (const chart of charts) chart.resize();
+            });
+          }
+          function truncateLabel(label, maxLen = isMobile ? 14 : 32) {
+            const text = String(label);
+            return text.length > maxLen ? `${text.slice(0, maxLen - 1)}…` : text;
+          }
+
           const baseOpts = {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: { legend: { labels: { color: textColor, font: { size: 11 } } } },
+            plugins: { legend: { labels: { color: textColor, font: { size: isMobile ? 10 : 11 } } } },
             scales: {
-              x: { ticks: { color: textColor, font: { size: 10 } }, grid: { color: gridColor } },
-              y: { ticks: { color: textColor, font: { size: 10 } }, grid: { color: gridColor } },
+              x: {
+                ticks: {
+                  color: textColor,
+                  font: { size: isMobile ? 9 : 10 },
+                  maxRotation: isMobile ? 45 : 0,
+                  autoSkip: true,
+                  maxTicksLimit: isMobile ? 8 : undefined,
+                  callback(value) {
+                    return truncateLabel(this.getLabelForValue(value));
+                  },
+                },
+                grid: { color: gridColor },
+              },
+              y: {
+                ticks: {
+                  color: textColor,
+                  font: { size: isMobile ? 9 : 10 },
+                  callback(value) {
+                    return truncateLabel(this.getLabelForValue(value));
+                  },
+                },
+                grid: { color: gridColor },
+              },
             },
           };
 
@@ -548,7 +747,13 @@
                       { label: 'Completion', data: data.completionTokens, backgroundColor: '#8b5cf6', borderRadius: 2 },
                     ],
                   },
-                  options: { ...baseOpts, scales: { x: { stacked: true }, y: { stacked: true } } },
+                  options: {
+                    ...baseOpts,
+                    scales: {
+                      x: { ...baseOpts.scales.x, stacked: true },
+                      y: { ...baseOpts.scales.y, stacked: true },
+                    },
+                  },
                 }),
               );
             }
@@ -565,7 +770,12 @@
                   options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: { legend: { position: 'right', labels: { color: textColor, font: { size: 11 }, boxWidth: 12 } } },
+                    plugins: {
+                      legend: {
+                        position: isMobile ? 'bottom' : 'right',
+                        labels: { color: textColor, font: { size: isMobile ? 10 : 11 }, boxWidth: 12 },
+                      },
+                    },
                   },
                 }),
               );
@@ -584,9 +794,13 @@
                     ...baseOpts,
                     plugins: { legend: { display: false } },
                     scales: {
+                      x: baseOpts.scales.x,
                       y: {
-                        ticks: { color: textColor, callback: (v) => '$' + Number(v).toFixed(4) },
-                        grid: { color: gridColor },
+                        ...baseOpts.scales.y,
+                        ticks: {
+                          ...baseOpts.scales.y.ticks,
+                          callback: (v) => '$' + Number(v).toFixed(4),
+                        },
                       },
                     },
                   },
@@ -615,7 +829,20 @@
             }
           }
 
+          scheduleChartResize();
+
+          const container = chartsContainerRef.current;
+          if (container && typeof ResizeObserver !== 'undefined') {
+            resizeObserver = new ResizeObserver(() => scheduleChartResize());
+            resizeObserver.observe(container);
+          } else {
+            window.addEventListener('resize', scheduleChartResize);
+          }
+
           return () => {
+            if (resizeFrame) cancelAnimationFrame(resizeFrame);
+            if (resizeObserver) resizeObserver.disconnect();
+            else window.removeEventListener('resize', scheduleChartResize);
             for (const chart of charts) chart.destroy();
           };
         }, [data]);
@@ -623,28 +850,28 @@
         if (!data || (data.labels.length === 0 && data.dailyLabels.length === 0)) return null;
 
         return (
-          <div className="mb-6 grid gap-6 md:grid-cols-2">
+          <div ref={chartsContainerRef} className="mb-6 grid min-w-0 w-full max-w-full grid-cols-1 gap-6 md:grid-cols-2">
             {data.labels.length > 0 ? (
               <>
-                <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                <div className="min-w-0 w-full max-w-full rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
                   <h3 className="mb-4 text-sm font-semibold">Total tokens per model</h3>
                   <div className="chart-wrap tall">
                     <canvas id="chart-tokens-per-model" />
                   </div>
                 </div>
-                <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                <div className="min-w-0 w-full max-w-full rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
                   <h3 className="mb-4 text-sm font-semibold">Token share by model</h3>
                   <div className="chart-wrap tall">
                     <canvas id="chart-share" />
                   </div>
                 </div>
-                <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 md:col-span-2">
+                <div className="min-w-0 w-full max-w-full rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 md:col-span-2">
                   <h3 className="mb-4 text-sm font-semibold">Prompt vs completion tokens per model</h3>
                   <div className="chart-wrap">
                     <canvas id="chart-stacked-tokens" />
                   </div>
                 </div>
-                <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 md:col-span-2">
+                <div className="min-w-0 w-full max-w-full rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 md:col-span-2">
                   <h3 className="mb-4 text-sm font-semibold">Estimated cloud cost per model</h3>
                   <div className="chart-wrap">
                     <canvas id="chart-cost" />
@@ -653,7 +880,7 @@
               </>
             ) : null}
             {data.dailyLabels.length > 0 ? (
-              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 md:col-span-2">
+              <div className="min-w-0 w-full max-w-full rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 md:col-span-2">
                 <h3 className="mb-4 text-sm font-semibold">Daily token usage over time</h3>
                 <div className="chart-wrap">
                   <canvas id="chart-daily" />
@@ -711,8 +938,8 @@
         }
 
         return (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[960px] text-sm">
+          <div className="min-w-0 w-full max-w-full overflow-x-auto">
+            <table className="w-full min-w-[640px] text-sm">
               <thead>
                 <tr className="border-b border-slate-200 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:border-slate-700">
                   {TABLE_COLUMNS.map((col) => (
@@ -876,7 +1103,7 @@
         }
 
         return (
-          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className="min-w-0 w-full max-w-full rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <h2 className="text-lg font-semibold">Filters &amp; cost rates</h2>
             <p className="mt-1 text-sm text-slate-500">
               Est. cost = (prompt tokens × input $/1M + completion tokens × output $/1M) ÷ 1,000,000. Local inference is
@@ -1015,7 +1242,7 @@
         const isInitialLoad = loading && data === null;
 
         return (
-          <div className="mx-auto max-w-7xl flex-1 overflow-y-auto px-4 py-6 md:px-6">
+          <div className="dashboard-shell mx-auto w-full max-w-7xl flex-1 overflow-y-auto px-4 py-6 md:px-6">
             {isInitialLoad ? (
               <div className="flex min-h-64 items-center justify-center py-12" aria-busy="true">
                 <Spinner size="lg" />
@@ -1038,7 +1265,7 @@
                 {hasData && data.payload ? (
                   <>
                     <Charts data={data.payload} />
-                    <div className="mb-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                    <div className="mb-6 min-w-0 max-w-full rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
                       <h2 className="text-lg font-semibold">Per-model breakdown</h2>
                       <p className="mt-1 text-sm text-slate-500">Click column headers to sort. Default order: total tokens descending.</p>
                       <div className="mt-4">
@@ -1070,20 +1297,13 @@
       }
 
       function MarkdownContent({ content }) {
-        const html = useMemo(() => {
-          if (!content.trim()) return '';
-          if (marked) {
-            marked.setOptions({ gfm: true, breaks: true });
-            return marked.parse(content, { async: false });
-          }
-          return content;
-        }, [content]);
+        const html = useMemo(() => renderMarkdown(content), [content]);
         if (!html) return null;
         return <div className="markdown-body text-[0.95rem] leading-7" dangerouslySetInnerHTML={{ __html: html }} />;
       }
 
       function MessageMetrics({ message }) {
-        const { promptTokens, completionTokens, durationMs } = message;
+        const { model, promptTokens, completionTokens, durationMs } = message;
         if (
           promptTokens === null ||
           promptTokens === undefined ||
@@ -1100,6 +1320,14 @@
 
         return (
           <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-slate-200/70 pt-3 text-xs text-slate-500 dark:border-slate-700/70 dark:text-slate-400">
+            {model ? (
+              <>
+                <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[0.8rem] text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                  {model}
+                </code>
+                <span aria-hidden="true">·</span>
+              </>
+            ) : null}
             <span className="tabular-nums">{formatInt(promptTokens)} prompt</span>
             <span aria-hidden="true">·</span>
             <span className="tabular-nums">{formatInt(completionTokens)} completion</span>
@@ -1197,11 +1425,12 @@
           setError(null);
 
           const assistantIndex = nextMessages.length;
+          const modelUsed = model.trim();
           setMessages([...nextMessages, { role: 'assistant', content: '' }]);
 
           streamChatCompletion(
             nextMessages,
-            model.trim(),
+            modelUsed,
             (assistantContent) => {
               setMessages((current) => {
                 const updated = [...current];
@@ -1218,6 +1447,7 @@
                   ...updated[assistantIndex],
                   role: 'assistant',
                   content: result.content,
+                  model: modelUsed,
                   promptTokens: result.promptTokens,
                   completionTokens: result.completionTokens,
                   durationMs: result.durationMs,
@@ -1417,7 +1647,9 @@
         useEffect(() => subscribeToRouteChanges(() => setTab(getTabFromUrl())), []);
 
         return (
-          <div className={`flex min-h-screen flex-col ${tab === TAB_CHAT ? 'h-screen overflow-hidden' : ''}`}>
+          <div
+            className={`flex min-h-screen w-full max-w-full flex-col ${tab === TAB_CHAT ? 'h-screen overflow-hidden' : 'min-w-0'}`}
+          >
             <AppTopBar
               activeTab={tab}
               refreshing={dashboardLoading}
