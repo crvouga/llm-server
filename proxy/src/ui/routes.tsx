@@ -1,6 +1,12 @@
 import { NeonDbError } from '@neondatabase/serverless';
 import { Hono } from 'hono';
 import { defaultSavedCostRates, fetchCostRates, upsertCostRates } from '../dashboard/db/cost-rates';
+import {
+  fetchInvestmentConfig,
+  parseInvestmentUsd,
+  upsertInvestmentConfig,
+} from '../dashboard/db/investment';
+import { loadInvestmentMetrics } from '../dashboard/db/load-investment';
 import { loadDashboardData } from '../dashboard/db/load';
 import { fetchEarliestUsageDate, fetchKnownModels } from '../dashboard/db/queries';
 import { parseCostPerMillion } from '../dashboard/lib/format';
@@ -11,6 +17,7 @@ import { fetchBackendUrl } from '../proxy-state';
 import {
   COST_RATES_PATH,
   DASHBOARD_DATA_API_PATH,
+  INVESTMENT_DATA_PATH,
   LEGACY_CHAT_PATH,
   LEGACY_DASHBOARD_ALIAS_PATH,
   LEGACY_DASHBOARD_PATH,
@@ -26,6 +33,12 @@ export const uiRoute = new Hono<DashboardEnv>();
 interface CostRatesPostBody {
   defaultRates?: Partial<ModelCostRates>;
   modelCosts?: Record<string, Partial<ModelCostRates>>;
+}
+
+interface InvestmentPostBody {
+  investmentUsd?: number | string | null;
+  projectedDailySpendUsd?: number | string | null;
+  calculateFromHistory?: boolean;
 }
 
 function parsePostDefaultRates(body: CostRatesPostBody, fallback: ModelCostRates): ModelCostRates {
@@ -185,6 +198,71 @@ uiRoute.post(COST_RATES_PATH, async (c) => {
     const code = error instanceof NeonDbError ? error.code : 'unknown';
     console.error(`Cost rates save failed (code: ${code ?? 'unknown'})`);
     return c.json({ error: 'Failed to save cost rates' }, 500);
+  }
+});
+
+uiRoute.get(INVESTMENT_DATA_PATH, async (c) => {
+  if (!c.env?.DATABASE_URL) {
+    return c.text('DATABASE_URL not configured', 503);
+  }
+
+  try {
+    const databaseUrl = c.env.DATABASE_URL;
+    const [savedConfig, metrics] = await Promise.all([
+      fetchInvestmentConfig(databaseUrl),
+      loadInvestmentMetrics(databaseUrl),
+    ]);
+
+    return c.json({
+      config: savedConfig,
+      metrics,
+    });
+  } catch (error) {
+    const code = error instanceof NeonDbError ? error.code : 'unknown';
+    console.error(`Investment data fetch failed (code: ${code ?? 'unknown'})`);
+    return c.json({ error: 'Failed to load investment data' }, 500);
+  }
+});
+
+uiRoute.post(INVESTMENT_DATA_PATH, async (c) => {
+  if (!c.env?.DATABASE_URL) {
+    return c.text('DATABASE_URL not configured', 503);
+  }
+
+  try {
+    const databaseUrl = c.env.DATABASE_URL;
+    const body = (await c.req.json()) as InvestmentPostBody;
+    const existing = await fetchInvestmentConfig(databaseUrl);
+    let investmentUsd =
+      body.investmentUsd !== undefined
+        ? parseInvestmentUsd(body.investmentUsd)
+        : existing.investmentUsd;
+    let projectedDailySpendUsd =
+      body.projectedDailySpendUsd !== undefined
+        ? parseInvestmentUsd(body.projectedDailySpendUsd)
+        : existing.projectedDailySpendUsd;
+
+    if (body.calculateFromHistory) {
+      const metrics = await loadInvestmentMetrics(databaseUrl);
+      projectedDailySpendUsd = metrics.historicalAverageDailySpendUsd;
+    }
+
+    const saved = await upsertInvestmentConfig(
+      databaseUrl,
+      investmentUsd,
+      projectedDailySpendUsd,
+    );
+    const metrics = await loadInvestmentMetrics(databaseUrl);
+
+    return c.json({
+      ok: true,
+      config: saved,
+      metrics,
+    });
+  } catch (error) {
+    const code = error instanceof NeonDbError ? error.code : 'unknown';
+    console.error(`Investment data save failed (code: ${code ?? 'unknown'})`);
+    return c.json({ error: 'Failed to save investment data' }, 500);
   }
 });
 

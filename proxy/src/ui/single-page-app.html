@@ -324,6 +324,7 @@
       const DASHBOARD_DATA_API_PATH = '/api/dashboard-data';
       const MODELS_API_PATH = '/api/models';
       const COST_RATES_PATH = '/ui/cost-rates';
+      const INVESTMENT_DATA_PATH = '/ui/investment-data';
       const CHAT_COMPLETIONS_PATH = '/v1/chat/completions';
       const DEFAULT_INPUT_COST = 1;
       const DEFAULT_OUTPUT_COST = 2;
@@ -492,6 +493,103 @@
         });
         if (!response.ok) throw new Error('Failed to save cost rates');
         return response.json();
+      }
+
+      async function fetchInvestmentData() {
+        const response = await fetch(INVESTMENT_DATA_PATH);
+        if (!response.ok) {
+          let details = `Request failed (${response.status})`;
+          try {
+            const json = await response.json();
+            if (json.error) details = json.error;
+          } catch {
+            const text = await response.text();
+            if (text) details = text;
+          }
+          throw new Error(details);
+        }
+        return response.json();
+      }
+
+      async function saveInvestmentData(body) {
+        const response = await fetch(INVESTMENT_DATA_PATH, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!response.ok) throw new Error('Failed to save investment settings');
+        return response.json();
+      }
+
+      function calendarDaysInclusive(startDate, endDate) {
+        const startMs = Date.parse(`${startDate}T00:00:00Z`);
+        const endMs = Date.parse(`${endDate}T00:00:00Z`);
+        if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return 1;
+        return Math.max(1, Math.floor((endMs - startMs) / 86_400_000) + 1);
+      }
+
+      function addCalendarDays(isoDate, days) {
+        const [year, month, day] = isoDate.split('-').map(Number);
+        const date = new Date(Date.UTC(year, month - 1, day));
+        date.setUTCDate(date.getUTCDate() + days);
+        return date.toISOString().slice(0, 10);
+      }
+
+      function computeBreakEvenPreview(investmentUsd, projectedDailySpendUsd, metrics) {
+        if (!metrics) return null;
+        const investment = investmentUsd === '' || investmentUsd == null ? null : Number(investmentUsd);
+        const projected =
+          projectedDailySpendUsd === '' || projectedDailySpendUsd == null
+            ? null
+            : Number(projectedDailySpendUsd);
+        const normalizedInvestment = Number.isFinite(investment) && investment >= 0 ? investment : null;
+        const normalizedProjected =
+          Number.isFinite(projected) && projected >= 0 ? projected : null;
+        const totalSavings = metrics.totalSavingsToDateUsd ?? 0;
+        const historicalAverage = metrics.historicalAverageDailySpendUsd;
+        const effectiveDailySpend = normalizedProjected ?? historicalAverage;
+        const remaining = Math.max(0, (normalizedInvestment ?? 0) - totalSavings);
+        const hasBrokenEven =
+          normalizedInvestment != null &&
+          normalizedInvestment > 0 &&
+          totalSavings >= normalizedInvestment;
+
+        let projectedBreakEvenDate = null;
+        if (
+          normalizedInvestment != null &&
+          normalizedInvestment > 0 &&
+          !hasBrokenEven &&
+          effectiveDailySpend != null &&
+          effectiveDailySpend > 0
+        ) {
+          projectedBreakEvenDate = addCalendarDays(
+            metrics.today || new Date().toISOString().slice(0, 10),
+            Math.ceil(remaining / effectiveDailySpend),
+          );
+        }
+
+        return {
+          investmentUsd: normalizedInvestment,
+          projectedDailySpendUsd: normalizedProjected,
+          effectiveDailySpendUsd: effectiveDailySpend,
+          remainingInvestmentUsd: remaining,
+          hasBrokenEven,
+          projectedBreakEvenDate,
+          actualBreakEvenDate: metrics.actualBreakEvenDate,
+          totalSavingsToDateUsd: totalSavings,
+          historicalAverageDailySpendUsd: historicalAverage,
+        };
+      }
+
+      function formatIsoDateLabel(isoDate) {
+        if (!isoDate) return '—';
+        const [year, month, day] = isoDate.split('-').map(Number);
+        return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric',
+          timeZone: 'UTC',
+        });
       }
 
       async function fetchAvailableModels() {
@@ -755,6 +853,213 @@
               </span>
             </div>
           </>
+        );
+      }
+
+      function InvestmentSection({ investmentState, onSaved }) {
+        const [investmentInput, setInvestmentInput] = useState('');
+        const [projectedDailyInput, setProjectedDailyInput] = useState('');
+        const [status, setStatus] = useState('');
+        const [statusError, setStatusError] = useState(false);
+        const [saving, setSaving] = useState(false);
+        const [calculating, setCalculating] = useState(false);
+
+        useEffect(() => {
+          const config = investmentState?.config;
+          if (!config) return;
+          setInvestmentInput(config.investmentUsd == null ? '' : String(config.investmentUsd));
+          setProjectedDailyInput(
+            config.projectedDailySpendUsd == null ? '' : String(config.projectedDailySpendUsd),
+          );
+        }, [investmentState]);
+
+        const preview = useMemo(
+          () =>
+            computeBreakEvenPreview(
+              investmentInput,
+              projectedDailyInput,
+              investmentState?.metrics
+                ? { ...investmentState.metrics, today: investmentState.metrics.today }
+                : null,
+            ),
+          [investmentInput, projectedDailyInput, investmentState],
+        );
+
+        function applySavedResult(result) {
+          const config = result.config;
+          setInvestmentInput(config.investmentUsd == null ? '' : String(config.investmentUsd));
+          setProjectedDailyInput(
+            config.projectedDailySpendUsd == null ? '' : String(config.projectedDailySpendUsd),
+          );
+          onSaved?.(result);
+        }
+
+        function onSave() {
+          setSaving(true);
+          setStatus('');
+          setStatusError(false);
+          saveInvestmentData({
+            investmentUsd: investmentInput === '' ? null : Number(investmentInput),
+            projectedDailySpendUsd:
+              projectedDailyInput === '' ? null : Number(projectedDailyInput),
+          })
+            .then((result) => {
+              applySavedResult(result);
+              setStatus('Investment settings saved.');
+            })
+            .catch(() => {
+              setStatus('Failed to save investment settings. Check database connectivity.');
+              setStatusError(true);
+            })
+            .finally(() => setSaving(false));
+        }
+
+        function onCalculateFromHistory() {
+          setCalculating(true);
+          setStatus('');
+          setStatusError(false);
+          saveInvestmentData({
+            investmentUsd: investmentInput === '' ? null : Number(investmentInput),
+            calculateFromHistory: true,
+          })
+            .then((result) => {
+              applySavedResult(result);
+              const avg = result.metrics?.historicalAverageDailySpendUsd;
+              setStatus(
+                avg == null
+                  ? 'No usage history yet to calculate a daily average.'
+                  : `Projected daily spend set to ${formatUsd(avg)} from historical usage.`,
+              );
+              setStatusError(avg == null);
+            })
+            .catch(() => {
+              setStatus('Failed to calculate projected daily spend from history.');
+              setStatusError(true);
+            })
+            .finally(() => setCalculating(false));
+        }
+
+        const metrics = investmentState?.metrics;
+        const breakEvenLabel = preview?.hasBrokenEven
+          ? preview.actualBreakEvenDate
+            ? formatIsoDateLabel(preview.actualBreakEvenDate)
+            : 'Already reached'
+          : preview?.projectedBreakEvenDate
+            ? formatIsoDateLabel(preview.projectedBreakEvenDate)
+            : '—';
+
+        return (
+          <div className="mb-6 min-w-0 w-full max-w-full rounded-xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-white p-5 shadow-md dark:border-emerald-900 dark:from-emerald-950 dark:to-slate-900">
+            <h2 className="text-lg font-semibold">Investment &amp; break-even</h2>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+              Track upfront hardware or setup cost against estimated cloud savings. All amounts are USD.
+            </p>
+
+            <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-lg border border-emerald-100 bg-white/80 p-4 dark:border-emerald-900 dark:bg-slate-950/60">
+                <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
+                  Total savings to date
+                </div>
+                <div className="mt-1 text-2xl font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+                  {metrics ? formatUsd(metrics.totalSavingsToDateUsd) : '—'}
+                </div>
+                <div className="mt-1 text-sm text-slate-500">Estimated cloud cost avoided so far</div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white/80 p-4 dark:border-slate-800 dark:bg-slate-950/60">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Remaining to break even
+                </div>
+                <div className="mt-1 text-2xl font-bold tabular-nums">
+                  {preview ? formatUsd(preview.remainingInvestmentUsd) : '—'}
+                </div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white/80 p-4 dark:border-slate-800 dark:bg-slate-950/60 md:col-span-2">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {preview?.hasBrokenEven ? 'Break-even reached' : 'Projected break-even date'}
+                </div>
+                <div className="mt-1 text-2xl font-bold tabular-nums">{breakEvenLabel}</div>
+                <div className="mt-1 text-sm text-slate-500">
+                  {preview?.hasBrokenEven
+                    ? 'Cumulative estimated cloud savings have covered the investment.'
+                    : preview?.effectiveDailySpendUsd
+                      ? `Based on ${formatUsd(preview.effectiveDailySpendUsd)} estimated savings per day`
+                      : 'Set investment and projected daily spend to estimate break-even'}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              <label className="block text-sm">
+                <span className="mb-1 block font-semibold text-slate-500">Investment (USD)</span>
+                <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-950">
+                  <span className="text-sm font-semibold text-slate-500">$</span>
+                  <input
+                    type="number"
+                    className="w-full min-w-0 border-0 bg-transparent text-base outline-none"
+                    value={investmentInput}
+                    min={0}
+                    step={0.01}
+                    placeholder="0.00"
+                    onChange={(event) => setInvestmentInput(event.target.value)}
+                  />
+                </div>
+              </label>
+              <label className="block text-sm">
+                <span className="mb-1 block font-semibold text-slate-500">
+                  Projected daily spend (USD)
+                </span>
+                <input
+                  type="number"
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-base outline-none dark:border-slate-700 dark:bg-slate-950"
+                  value={projectedDailyInput}
+                  min={0}
+                  step={0.0001}
+                  placeholder={
+                    metrics?.historicalAverageDailySpendUsd == null
+                      ? 'No history yet'
+                      : `Historical avg ${formatUsd(metrics.historicalAverageDailySpendUsd)}`
+                  }
+                  onChange={(event) => setProjectedDailyInput(event.target.value)}
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  Leave blank to use the historical average (
+                  {metrics?.historicalAverageDailySpendUsd == null
+                    ? '—'
+                    : formatUsd(metrics.historicalAverageDailySpendUsd)}
+                  ) across {metrics?.calendarDays ?? '—'} days.
+                </p>
+              </label>
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-70"
+                disabled={saving}
+                onClick={() => void onSave()}
+              >
+                {saving ? <Spinner size="sm" /> : null}
+                {saving ? 'Saving…' : 'Save investment'}
+              </button>
+              <button
+                type="button"
+                className="inline-flex items-center gap-2 rounded-lg border border-emerald-300 bg-white px-4 py-2.5 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-70 dark:border-emerald-800 dark:bg-slate-950 dark:text-emerald-400 dark:hover:bg-emerald-950"
+                disabled={calculating || saving}
+                onClick={() => void onCalculateFromHistory()}
+              >
+                {calculating ? <Spinner size="sm" /> : null}
+                {calculating ? 'Calculating…' : 'Calculate from history'}
+              </button>
+              {status ? (
+                <p
+                  className={`w-full text-sm ${statusError ? 'font-semibold text-red-500' : 'text-slate-500'}`}
+                  role="status"
+                >
+                  {status}
+                </p>
+              ) : null}
+            </div>
+          </div>
         );
       }
 
@@ -1291,10 +1596,13 @@
         const [loading, setLoading] = useState(true);
         const [error, setError] = useState(null);
         const [data, setData] = useState(null);
+        const [investmentState, setInvestmentState] = useState(null);
+        const [investmentError, setInvestmentError] = useState(null);
 
         const load = useCallback((search = window.location.search) => {
           setLoading(true);
           setError(null);
+          setInvestmentError(null);
           fetchDashboardData(search)
             .then((result) => {
               setData(result);
@@ -1305,6 +1613,15 @@
               setError(loadError instanceof Error ? loadError.message : String(loadError));
             })
             .finally(() => setLoading(false));
+
+          fetchInvestmentData()
+            .then((investmentResult) => setInvestmentState(investmentResult))
+            .catch((loadError) => {
+              setInvestmentState(null);
+              setInvestmentError(
+                loadError instanceof Error ? loadError.message : String(loadError),
+              );
+            });
         }, []);
 
         useEffect(() => {
@@ -1355,6 +1672,18 @@
             {!isInitialLoad && data?.summary ? (
               <>
                 <SummaryCards summary={data.summary} filters={data.filters} />
+                {investmentError ? (
+                  <p className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm font-semibold text-red-600 dark:bg-red-950 dark:text-red-400">
+                    {investmentError}
+                  </p>
+                ) : (
+                  <InvestmentSection
+                    investmentState={investmentState}
+                    onSaved={(result) => {
+                      setInvestmentState(result);
+                    }}
+                  />
+                )}
                 {hasData && data.payload ? (
                   <>
                     <Charts data={data.payload} />

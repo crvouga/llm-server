@@ -38,6 +38,25 @@ describe('ui route', () => {
     expect(json.error).toContain('DATABASE_URL');
   });
 
+  test('GET /ui/investment-data requires database', async () => {
+    const app = createApp();
+    const response = await app.fetch(new Request('http://proxy.test/ui/investment-data'));
+
+    expect(response.status).toBe(503);
+    const text = await response.text();
+    expect(text).toContain('DATABASE_URL');
+  });
+
+  test('dashboard shell includes investment section', async () => {
+    const app = createApp();
+    const response = await app.fetch(new Request('http://proxy.test/ui'));
+    const html = await response.text();
+
+    expect(html).toContain('Investment &amp; break-even');
+    expect(html).toContain('Calculate from history');
+    expect(html).toContain('/ui/investment-data');
+  });
+
   test('legacy /dashboard redirects to /ui?tab=dashboard', async () => {
     const app = createApp();
     const response = await app.fetch(new Request('http://proxy.test/dashboard'));

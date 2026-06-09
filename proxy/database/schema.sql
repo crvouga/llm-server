@@ -52,8 +52,13 @@ END $$;
 CREATE TABLE IF NOT EXISTS llm_proxy.config (
   id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
   backend_url TEXT NOT NULL,
+  investment_usd NUMERIC,
+  projected_daily_spend_usd NUMERIC,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE llm_proxy.config ADD COLUMN IF NOT EXISTS investment_usd NUMERIC;
+ALTER TABLE llm_proxy.config ADD COLUMN IF NOT EXISTS projected_daily_spend_usd NUMERIC;
 
 -- Singleton dashboard cost rate configuration
 CREATE TABLE IF NOT EXISTS llm_proxy.cost_rates (
