@@ -21,6 +21,8 @@ import {
 } from '../shared/constants';
 import { getUiAppHtml } from './ui-html';
 
+export const uiRoute = new Hono<DashboardEnv>();
+
 interface CostRatesPostBody {
   defaultRates?: Partial<ModelCostRates>;
   modelCosts?: Record<string, Partial<ModelCostRates>>;
@@ -83,7 +85,44 @@ function legacyChatRedirectUrl(): string {
   return `${UI_PATH}?${TAB_QUERY_PARAM}=chat`;
 }
 
-export const uiRoute = new Hono<DashboardEnv>();
+export function isHumanUserAgent(userAgent: string): boolean {
+  const botPatterns: (string | RegExp)[] = [
+    /bot/i,
+    /crawler/i,
+    /spider/i,
+    /scraper/i,
+    /curl/i,
+    /wget/i,
+    /python-requests/i,
+    'googlebot',
+    'bingbot',
+    'baiduspider',
+    'yandexbot',
+    'facebookexternalhit',
+    'twitterbot',
+    'linkedinbot',
+    'embedly',
+    'quora link preview',
+    'slackbot',
+    'discordbot',
+    'telegrambot',
+  ];
+  const lowerAgent = userAgent.toLowerCase();
+  return !botPatterns.some((pattern) => {
+    if (typeof pattern === 'string') {
+      return lowerAgent.includes(pattern);
+    }
+    return pattern.test(lowerAgent);
+  });
+}
+
+uiRoute.get('/', (c) => {
+  const userAgent = c.req.header('User-Agent') || '';
+  if (isHumanUserAgent(userAgent)) {
+    return c.redirect(UI_PATH, 302);
+  }
+  return c.body(getUiAppHtml(), 200, { 'content-type': 'text/html; charset=utf-8' });
+});
 
 uiRoute.get(LEGACY_DASHBOARD_PATH, (c) => c.redirect(legacyDashboardRedirectUrl(), 301));
 uiRoute.get(LEGACY_DASHBOARD_ALIAS_PATH, (c) => c.redirect(legacyDashboardRedirectUrl(), 301));
