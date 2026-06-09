@@ -1,11 +1,12 @@
 /** @jsxImportSource hono/jsx */
 import type { FC } from 'hono/jsx';
+import { DEFAULT_INPUT_COST_PER_MILLION, DEFAULT_OUTPUT_COST_PER_MILLION } from '../constants';
 import {
   COST_RATES_PATH,
-  DASHBOARD_PATH,
-  DEFAULT_INPUT_COST_PER_MILLION,
-  DEFAULT_OUTPUT_COST_PER_MILLION,
-} from '../constants';
+  TAB_DASHBOARD,
+  TAB_QUERY_PARAM,
+  UI_PATH,
+} from '../../shared/constants';
 import type { SavedCostRates } from '../db/cost-rates';
 import { DATE_BUCKETS } from '../lib/date-range';
 import { formatUsd } from '../lib/format';
@@ -39,7 +40,8 @@ export const FilterForm: FC<{
     <p class="muted" id="cost-rates-source">
       {savedRatesLabel(savedCostRates)}
     </p>
-    <form id={DASHBOARD_FORM_ID} method="get" action={DASHBOARD_PATH}>
+    <form id={DASHBOARD_FORM_ID} method="get" action={UI_PATH}>
+      <input type="hidden" name={TAB_QUERY_PARAM} value={TAB_DASHBOARD} />
       <input type="hidden" name="range" value={filters.dateBucket} />
       {filters.sortKey !== 'totalTokens' ? (
         <input type="hidden" name="sort" value={filters.sortKey} />
@@ -163,7 +165,7 @@ export const FilterForm: FC<{
       if (!response.ok) {
         throw new Error('Save failed');
       }
-      window.location.assign(${JSON.stringify(DASHBOARD_PATH)} + '?saved=1');
+      window.location.assign(${JSON.stringify(UI_PATH)} + '?${TAB_QUERY_PARAM}=${TAB_DASHBOARD}&saved=1');
     } catch {
       status.textContent = 'Failed to save cost rates. Check database connectivity.';
       status.className = 'cost-rates-status error';

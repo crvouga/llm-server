@@ -1,8 +1,3 @@
-export const DASHBOARD_PATH = '/dashboard';
-export const LEGACY_DASHBOARD_PATH = '/usage-dashboard';
-export const CLIENT_SCRIPT_PATH = '/dashboard-client.js';
-export const COST_RATES_PATH = '/dashboard/cost-rates';
-
 export const TOKENS_PER_MILLION = 1_000_000;
 export const DEFAULT_INPUT_COST_PER_MILLION = 1;
 export const DEFAULT_OUTPUT_COST_PER_MILLION = 2;

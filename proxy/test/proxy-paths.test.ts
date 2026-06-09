@@ -37,6 +37,10 @@ describe('isBackendProxiedPath', () => {
     );
     expect(isBackendProxiedPath('/')).toBe(false);
     expect(isBackendProxiedPath('/dashboard')).toBe(false);
+    expect(isBackendProxiedPath('/chat')).toBe(false);
+    expect(isBackendProxiedPath('/ui')).toBe(false);
+    expect(isBackendProxiedPath('/api/dashboard-data')).toBe(false);
+    expect(isBackendProxiedPath('/api/models')).toBe(false);
     expect(isBackendProxiedPath('/favicon.ico')).toBe(false);
     expect(isBackendProxiedPath('/robots.txt')).toBe(false);
   });

@@ -21,7 +21,7 @@
     "src/**/*.tsx"
   ],
   "exclude": [
-    "src/dashboard/client/**",
+    "src/ui/client/**",
     "test/**"
   ]
 }

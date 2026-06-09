@@ -6,9 +6,9 @@ export default defineConfig({
     outDir: 'public',
     emptyOutDir: false,
     rollupOptions: {
-      input: resolve(__dirname, 'src/dashboard/client/index.tsx'),
+      input: resolve(__dirname, 'src/ui/client/index.tsx'),
       output: {
-        entryFileNames: 'dashboard-client.js',
+        entryFileNames: 'ui-client.js',
         format: 'es',
       },
     },

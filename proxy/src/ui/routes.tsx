@@ -1,15 +1,26 @@
 /** @jsxImportSource hono/jsx */
 import { NeonDbError } from '@neondatabase/serverless';
 import { Hono } from 'hono';
-import { DashboardPage } from './components/DashboardPage';
-import { COST_RATES_PATH, DASHBOARD_PATH, LEGACY_DASHBOARD_PATH } from './constants';
-import { defaultSavedCostRates, fetchCostRates, upsertCostRates } from './db/cost-rates';
-import { loadDashboardData } from './db/load';
-import { fetchEarliestUsageDate, fetchKnownModels } from './db/queries';
-import { emptyFilters } from './lib/filters';
-import { parseCostPerMillion } from './lib/format';
-import { parseFiltersFromQuery } from './lib/query-params';
-import type { DashboardEnv, DashboardFilters, ModelCostRates } from './types';
+import { defaultSavedCostRates, fetchCostRates, upsertCostRates } from '../dashboard/db/cost-rates';
+import { loadDashboardData } from '../dashboard/db/load';
+import { fetchEarliestUsageDate, fetchKnownModels } from '../dashboard/db/queries';
+import { parseCostPerMillion } from '../dashboard/lib/format';
+import { parseFiltersFromQuery } from '../dashboard/lib/query-params';
+import { buildClientPayload } from '../dashboard/lib/summary';
+import type { DashboardEnv, DashboardFilters, ModelCostRates } from '../dashboard/types';
+import { fetchBackendUrl } from '../proxy-state';
+import {
+  COST_RATES_PATH,
+  DASHBOARD_DATA_API_PATH,
+  LEGACY_CHAT_PATH,
+  LEGACY_DASHBOARD_ALIAS_PATH,
+  LEGACY_DASHBOARD_PATH,
+  MODELS_API_PATH,
+  TAB_DASHBOARD,
+  TAB_QUERY_PARAM,
+  UI_PATH,
+} from '../shared/constants';
+import { UiShell } from './components/UiShell';
 
 interface CostRatesPostBody {
   defaultRates?: Partial<ModelCostRates>;
@@ -53,43 +64,36 @@ function parsePostModelCosts(
   return modelCosts;
 }
 
-async function renderDashboard(
-  databaseUrl: string,
-  filters: DashboardFilters,
-  models: string[],
-  savedCostRates: Awaited<ReturnType<typeof fetchCostRates>>,
-  flashMessage?: string,
-) {
-  const { summary, dailyRows } = await loadDashboardData(databaseUrl, filters);
-  return (
-    <DashboardPage
-      filters={filters}
-      models={models}
-      summary={summary}
-      dailyRows={dailyRows}
-      savedCostRates={savedCostRates}
-      flashMessage={flashMessage}
-    />
-  );
+function serializeFilters(filters: DashboardFilters) {
+  return {
+    dateBucket: filters.dateBucket,
+    startDate: filters.startDate,
+    endDate: filters.endDate,
+    defaultRates: filters.defaultRates,
+    modelCosts: Object.fromEntries(filters.modelCosts),
+    sortKey: filters.sortKey,
+    sortDir: filters.sortDir,
+  };
 }
 
-async function fallbackFilters(databaseUrl: string): Promise<DashboardFilters> {
-  try {
-    const earliestDate = await fetchEarliestUsageDate(databaseUrl);
-    const models = await fetchKnownModels(databaseUrl);
-    const savedRates = await fetchCostRates(databaseUrl);
-    return parseFiltersFromQuery({}, earliestDate, models, savedRates);
-  } catch {
-    return emptyFilters();
-  }
+function legacyDashboardRedirectUrl(): string {
+  return `${UI_PATH}?${TAB_QUERY_PARAM}=${TAB_DASHBOARD}`;
 }
 
-export const dashboardRoute = new Hono<DashboardEnv>();
+function legacyChatRedirectUrl(): string {
+  return `${UI_PATH}?${TAB_QUERY_PARAM}=chat`;
+}
 
-dashboardRoute.get(LEGACY_DASHBOARD_PATH, (c) => c.redirect(DASHBOARD_PATH, 301));
+export const uiRoute = new Hono<DashboardEnv>();
 
-dashboardRoute.get(COST_RATES_PATH, async (c) => {
-  if (!c.env.DATABASE_URL) {
+uiRoute.get(LEGACY_DASHBOARD_PATH, (c) => c.redirect(legacyDashboardRedirectUrl(), 301));
+uiRoute.get(LEGACY_DASHBOARD_ALIAS_PATH, (c) => c.redirect(legacyDashboardRedirectUrl(), 301));
+uiRoute.get(LEGACY_CHAT_PATH, (c) => c.redirect(legacyChatRedirectUrl(), 301));
+
+uiRoute.get(UI_PATH, (c) => c.html(<UiShell />));
+
+uiRoute.get(COST_RATES_PATH, async (c) => {
+  if (!c.env?.DATABASE_URL) {
     return c.text('DATABASE_URL not configured', 503);
   }
 
@@ -116,8 +120,8 @@ dashboardRoute.get(COST_RATES_PATH, async (c) => {
   }
 });
 
-dashboardRoute.post(COST_RATES_PATH, async (c) => {
-  if (!c.env.DATABASE_URL) {
+uiRoute.post(COST_RATES_PATH, async (c) => {
+  if (!c.env?.DATABASE_URL) {
     return c.text('DATABASE_URL not configured', 503);
   }
 
@@ -144,9 +148,9 @@ dashboardRoute.post(COST_RATES_PATH, async (c) => {
   }
 });
 
-dashboardRoute.get(DASHBOARD_PATH, async (c) => {
-  if (!c.env.DATABASE_URL) {
-    return c.text('DATABASE_URL not configured', 503);
+uiRoute.get(DASHBOARD_DATA_API_PATH, async (c) => {
+  if (!c.env?.DATABASE_URL) {
+    return c.json({ error: 'DATABASE_URL not configured' }, 503);
   }
 
   try {
@@ -157,25 +161,50 @@ dashboardRoute.get(DASHBOARD_PATH, async (c) => {
       fetchCostRates(databaseUrl),
     ]);
     const filters = parseFiltersFromQuery(c.req.query(), earliestDate, models, savedCostRates);
-    const flashMessage =
-      c.req.query('saved') === '1' ? 'Cost rates saved and shared across clients.' : undefined;
-    return c.html(
-      await renderDashboard(databaseUrl, filters, models, savedCostRates, flashMessage),
-    );
+    const { summary, dailyRows } = await loadDashboardData(databaseUrl, filters);
+    const hasData = summary.rows.length > 0;
+
+    return c.json({
+      filters: serializeFilters(filters),
+      models,
+      savedCostRates: savedCostRates
+        ? {
+            defaultRates: savedCostRates.defaultRates,
+            modelOverrides: Object.fromEntries(savedCostRates.modelOverrides),
+            updatedAt: savedCostRates.updatedAt,
+          }
+        : null,
+      summary,
+      payload: hasData ? buildClientPayload(summary, dailyRows, filters) : null,
+    });
   } catch (error) {
     const code = error instanceof NeonDbError ? error.code : 'unknown';
-    console.error(`Dashboard failed (code: ${code ?? 'unknown'})`);
+    console.error(`Dashboard data API failed (code: ${code ?? 'unknown'})`);
+    return c.json({ error: 'Failed to load dashboard data' }, 500);
+  }
+});
 
-    return c.html(
-      <DashboardPage
-        filters={await fallbackFilters(c.env.DATABASE_URL)}
-        models={[]}
-        summary={null}
-        dailyRows={[]}
-        savedCostRates={null}
-        errorMessage="Failed to load dashboard data. Check database connectivity."
-      />,
-      500,
+uiRoute.get(MODELS_API_PATH, async (c) => {
+  if (!c.env?.DATABASE_URL) {
+    return c.json({ error: 'DATABASE_URL not configured' }, 503);
+  }
+
+  const backendUrl = await fetchBackendUrl(c.env.DATABASE_URL);
+  if (!backendUrl) {
+    return c.json({ error: 'Proxy not configured', data: [] }, 503);
+  }
+
+  try {
+    const response = await fetch(`${backendUrl}/v1/models`);
+    const body = await response.text();
+    return new Response(body, {
+      status: response.status,
+      headers: { 'content-type': response.headers.get('content-type') || 'application/json' },
+    });
+  } catch (error) {
+    return c.json(
+      { error: 'Backend unavailable', details: String(error), data: [] },
+      503,
     );
   }
 });

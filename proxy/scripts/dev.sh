@@ -4,8 +4,10 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+export VAULT_ADDR="${VAULT_ADDR:-https://vault.chrisvouga.dev}"
+
 mkdir -p public
-if [ ! -f public/dashboard-client.js ]; then
+if [ ! -f public/ui-client.js ]; then
   bun run build:client
 fi
 

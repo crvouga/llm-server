@@ -21,5 +21,6 @@ node_modules
 .DS_Store
 Thumbs.db
 
-# Built dashboard client bundle
-public/dashboard-client.js
+# Built client bundle
+public/ui-client.js
+public/assets/

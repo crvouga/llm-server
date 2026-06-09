@@ -7,7 +7,7 @@ import { Hono } from 'hono';
 import { fetchBackendUrl } from './proxy-state';
 import { parseSseStream } from './stream-logging';
 import { prepareProxyRequestBody } from './thinking-default';
-import { dashboardRoute } from './dashboard';
+import { uiRoute } from './ui';
 
 export interface Env {
   DATABASE_URL: string;
@@ -144,7 +144,7 @@ export function createApp(): Hono<AppEnv> {
     await next();
   });
 
-  app.route('/', dashboardRoute);
+  app.route('/', uiRoute);
 
   app.all('*', async (c) => {
     const env = c.env;

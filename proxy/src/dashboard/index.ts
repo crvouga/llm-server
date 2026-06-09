@@ -1,2 +1,1 @@
-export { dashboardRoute } from './routes';
-export { DASHBOARD_PATH } from './constants';
+export { TOKENS_PER_MILLION, CHART_COLORS } from './constants';

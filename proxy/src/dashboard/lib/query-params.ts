@@ -1,8 +1,5 @@
-import {
-  DASHBOARD_PATH,
-  DEFAULT_INPUT_COST_PER_MILLION,
-  DEFAULT_OUTPUT_COST_PER_MILLION,
-} from '../constants';
+import { DEFAULT_INPUT_COST_PER_MILLION, DEFAULT_OUTPUT_COST_PER_MILLION } from '../constants';
+import { TAB_DASHBOARD, TAB_QUERY_PARAM, UI_PATH } from '../../shared/constants';
 import type { SavedCostRates } from '../db/cost-rates';
 import {
   SORT_KEYS,
@@ -137,6 +134,7 @@ export function buildDashboardUrl(
   const sortDir = overrides.sortDir ?? filters.sortDir ?? 'desc';
 
   const params = new URLSearchParams();
+  params.set(TAB_QUERY_PARAM, TAB_DASHBOARD);
 
   if (dateBucket !== 'all_time') {
     params.set('range', dateBucket);
@@ -151,7 +149,7 @@ export function buildDashboardUrl(
   }
 
   const qs = params.toString();
-  return qs ? `${DASHBOARD_PATH}?${qs}` : DASHBOARD_PATH;
+  return `${UI_PATH}?${qs}`;
 }
 
 export function sortDirToMultiplier(dir: SortDir): -1 | 1 {

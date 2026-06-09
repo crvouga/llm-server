@@ -28,7 +28,6 @@ export const dashboardStyles = `
   .page,
   .top-bar-inner {
     width: 100%;
-    max-width: 1280px;
     box-sizing: border-box;
   }
 
@@ -75,13 +74,9 @@ export const dashboardStyles = `
   }
 
   .top-bar-inner {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    max-width: 1280px;
     margin: 0 auto;
-    padding: 0.875rem 1.5rem;
+    padding-top: 0.875rem;
+    padding-bottom: 0.875rem;
   }
 
   .top-bar-title {
@@ -120,9 +115,11 @@ export const dashboardStyles = `
   }
 
   .page {
-    max-width: 1280px;
     margin: 0 auto;
-    padding: 1.5rem 1.5rem 3rem;
+    padding-top: 1.5rem;
+    padding-bottom: 3rem;
+    padding-left: var(--content-padding-x, 1.5rem);
+    padding-right: var(--content-padding-x, 1.5rem);
   }
 
   .card {
