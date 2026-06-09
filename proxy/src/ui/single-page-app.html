@@ -188,6 +188,24 @@
         }).format(value);
       }
 
+      function formatDurationMs(durationMs) {
+        if (!Number.isFinite(durationMs) || durationMs < 0) return '—';
+        if (durationMs < 1000) return `${Math.round(durationMs)}ms`;
+        return `${(durationMs / 1000).toFixed(1)}s`;
+      }
+
+      function computeTokensPerSecond(totalTokens, durationMs) {
+        if (
+          !Number.isFinite(totalTokens) ||
+          !Number.isFinite(durationMs) ||
+          totalTokens < 0 ||
+          durationMs <= 0
+        ) {
+          return null;
+        }
+        return totalTokens / (durationMs / 1000);
+      }
+
       function formatPercent(value) {
         return new Intl.NumberFormat('en-US', {
           style: 'percent',
@@ -314,10 +332,11 @@
         const decoder = new TextDecoder();
         let buffer = '';
         let full = '';
+        let usage = null;
 
         while (true) {
           const { done, value } = await reader.read();
-          if (done) return full;
+          if (done) return { content: full, usage };
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split('\n');
           buffer = lines.pop() ?? '';
@@ -333,6 +352,9 @@
                 full += delta;
                 onDelta(full);
               }
+              if (parsed.usage && typeof parsed.usage === 'object') {
+                usage = parsed.usage;
+              }
             } catch {
               /* ignore malformed SSE */
             }
@@ -340,7 +362,16 @@
         }
       }
 
+      function normalizeChatUsage(usage) {
+        if (!usage || typeof usage !== 'object') return null;
+        const promptTokens = Number(usage.prompt_tokens);
+        const completionTokens = Number(usage.completion_tokens);
+        if (!Number.isFinite(promptTokens) || !Number.isFinite(completionTokens)) return null;
+        return { promptTokens, completionTokens };
+      }
+
       async function streamChatCompletion(messages, model, onDelta, signal) {
+        const startedAt = performance.now();
         const response = await fetch(CHAT_COMPLETIONS_PATH, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -357,10 +388,25 @@
           const json = await response.json();
           const content = json.choices?.[0]?.message?.content ?? '';
           onDelta(content);
-          return content;
+          const durationMs = performance.now() - startedAt;
+          const usage = normalizeChatUsage(json.usage);
+          return {
+            content,
+            durationMs,
+            promptTokens: usage?.promptTokens ?? null,
+            completionTokens: usage?.completionTokens ?? null,
+          };
         }
 
-        return readSseStream(response.body.getReader(), onDelta);
+        const result = await readSseStream(response.body.getReader(), onDelta);
+        const durationMs = performance.now() - startedAt;
+        const usage = normalizeChatUsage(result.usage);
+        return {
+          content: result.content,
+          durationMs,
+          promptTokens: usage?.promptTokens ?? null,
+          completionTokens: usage?.completionTokens ?? null,
+        };
       }
 
       function Spinner({ size = 'md' }) {
@@ -1036,6 +1082,37 @@
         return <div className="markdown-body text-[0.95rem] leading-7" dangerouslySetInnerHTML={{ __html: html }} />;
       }
 
+      function MessageMetrics({ message }) {
+        const { promptTokens, completionTokens, durationMs } = message;
+        if (
+          promptTokens === null ||
+          promptTokens === undefined ||
+          completionTokens === null ||
+          completionTokens === undefined ||
+          durationMs === null ||
+          durationMs === undefined
+        ) {
+          return null;
+        }
+
+        const totalTokens = promptTokens + completionTokens;
+        const tokensPerSecond = computeTokensPerSecond(totalTokens, durationMs);
+
+        return (
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-slate-200/70 pt-3 text-xs text-slate-500 dark:border-slate-700/70 dark:text-slate-400">
+            <span className="tabular-nums">{formatInt(promptTokens)} prompt</span>
+            <span aria-hidden="true">·</span>
+            <span className="tabular-nums">{formatInt(completionTokens)} completion</span>
+            <span aria-hidden="true">·</span>
+            <span className="tabular-nums">{formatDurationMs(durationMs)}</span>
+            <span aria-hidden="true">·</span>
+            <span className="tabular-nums font-medium text-slate-600 dark:text-slate-300">
+              {formatTps(tokensPerSecond)} tok/s
+            </span>
+          </div>
+        );
+      }
+
       function resizeTextarea(textarea) {
         textarea.style.height = 'auto';
         textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px`;
@@ -1128,12 +1205,26 @@
             (assistantContent) => {
               setMessages((current) => {
                 const updated = [...current];
-                updated[assistantIndex] = { role: 'assistant', content: assistantContent };
+                updated[assistantIndex] = { ...updated[assistantIndex], role: 'assistant', content: assistantContent };
                 return updated;
               });
             },
             abortControllerRef.current.signal,
           )
+            .then((result) => {
+              setMessages((current) => {
+                const updated = [...current];
+                updated[assistantIndex] = {
+                  ...updated[assistantIndex],
+                  role: 'assistant',
+                  content: result.content,
+                  promptTokens: result.promptTokens,
+                  completionTokens: result.completionTokens,
+                  durationMs: result.durationMs,
+                };
+                return updated;
+              });
+            })
             .catch((sendError) => {
               if (sendError.name === 'AbortError') {
                 setError('Chat request was cancelled');
@@ -1198,7 +1289,10 @@
                           isStreaming ? (
                             <p className="italic text-slate-500">Thinking…</p>
                           ) : (
-                            <MarkdownContent content={message.content} />
+                            <>
+                              <MarkdownContent content={message.content} />
+                              <MessageMetrics message={message} />
+                            </>
                           )
                         ) : (
                           <div className="whitespace-pre-wrap break-words text-[0.95rem] leading-6">{message.content}</div>
