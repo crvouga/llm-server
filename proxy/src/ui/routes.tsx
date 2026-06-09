@@ -1,4 +1,3 @@
-/** @jsxImportSource hono/jsx */
 import { NeonDbError } from '@neondatabase/serverless';
 import { Hono } from 'hono';
 import { defaultSavedCostRates, fetchCostRates, upsertCostRates } from '../dashboard/db/cost-rates';
@@ -20,7 +19,7 @@ import {
   TAB_QUERY_PARAM,
   UI_PATH,
 } from '../shared/constants';
-import { UiShell } from './components/UiShell';
+import { getUiAppHtml } from './ui-html';
 
 interface CostRatesPostBody {
   defaultRates?: Partial<ModelCostRates>;
@@ -90,7 +89,9 @@ uiRoute.get(LEGACY_DASHBOARD_PATH, (c) => c.redirect(legacyDashboardRedirectUrl(
 uiRoute.get(LEGACY_DASHBOARD_ALIAS_PATH, (c) => c.redirect(legacyDashboardRedirectUrl(), 301));
 uiRoute.get(LEGACY_CHAT_PATH, (c) => c.redirect(legacyChatRedirectUrl(), 301));
 
-uiRoute.get(UI_PATH, (c) => c.html(<UiShell />));
+uiRoute.get(UI_PATH, (c) =>
+  c.body(getUiAppHtml(), 200, { 'content-type': 'text/html; charset=utf-8' }),
+);
 
 uiRoute.get(COST_RATES_PATH, async (c) => {
   if (!c.env?.DATABASE_URL) {

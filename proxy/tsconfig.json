@@ -8,7 +8,8 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "types": [
-      "@cloudflare/workers-types"
+      "@cloudflare/workers-types",
+      "bun-types"
     ],
     "jsx": "react-jsx",
     "jsxImportSource": "hono/jsx",
@@ -18,10 +19,10 @@
   },
   "include": [
     "src/**/*.ts",
-    "src/**/*.tsx"
+    "src/**/*.tsx",
+    "src/**/*.html"
   ],
   "exclude": [
-    "src/ui/client/**",
     "test/**"
   ]
 }

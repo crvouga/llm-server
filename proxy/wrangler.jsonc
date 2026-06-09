@@ -4,6 +4,14 @@
   "main": "src/index.ts",
   "compatibility_date": "2025-06-03",
 
+  "rules": [
+    {
+      "type": "Text",
+      "globs": ["**/*.html"],
+      "fallthrough": true
+    }
+  ],
+
   "assets": { "directory": "public" },
 
   "routes": [

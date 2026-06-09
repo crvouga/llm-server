@@ -21,6 +21,5 @@ node_modules
 .DS_Store
 Thumbs.db
 
-# Built client bundle
-public/ui-client.js
+# Static assets
 public/assets/

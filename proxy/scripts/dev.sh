@@ -7,9 +7,6 @@ cd "$(dirname "$0")/.."
 export VAULT_ADDR="${VAULT_ADDR:-https://vault.chrisvouga.dev}"
 
 mkdir -p public
-if [ ! -f public/ui-client.js ]; then
-  bun run build:client
-fi
 
 exec vault run --project personal --config dev -- sh -c '
   set -euo pipefail

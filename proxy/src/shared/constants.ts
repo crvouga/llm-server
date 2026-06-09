@@ -1,5 +1,4 @@
 export const UI_PATH = '/ui';
-export const UI_CLIENT_SCRIPT_PATH = '/ui-client.js';
 export const TAB_QUERY_PARAM = 'tab';
 
 export const TAB_DASHBOARD = 'dashboard';
