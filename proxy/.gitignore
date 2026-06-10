@@ -1,9 +1,6 @@
 # Dependencies
 node_modules
 
-# Wrangler state
-.wrangler
-
 # Environment files (secrets)
 .env
 .env.local

@@ -41,12 +41,12 @@ help:
 	@echo "  make lm-studio-tunnel -> tunnel LM Studio :1234 to llm.chrisvouga.dev"
 	@echo "  make lm-studio-stop   -> stop tunnel only (LM Studio keeps running)"
 	@echo ""
-	@echo "Proxy (Cloudflare Worker):"
+	@echo "Proxy (Fly.io):"
 	@echo "  make proxy-install -> bun install in proxy/"
-	@echo "  make proxy-dev     -> wrangler dev (vault personal/dev)"
+	@echo "  make proxy-dev     -> bun server locally (vault personal/dev)"
 	@echo "  make proxy-check   -> type-check proxy"
 	@echo "  make proxy-test    -> usage tracking e2e + query tests (vault personal/dev)"
-	@echo "  make proxy-deploy  -> deploy worker (requires vault)"
+	@echo "  make proxy-deploy  -> deploy to Fly.io (requires flyctl + vault)"
 	@echo "  make proxy-db      -> run database migrations"
 	@echo ""
 	@echo "Chat:"
@@ -206,7 +206,7 @@ proxy-test:
 	@cd "$(CURDIR)/proxy" && vault run --project personal --config dev -- bun test
 
 proxy-deploy:
-	@cd "$(CURDIR)/proxy" && vault run --config prd -- wrangler deploy
+	@cd "$(CURDIR)/proxy" && vault run --config prd -- sh -c 'IMAGE_TAG=latest bash scripts/deploy.sh'
 
 proxy-db:
 	@cd "$(CURDIR)/proxy" && vault run --config prd -- bash database/setup.sh

@@ -60,6 +60,7 @@ jobs:
     permissions:
       id-token: write
       contents: read
+      packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -73,31 +74,47 @@ jobs:
           role: github-actions
           jwtGithubAudience: https://vault.chrisvouga.dev
           secrets: |
+            secret/data/personal/dev FLY_API_TOKEN | FLY_API_TOKEN ;
+            secret/data/personal/dev DATABASE_URL | DATABASE_URL ;
             secret/data/personal/dev CLOUDFLARE_API_TOKEN | CLOUDFLARE_API_TOKEN ;
-            secret/data/personal/dev DATABASE_URL | DATABASE_URL
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
+            secret/data/personal/dev CLOUDFLARE_ACCOUNT_ID | CLOUDFLARE_ACCOUNT_ID
 
       - name: Run database migrations
         working-directory: proxy
         run: bash database/setup.sh
 
-      - name: Install wrangler CLI
-        run: npm install -g wrangler
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Install proxy dependencies
-        working-directory: proxy
-        run: bun install
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Deploy to Cloudflare Workers
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: proxy
+          push: true
+          tags: |
+            ghcr.io/crvouga/llm-proxy:${{ github.sha }}
+            ghcr.io/crvouga/llm-proxy:latest
+
+      - name: Setup Flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy LLM Proxy (Fly.io, DNS, Worker cleanup)
         working-directory: proxy
-        run: |
-          # Wrangler authenticates with CLOUDFLARE_API_TOKEN from Vault.
-          printf "%s" "$DATABASE_URL" | wrangler secret put DATABASE_URL
-          test -n "$CLOUDFLARE_API_TOKEN" && wrangler deploy
+        env:
+          FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+          CLOUDFLARE_API_TOKEN: ${{ env.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: bash scripts/deploy.sh
 
   api-smoke-tests:
     name: API Smoke Tests
@@ -134,9 +151,17 @@ jobs:
       - name: Wait for deployment to be ready
         timeout-minutes: 5
         run: |
-          echo "Waiting 30 seconds for deployment to initialize..."
-          sleep 30
-          echo "Deployment should be ready now."
+          url="https://llm-proxy.chrisvouga.dev/"
+          for i in $(seq 1 30); do
+            code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$url" || true)"
+            if [ "$code" = "200" ] || [ "$code" = "302" ] || [ "$code" = "301" ]; then
+              echo "Deployment ready (HTTP ${code})"
+              exit 0
+            fi
+            echo "Attempt ${i}/30: HTTP ${code:-000} — waiting 10s"
+            sleep 10
+          done
+          echo "Warning: deployment health check timed out; running smoke tests anyway"
 
       - name: Run API smoke tests
         env:

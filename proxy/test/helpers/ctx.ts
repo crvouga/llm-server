@@ -1,5 +1,7 @@
 /** Collects waitUntil promises so tests can await async logging before DB assertions. */
 
+import type { ExecutionContext } from 'hono';
+
 export interface TestExecutionContext {
   ctx: ExecutionContext;
   drain: () => Promise<void>;
@@ -15,6 +17,7 @@ export function createTestCtx(): TestExecutionContext {
     passThroughOnException() {
       // no-op for tests
     },
+    props: {},
   };
 
   return {

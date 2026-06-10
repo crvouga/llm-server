@@ -1,24 +1,27 @@
 # LLM Proxy
 
-Transparent Cloudflare Worker that forwards all requests to a configurable backend while logging raw request/response data to PostgreSQL.
+Transparent HTTP proxy that forwards all requests to a configurable backend while logging raw request/response data to PostgreSQL. Runs as a Bun server in Docker, deployed on Fly.io at `llm-proxy.chrisvouga.dev`.
 
 ## Architecture
 
 ```
-Client → llm-proxy.chrisvouga.dev → Cloudflare Worker → backend (from config table)
+Client → llm-proxy.chrisvouga.dev → Fly.io (Docker/Bun) → backend (from config table)
                                               ↓
                                          PostgreSQL (config + raw JSONB logs)
 ```
 
-The upstream backend URL is stored in `llm_proxy.config` — not in environment variables or worker code. Until that row exists, proxied requests return **503 Proxy not configured**.
+The upstream backend URL is stored in `llm_proxy.config` — not in environment variables or app code. Until that row exists, proxied requests return **503 Proxy not configured**.
 
 ## Prerequisites
 
-- Cloudflare account with Workers access
-- Secret store at `https://vault.chrisvouga.dev` with secrets at `secret/personal/<config>`:
-  - `DATABASE_URL` - PostgreSQL connection string in HTTP API format (Supabase/PlanetScale)
-  - `CLOUDFLARE_API_TOKEN` - API token for deployment
-  - `CLOUDFLARE_ACCOUNT_ID` - Your Cloudflare account ID
+Vault secrets at `secret/personal/dev` (used by CI on push to `main`):
+
+| Secret | Purpose |
+|--------|---------|
+| `DATABASE_URL` | PostgreSQL connection string (Neon HTTP API format) |
+| `FLY_API_TOKEN` | Fly.io deploy token |
+| `CLOUDFLARE_API_TOKEN` | DNS updates + Worker cleanup |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account for API calls |
 
 ## Setup
 
@@ -43,48 +46,50 @@ The upstream backend URL is stored in `llm_proxy.config` — not in environment 
 
    Or manually run the schema from [`database/schema.sql`](database/schema.sql), then insert the row above.
 
-   Legacy manual schema (http_log only):
-   ```sql
-   CREATE SCHEMA IF NOT EXISTS llm_proxy;
-
-   CREATE TABLE IF NOT EXISTS llm_proxy.http_log (
-     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-     request_method VARCHAR(16) NOT NULL,
-     request_path TEXT NOT NULL,
-     request_query_params JSONB,
-     request_headers JSONB,
-     request_body JSONB,
-     response_status_code SMALLINT NOT NULL,
-     response_headers JSONB,
-     response_body JSONB,
-     response_error_message TEXT
-   );
-
-   CREATE INDEX IF NOT EXISTS idx_http_log_created_at ON llm_proxy.http_log(created_at DESC);
-   CREATE INDEX IF NOT EXISTS idx_http_log_request_method ON llm_proxy.http_log(request_method);
-   CREATE INDEX IF NOT EXISTS idx_http_log_request_path ON llm_proxy.http_log(request_path);
-
-   CREATE TABLE IF NOT EXISTS llm_proxy.config (
-     id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-     backend_url TEXT NOT NULL,
-     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-   );
-   ```
-
 3. **Install dependencies**:
    ```bash
    bun install
    ```
 
-4. **Deploy to Cloudflare Workers**:
+4. **Run locally**:
    ```bash
-   # Ensure the secret store is configured and secrets are loaded
-   vault setup --project personal --config prd
-
-   # Deploy the worker
-   vault run --config prd -- wrangler deploy
+   vault login
+   vault setup --project personal --config dev
+   bun run dev
    ```
+
+   Server listens on `http://localhost:8080` by default (`PORT` env overrides).
+
+## Deployment
+
+Push to `main` runs the full pipeline automatically:
+
+1. Type-check and test
+2. Run database migrations
+3. Build and push Docker image to `ghcr.io/crvouga/llm-proxy`
+4. Set GHCR package visibility to public
+5. Create Fly app `llm-proxy` if missing, sync secrets, deploy image
+6. Remove legacy Cloudflare Worker + custom domain
+7. Point `llm-proxy.chrisvouga.dev` DNS (Cloudflare CNAME → `llm-proxy.fly.dev`)
+8. Ensure Fly TLS certificate and wait for HTTPS
+9. Run API smoke tests
+
+Implementation: [`scripts/deploy.sh`](scripts/deploy.sh), invoked from [`.github/workflows/deployment-pipeline.yml`](../.github/workflows/deployment-pipeline.yml).
+
+Images:
+
+```
+ghcr.io/crvouga/llm-proxy:<git-sha>
+ghcr.io/crvouga/llm-proxy:latest
+```
+
+Local deploy (same script as CI, requires vault `prd` config with all secrets above):
+
+```bash
+IMAGE_TAG=latest bash scripts/deploy.sh
+```
+
+Or from repo root: `make proxy-deploy`
 
 ## Proxy config
 
@@ -94,7 +99,7 @@ The upstream backend URL is stored in `llm_proxy.config` — not in environment 
 | `backend_url` | TEXT | Upstream origin, e.g. `https://lm-studio.example.com` |
 | `updated_at` | TIMESTAMPTZ | Last time the backend URL was changed |
 
-The worker reads `backend_url` from this table on each request (cached for 30 seconds per isolate). If the row is missing or the URL is invalid, proxied requests return:
+The proxy reads `backend_url` from this table on each request (cached for 30 seconds per process). If the row is missing or the URL is invalid, proxied requests return:
 
 ```json
 { "error": "Proxy not configured", "details": "Set llm_proxy.config.backend_url" }
@@ -191,11 +196,18 @@ vault login
 vault setup --project personal --config dev
 bun run dev
 
-# Build dashboard client bundle (charts + sortable table)
-bun run build:client
+# Run without vault (DATABASE_URL must be set)
+DATABASE_URL='...' bun run start
 
 # Type-check without deploying
 bun run check
+```
+
+### Docker
+
+```bash
+docker build -t llm-proxy proxy/
+docker run -e DATABASE_URL='...' -p 8080:8080 llm-proxy
 ```
 
 ## Testing
@@ -214,7 +226,7 @@ Pure summarization tests run without a database. Query and e2e suites seed rows 
 
 ## Dashboard
 
-Open `/dashboard` on the Worker (e.g. `https://llm-proxy.chrisvouga.dev/dashboard`). The legacy `/usage-dashboard` path redirects here.
+Open `/ui` on the proxy (e.g. `https://llm-proxy.chrisvouga.dev/ui`). Legacy `/dashboard` and `/usage-dashboard` paths redirect here.
 
 - **All-time default** — loads full usage history on first visit; filter by date range as needed
 - **Per-model analytics** — requests, prompt/completion/total tokens, avg per request, share of total
@@ -225,8 +237,4 @@ Open `/dashboard` on the Worker (e.g. `https://llm-proxy.chrisvouga.dev/dashboar
 
 Only responses with a `usage` field are included in dashboard totals. For streaming chat completions (`text/event-stream`), the proxy tees the stream, parses SSE chunks after the response completes, and logs usage from the final chunk. The proxy also injects `stream_options.include_usage: true` on outbound streaming requests when the client omits it, so compatible backends emit token counts in the stream.
 
-Implementation lives in [`src/dashboard/`](src/dashboard/). Build the client bundle before deploy:
-
-```bash
-bun run build:client
-```
+Implementation lives in [`src/dashboard/`](src/dashboard/).

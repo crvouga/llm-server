@@ -2,9 +2,11 @@
 // Forwards all requests to LM Studio and logs raw request/response data to PostgreSQL
 
 import { neon, NeonDbError } from '@neondatabase/serverless';
+import { serveStatic } from 'hono/bun';
 import { Hono } from 'hono';
 
 import { fetchBackendUrl } from './proxy-state';
+import { waitUntil } from './wait-until';
 import { parseSseStream } from './stream-logging';
 import { prepareProxyRequestBody } from './thinking-default';
 import { uiRoute } from './ui';
@@ -113,9 +115,12 @@ function buildBackendRequestHeaders(request: Request, requestUrl: URL): Headers 
   });
   requestHeaders.set('X-Forwarded-Host', requestUrl.host);
 
-  const cfIp = request.headers.get('CF-Connecting-IP');
-  if (cfIp) {
-    requestHeaders.set('X-Forwarded-For', cfIp);
+  const clientIp =
+    request.headers.get('CF-Connecting-IP') ??
+    request.headers.get('Fly-Client-IP') ??
+    request.headers.get('X-Forwarded-For');
+  if (clientIp) {
+    requestHeaders.set('X-Forwarded-For', clientIp);
   }
 
   return requestHeaders;
@@ -145,6 +150,8 @@ export function createApp(): Hono<AppEnv> {
   });
 
   app.route('/', uiRoute);
+
+  app.use('*', serveStatic({ root: './public' }));
 
   app.all('*', async (c) => {
     const env = c.env;
@@ -194,7 +201,8 @@ export function createApp(): Hono<AppEnv> {
       if (contentType.includes('text/event-stream') && response.body) {
         const [clientStream, logStream] = response.body.tee();
 
-        c.executionCtx.waitUntil(
+        waitUntil(
+          c.executionCtx,
           (async () => {
             const { responseBody, durationMs, ttftMs } = await parseSseStream(logStream, startedAt);
             await logRequest(
@@ -226,7 +234,8 @@ export function createApp(): Hono<AppEnv> {
       const responseBody = await readJsonResponseBody(response);
       const durationMs = Math.max(1, Date.now() - startedAt);
 
-      c.executionCtx.waitUntil(
+      waitUntil(
+        c.executionCtx,
         logRequest(
           env,
           requestId,
@@ -251,7 +260,8 @@ export function createApp(): Hono<AppEnv> {
         headers: response.headers,
       });
     } catch (error) {
-      c.executionCtx.waitUntil(
+      waitUntil(
+        c.executionCtx,
         logRequest(
           env,
           requestId,
@@ -273,5 +283,3 @@ export function createApp(): Hono<AppEnv> {
 
   return app;
 }
-
-export default createApp();

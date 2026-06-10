@@ -8,7 +8,6 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "types": [
-      "@cloudflare/workers-types",
       "bun-types"
     ],
     "jsx": "react-jsx",
