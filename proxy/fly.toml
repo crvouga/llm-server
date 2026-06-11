@@ -1,4 +1,4 @@
-app = "llm-proxy"
+app = "chrisvouga-llm-proxy"
 primary_region = "sjc"
 
 [http_service]

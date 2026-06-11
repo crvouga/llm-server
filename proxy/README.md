@@ -68,9 +68,9 @@ Push to `main` runs the full pipeline automatically:
 2. Run database migrations
 3. Build and push Docker image to `ghcr.io/crvouga/llm-proxy`
 4. Set GHCR package visibility to public
-5. Create Fly app `llm-proxy` if missing, sync secrets, deploy image
+5. Create Fly app `chrisvouga-llm-proxy` if missing, sync secrets, deploy image
 6. Remove legacy Cloudflare Worker + custom domain
-7. Point `llm-proxy.chrisvouga.dev` DNS (Cloudflare CNAME → `llm-proxy.fly.dev`)
+7. Point `llm-proxy.chrisvouga.dev` DNS (Cloudflare CNAME → `chrisvouga-llm-proxy.fly.dev`)
 8. Ensure Fly TLS certificate and wait for HTTPS
 9. Run API smoke tests
 

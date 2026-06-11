@@ -4,9 +4,10 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-FLY_APP="${FLY_APP:-llm-proxy}"
+FLY_APP="${FLY_APP:-chrisvouga-llm-proxy}"
 FLY_HOSTNAME="${FLY_HOSTNAME:-${FLY_APP}.fly.dev}"
 CUSTOM_DOMAIN="${CUSTOM_DOMAIN:-llm-proxy.chrisvouga.dev}"
+WORKER_SCRIPT_NAME="${WORKER_SCRIPT_NAME:-llm-proxy}"
 GHCR_PACKAGE="${GHCR_PACKAGE:-llm-proxy}"
 IMAGE_TAG="${IMAGE_TAG:?IMAGE_TAG is required}"
 GHCR_IMAGE="ghcr.io/crvouga/${GHCR_PACKAGE}:${IMAGE_TAG}"
@@ -66,11 +67,19 @@ ensure_ghcr_public() {
 
 ensure_fly_app() {
   echo "Ensuring Fly app ${FLY_APP} exists..."
-  if flyctl apps list --json | jq -e --arg name "$FLY_APP" '.[] | select(.Name == $name)' >/dev/null; then
+  if flyctl apps list --json | jq -e --arg name "$FLY_APP" '.[] | select(.Name == $name or .name == $name)' >/dev/null; then
     echo "Fly app ${FLY_APP} already exists"
     return 0
   fi
-  flyctl apps create "$FLY_APP" --yes
+  if flyctl apps create "$FLY_APP" --yes; then
+    return 0
+  fi
+  if flyctl apps list --json | jq -e --arg name "$FLY_APP" '.[] | select(.Name == $name or .name == $name)' >/dev/null; then
+    echo "Fly app ${FLY_APP} exists after create attempt"
+    return 0
+  fi
+  echo "Error: failed to create Fly app ${FLY_APP}" >&2
+  return 1
 }
 
 ensure_fly_secrets() {
@@ -126,13 +135,13 @@ remove_cf_worker() {
 
   local script_status
   script_status="$(curl -sS -o /dev/null -w '%{http_code}' \
-    -X GET "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${FLY_APP}" \
+    -X GET "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${WORKER_SCRIPT_NAME}" \
     -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}")"
   if [ "$script_status" = "200" ]; then
-    echo "  deleting worker script ${FLY_APP}"
-    cf_api DELETE "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${FLY_APP}" | jq -e '.success' >/dev/null
+    echo "  deleting worker script ${WORKER_SCRIPT_NAME}"
+    cf_api DELETE "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${WORKER_SCRIPT_NAME}" | jq -e '.success' >/dev/null
   else
-    echo "  worker script ${FLY_APP} not present (HTTP ${script_status})"
+    echo "  worker script ${WORKER_SCRIPT_NAME} not present (HTTP ${script_status})"
   fi
 }
 
