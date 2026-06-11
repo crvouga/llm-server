@@ -9,8 +9,16 @@ FLY_HOSTNAME="${FLY_HOSTNAME:-${FLY_APP}.fly.dev}"
 CUSTOM_DOMAIN="${CUSTOM_DOMAIN:-llm-proxy.chrisvouga.dev}"
 WORKER_SCRIPT_NAME="${WORKER_SCRIPT_NAME:-llm-proxy}"
 GHCR_PACKAGE="${GHCR_PACKAGE:-llm-proxy}"
-IMAGE_TAG="${IMAGE_TAG:?IMAGE_TAG is required}"
-GHCR_IMAGE="ghcr.io/crvouga/${GHCR_PACKAGE}:${IMAGE_TAG}"
+IMAGE_REGISTRY="${IMAGE_REGISTRY:-ghcr.io/crvouga}"
+
+if [ -n "${CONTAINER_IMAGE:-}" ]; then
+  :
+elif [ -n "${IMAGE_TAG:-}" ]; then
+  CONTAINER_IMAGE="${IMAGE_REGISTRY}/${GHCR_PACKAGE}:${IMAGE_TAG}"
+else
+  echo "Error: set CONTAINER_IMAGE or IMAGE_TAG" >&2
+  exit 1
+fi
 
 require_env() {
   local name="$1"
@@ -160,9 +168,26 @@ ensure_fly_secrets() {
   flyctl secrets set "DATABASE_URL=${DATABASE_URL}" --app "$FLY_APP"
 }
 
+verify_container_image() {
+  echo "Verifying container image is published: ${CONTAINER_IMAGE}"
+  if command -v docker >/dev/null 2>&1; then
+    docker manifest inspect "${CONTAINER_IMAGE}" >/dev/null
+    echo "Image found in registry"
+    return 0
+  fi
+  echo "docker not available — skipping registry manifest check"
+}
+
 deploy_fly() {
-  echo "Deploying ${GHCR_IMAGE} to Fly..."
-  flyctl deploy --remote-only --image "$GHCR_IMAGE" --app "$FLY_APP"
+  verify_container_image
+  echo "Deploying pre-built container to Fly (no source build): ${CONTAINER_IMAGE}"
+  flyctl deploy \
+    --app "$FLY_APP" \
+    --config fly.toml \
+    --image "$CONTAINER_IMAGE" \
+    --remote-only \
+    --ha=false \
+    --yes
 }
 
 ensure_fly_cert() {

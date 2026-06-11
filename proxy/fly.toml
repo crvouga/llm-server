@@ -1,6 +1,9 @@
 app = "chrisvouga-llm-proxy"
 primary_region = "sjc"
 
+# No [build] section — CI publishes a container image; Fly only runs it via:
+#   flyctl deploy --image "$CONTAINER_IMAGE" --remote-only
+
 [http_service]
   internal_port = 8080
   force_https = true

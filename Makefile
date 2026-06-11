@@ -206,7 +206,7 @@ proxy-test:
 	@cd "$(CURDIR)/proxy" && vault run --project personal --config dev -- bun test
 
 proxy-deploy:
-	@cd "$(CURDIR)/proxy" && vault run --config prd -- sh -c 'IMAGE_TAG=latest bash scripts/deploy.sh'
+	@cd "$(CURDIR)/proxy" && vault run --config prd -- sh -c 'CONTAINER_IMAGE=ghcr.io/crvouga/llm-proxy:latest bash scripts/deploy.sh'
 
 proxy-db:
 	@cd "$(CURDIR)/proxy" && vault run --config prd -- bash database/setup.sh

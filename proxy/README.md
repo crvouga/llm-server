@@ -62,19 +62,27 @@ Vault secrets at `secret/personal/dev` (used by CI on push to `main`):
 
 ## Deployment
 
+The app is packaged as a **provider-neutral OCI container**. CI builds and pushes the image; Fly.io (or any runtime) only pulls and runs that image.
+
 Push to `main` runs the full pipeline automatically:
 
 1. Type-check and test
 2. Run database migrations
-3. Build and push Docker image to `ghcr.io/crvouga/llm-proxy`
-4. Set GHCR package visibility to public
-5. Create Fly app `chrisvouga-llm-proxy` if missing, sync secrets, deploy image
+3. Build and push container image to `ghcr.io/crvouga/llm-proxy`
+4. Verify the image exists in the registry
+5. Deploy the **pre-built image** to Fly (`flyctl deploy --image … --remote-only`; no Fly build step)
 6. Remove legacy Cloudflare Worker + custom domain
 7. Point `llm-proxy.chrisvouga.dev` DNS (Cloudflare CNAME → `chrisvouga-llm-proxy.fly.dev`)
 8. Ensure Fly TLS certificate and wait for HTTPS
 9. Run API smoke tests
 
-Implementation: [`scripts/deploy.sh`](scripts/deploy.sh), invoked from [`.github/workflows/deployment-pipeline.yml`](../.github/workflows/deployment-pipeline.yml).
+The same image can be run elsewhere without changes:
+
+```bash
+docker run -e DATABASE_URL='...' -p 8080:8080 ghcr.io/crvouga/llm-proxy:latest
+```
+
+Implementation: [`scripts/deploy.sh`](scripts/deploy.sh) (accepts `CONTAINER_IMAGE`), invoked from [`.github/workflows/deployment-pipeline.yml`](../.github/workflows/deployment-pipeline.yml).
 
 Images:
 
@@ -86,7 +94,7 @@ ghcr.io/crvouga/llm-proxy:latest
 Local deploy (same script as CI, requires vault `prd` config with all secrets above):
 
 ```bash
-IMAGE_TAG=latest bash scripts/deploy.sh
+CONTAINER_IMAGE=ghcr.io/crvouga/llm-proxy:latest bash scripts/deploy.sh
 ```
 
 Or from repo root: `make proxy-deploy`
