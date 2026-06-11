@@ -36,6 +36,79 @@ cf_api() {
   curl "${args[@]}"
 }
 
+cf_log_errors() {
+  local label="$1"
+  local resp="$2"
+  echo "$resp" | jq -r --arg label "$label" '
+    if .success == true then empty
+    else
+      $label + " failed:",
+      (.errors[]? | "  [\(.code)] \(.message)"),
+      (if (.errors | length) == 0 then "  (no error details in response)" else empty end)
+    end' >&2
+}
+
+cf_ok() {
+  local resp="$1"
+  echo "$resp" | jq -e '.success == true' >/dev/null
+}
+
+cf_delete_worker_script() {
+  local script_status delete_resp
+  script_status="$(curl -sS -o /dev/null -w '%{http_code}' \
+    -X GET "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${WORKER_SCRIPT_NAME}" \
+    -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}")"
+  if [ "$script_status" = "404" ]; then
+    echo "  worker script ${WORKER_SCRIPT_NAME} not present"
+    return 0
+  fi
+  if [ "$script_status" != "200" ]; then
+    echo "  worker script lookup returned HTTP ${script_status} (continuing)"
+    return 0
+  fi
+  echo "  deleting worker script ${WORKER_SCRIPT_NAME}"
+  delete_resp="$(cf_api DELETE "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${WORKER_SCRIPT_NAME}")"
+  if cf_ok "$delete_resp"; then
+    echo "  worker script deleted"
+    return 0
+  fi
+  cf_log_errors "Worker script delete" "$delete_resp"
+  return 1
+}
+
+cf_delete_worker_domains() {
+  local domains_resp domain_ids
+  domains_resp="$(cf_api GET "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/domains")"
+  if ! cf_ok "$domains_resp"; then
+    cf_log_errors "Worker domains list" "$domains_resp"
+    return 1
+  fi
+
+  domain_ids="$(echo "$domains_resp" | jq -r --arg host "$CUSTOM_DOMAIN" '.result[]? | select(.hostname == $host) | .id')"
+  if [ -z "$domain_ids" ]; then
+    echo "  no worker custom domain for ${CUSTOM_DOMAIN}"
+    return 0
+  fi
+
+  local domain_id delete_resp
+  while IFS= read -r domain_id; do
+    [ -z "$domain_id" ] && continue
+    echo "  deleting worker domain ${domain_id} (${CUSTOM_DOMAIN})"
+    delete_resp="$(cf_api DELETE "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/domains/${domain_id}")"
+    if cf_ok "$delete_resp"; then
+      echo "  worker domain deleted"
+      continue
+    fi
+    cf_log_errors "Worker domain delete" "$delete_resp"
+    # Domain may already be gone after script deletion; treat missing-domain as success.
+    if echo "$delete_resp" | jq -e '.errors[]? | select(.code == 10000 or .code == 10001 or .code == 7003)' >/dev/null; then
+      echo "  worker domain already removed"
+      continue
+    fi
+    return 1
+  done <<< "$domain_ids"
+}
+
 cf_zone_id() {
   local hostname="$1"
   local zone_name="${hostname#*.}"
@@ -116,43 +189,29 @@ ensure_fly_cert() {
 
 remove_cf_worker() {
   echo "Removing Cloudflare Worker custom domain and script (if present)..."
+  local failed=0
 
-  local domains_resp
-  domains_resp="$(cf_api GET "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/domains")"
-  echo "$domains_resp" | jq -e '.success' >/dev/null
+  # Delete script first — custom domains are often released automatically.
+  cf_delete_worker_script || failed=1
+  sleep 2
+  cf_delete_worker_domains || failed=1
 
-  local domain_ids
-  domain_ids="$(echo "$domains_resp" | jq -r --arg host "$CUSTOM_DOMAIN" '.result[]? | select(.hostname == $host) | .id')"
-  if [ -n "$domain_ids" ]; then
-    while IFS= read -r domain_id; do
-      [ -z "$domain_id" ] && continue
-      echo "  deleting worker domain ${domain_id} (${CUSTOM_DOMAIN})"
-      cf_api DELETE "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/domains/${domain_id}" | jq -e '.success' >/dev/null
-    done <<< "$domain_ids"
-  else
-    echo "  no worker custom domain for ${CUSTOM_DOMAIN}"
-  fi
-
-  local script_status
-  script_status="$(curl -sS -o /dev/null -w '%{http_code}' \
-    -X GET "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${WORKER_SCRIPT_NAME}" \
-    -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}")"
-  if [ "$script_status" = "200" ]; then
-    echo "  deleting worker script ${WORKER_SCRIPT_NAME}"
-    cf_api DELETE "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${WORKER_SCRIPT_NAME}" | jq -e '.success' >/dev/null
-  else
-    echo "  worker script ${WORKER_SCRIPT_NAME} not present (HTTP ${script_status})"
+  if [ "$failed" -ne 0 ]; then
+    echo "Warning: Worker cleanup had errors; continuing with DNS cutover" >&2
   fi
 }
 
 ensure_cf_dns() {
   echo "Ensuring Cloudflare DNS: ${CUSTOM_DOMAIN} → ${FLY_HOSTNAME}"
-  local zone_id record_name resp records rec_id rec_content
+  local zone_id record_name resp records rec_id rec_content write_resp
   zone_id="$(cf_zone_id "$CUSTOM_DOMAIN")"
   record_name="${CUSTOM_DOMAIN%%.*}"
 
   resp="$(cf_api GET "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records?type=CNAME&name=${CUSTOM_DOMAIN}")"
-  echo "$resp" | jq -e '.success' >/dev/null
+  if ! cf_ok "$resp"; then
+    cf_log_errors "DNS list" "$resp"
+    return 1
+  fi
   records="$(echo "$resp" | jq '.result')"
   rec_content="${FLY_HOSTNAME}"
 
@@ -166,14 +225,18 @@ ensure_cf_dns() {
       return 0
     fi
     echo "  updating DNS record ${rec_id}"
-    cf_api PUT "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records/${rec_id}" \
+    write_resp="$(cf_api PUT "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records/${rec_id}" \
       "$(jq -nc --arg name "$record_name" --arg content "$rec_content" \
-        '{type:"CNAME",name:$name,content:$content,proxied:true}')" | jq -e '.success' >/dev/null
+        '{type:"CNAME",name:$name,content:$content,proxied:true}')")"
   else
     echo "  creating DNS record"
-    cf_api POST "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records" \
+    write_resp="$(cf_api POST "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records" \
       "$(jq -nc --arg name "$record_name" --arg content "$rec_content" \
-        '{type:"CNAME",name:$name,content:$content,proxied:true}')" | jq -e '.success' >/dev/null
+        '{type:"CNAME",name:$name,content:$content,proxied:true}')")"
+  fi
+  if ! cf_ok "$write_resp"; then
+    cf_log_errors "DNS write" "$write_resp"
+    return 1
   fi
   echo "DNS routed: ${CUSTOM_DOMAIN} → ${rec_content} (proxied)"
 }
