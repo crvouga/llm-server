@@ -47,5 +47,5 @@ jobs:
       DEPLOY_DISPATCH_TOKEN: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
     with:
       service_id: llm-proxy
-      dockerfile: ./Dockerfile
-      context: proxy
+      dockerfile: proxy/Dockerfile
+      context: .
