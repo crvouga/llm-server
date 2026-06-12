@@ -48,4 +48,4 @@ jobs:
     with:
       service_id: llm-proxy
       dockerfile: proxy/Dockerfile
-      context: .
+      context: proxy
