@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "gh": "open https://github.com/crvouga/llm-server/actions",
     "start": "bun run src/server.ts",
     "start:vault": "vault run --project personal --config dev -- bun run src/server.ts",
     "dev": "bash scripts/dev.sh",
