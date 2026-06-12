@@ -52,75 +52,11 @@ jobs:
           DATABASE_URL: ${{ env.DATABASE_URL }}
         run: bun test
 
-  deploy-llm-proxy:
-    name: Deploy LLM Proxy
-    runs-on: ubuntu-latest
-    needs: check
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    permissions:
-      id-token: write
-      contents: read
-      packages: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Import secrets from Vault
-        uses: hashicorp/vault-action@v3
-        with:
-          url: https://vault.chrisvouga.dev
-          method: jwt
-          path: jwt
-          role: github-actions
-          jwtGithubAudience: https://vault.chrisvouga.dev
-          secrets: |
-            secret/data/personal/dev FLY_API_TOKEN | FLY_API_TOKEN ;
-            secret/data/personal/dev DATABASE_URL | DATABASE_URL ;
-            secret/data/personal/dev CLOUDFLARE_API_TOKEN | CLOUDFLARE_API_TOKEN ;
-            secret/data/personal/dev CLOUDFLARE_ACCOUNT_ID | CLOUDFLARE_ACCOUNT_ID
-
-      - name: Run database migrations
-        working-directory: proxy
-        run: bash database/setup.sh
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push Docker image
-        id: build-image
-        uses: docker/build-push-action@v6
-        with:
-          context: proxy
-          push: true
-          tags: |
-            ghcr.io/crvouga/llm-proxy:${{ github.sha }}
-            ghcr.io/crvouga/llm-proxy:latest
-
-      - name: Setup Flyctl
-        uses: superfly/flyctl-actions/setup-flyctl@master
-
-      - name: Deploy LLM Proxy (Fly.io, DNS, Worker cleanup)
-        working-directory: proxy
-        env:
-          FLY_API_TOKEN: ${{ env.FLY_API_TOKEN }}
-          DATABASE_URL: ${{ env.DATABASE_URL }}
-          CLOUDFLARE_API_TOKEN: ${{ env.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CONTAINER_IMAGE: ghcr.io/crvouga/llm-proxy:${{ github.sha }}
-        run: bash scripts/deploy.sh
-
   api-smoke-tests:
     name: API Smoke Tests
     runs-on: ubuntu-latest
-    needs: deploy-llm-proxy
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       id-token: write
       contents: read
@@ -150,16 +86,16 @@ jobs:
         run: pip install -r server_test/requirements.txt
 
       - name: Wait for deployment to be ready
-        timeout-minutes: 5
+        timeout-minutes: 15
         run: |
           url="https://llm-proxy.chrisvouga.dev/"
-          for i in $(seq 1 30); do
+          for i in $(seq 1 60); do
             code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$url" || true)"
             if [ "$code" = "200" ] || [ "$code" = "302" ] || [ "$code" = "301" ]; then
               echo "Deployment ready (HTTP ${code})"
               exit 0
             fi
-            echo "Attempt ${i}/30: HTTP ${code:-000} — waiting 10s"
+            echo "Attempt ${i}/60: HTTP ${code:-000} — waiting 10s"
             sleep 10
           done
           echo "Warning: deployment health check timed out; running smoke tests anyway"

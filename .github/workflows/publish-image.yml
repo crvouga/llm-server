@@ -1,0 +1,51 @@
+name: Publish image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - proxy/**
+      - .github/workflows/publish-image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  migrate:
+    name: Migrate database
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Import secrets from Vault
+        uses: hashicorp/vault-action@v3
+        with:
+          url: https://vault.chrisvouga.dev
+          method: jwt
+          path: jwt
+          role: github-actions
+          jwtGithubAudience: https://vault.chrisvouga.dev
+          secrets: |
+            secret/data/personal/prd DATABASE_URL | DATABASE_URL
+
+      - name: Run database migrations
+        working-directory: proxy
+        run: bash database/setup.sh
+
+  publish:
+    name: Publish llm-proxy image
+    needs: migrate
+    uses: crvouga/chrisvouga.dev/.github/workflows/reusable-publish-image.yml@main
+    secrets:
+      DEPLOY_DISPATCH_TOKEN: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
+    with:
+      service_id: llm-proxy
+      dockerfile: ./Dockerfile
+      context: proxy
