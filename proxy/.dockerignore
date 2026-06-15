@@ -12,4 +12,3 @@ README.md
 .prettierrc
 Dockerfile
 .dockerignore
-fly.toml

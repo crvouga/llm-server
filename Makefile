@@ -17,7 +17,7 @@ CHAT_BIN := $(CURDIR)/.chat/bin/aichat
 
 .PHONY: help server-start server-stop server-metrics server-install server-check api-check server-test run start stop kill logs status ssh \
 	lm-studio-tunnel lm-studio-stop \
-	proxy-install proxy-dev proxy-check proxy-test proxy-deploy proxy-db bench \
+	proxy-install proxy-dev proxy-check proxy-test proxy-db bench \
 	chat chat-install \
 	remote-setup-mac remote-verify pull push sync gh
 
@@ -41,12 +41,11 @@ help:
 	@echo "  make lm-studio-tunnel -> tunnel LM Studio :1234 to llm.chrisvouga.dev"
 	@echo "  make lm-studio-stop   -> stop tunnel only (LM Studio keeps running)"
 	@echo ""
-	@echo "Proxy (Fly.io):"
+	@echo "Proxy:"
 	@echo "  make proxy-install -> bun install in proxy/"
 	@echo "  make proxy-dev     -> bun server locally (vault personal/dev)"
 	@echo "  make proxy-check   -> type-check proxy"
 	@echo "  make proxy-test    -> usage tracking e2e + query tests (vault personal/dev)"
-	@echo "  make proxy-deploy  -> deploy to Fly.io (requires flyctl + vault)"
 	@echo "  make proxy-db      -> run database migrations"
 	@echo ""
 	@echo "Chat:"
@@ -204,9 +203,6 @@ proxy-check:
 
 proxy-test:
 	@cd "$(CURDIR)/proxy" && vault run --project personal --config dev -- bun test
-
-proxy-deploy:
-	@cd "$(CURDIR)/proxy" && vault run --config prd -- sh -c 'CONTAINER_IMAGE=ghcr.io/crvouga/llm-proxy:latest bash scripts/deploy.sh'
 
 proxy-db:
 	@cd "$(CURDIR)/proxy" && vault run --config prd -- bash database/setup.sh

@@ -1,13 +1,13 @@
 # llm-server
 
-Local LLM inference server (vLLM + Qwen3-Coder-Next) with Cloudflare tunnel exposure, plus a Docker/Fly.io proxy that logs API usage.
+Local LLM inference server (vLLM + Qwen3-Coder-Next) with Cloudflare tunnel exposure, plus a Docker proxy that logs API usage.
 
 ## Layout
 
 | Path | Purpose |
 | --- | --- |
 | [`server/`](server/) | vLLM/Atlas launcher (`server/server.py`) |
-| [`proxy/`](proxy/) | Fly.io proxy + usage dashboard |
+| [`proxy/`](proxy/) | HTTP proxy + usage dashboard |
 | [`remote-access/`](remote-access/) | Mac ↔ Linux remote control setup (SSH, Tailscale, NoMachine) |
 
 ## LLM server
@@ -111,13 +111,12 @@ Transparent forwarder to the LLM server with request logging. For `/v1/chat/comp
 `/v1/messages`, the proxy injects `enable_thinking: false` unless the client opts into
 reasoning (see **Thinking mode** above).
 
-Requires [Bun](https://bun.sh) for local dev. Production deploys run automatically on push to `main` via GitHub Actions (Vault secrets: `DATABASE_URL`, `FLY_API_TOKEN`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`).
+Requires [Bun](https://bun.sh) for local dev. Production deploys run via **Publish image** → infra deploy-pipeline on push to `main` (Vault secret: `DATABASE_URL`).
 
 ```bash
 make proxy-install
 make proxy-dev     # local Bun server (vault personal/dev)
 make proxy-check   # type-check
-make proxy-deploy  # deploy to Fly.io
 make proxy-db      # run database migrations
 ```
 

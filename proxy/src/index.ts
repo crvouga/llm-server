@@ -117,7 +117,6 @@ function buildBackendRequestHeaders(request: Request, requestUrl: URL): Headers 
 
   const clientIp =
     request.headers.get('CF-Connecting-IP') ??
-    request.headers.get('Fly-Client-IP') ??
     request.headers.get('X-Forwarded-For');
   if (clientIp) {
     requestHeaders.set('X-Forwarded-For', clientIp);
