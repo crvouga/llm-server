@@ -22,6 +22,7 @@
     "src/**/*.html"
   ],
   "exclude": [
-    "test/**"
+    "test/**",
+    "src/ui/client/**"
   ]
 }
