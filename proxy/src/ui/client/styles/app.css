@@ -3,19 +3,84 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-@import 'highlight.js/styles/github.css' layer(hljs-light) supports(display: block);
-@import 'highlight.js/styles/github-dark.css' layer(hljs-dark) supports(display: block);
+@import 'highlight.js/styles/github.css';
 
-@layer hljs-light {
-  .dark .hljs {
-    display: none;
-  }
+/* Dark syntax colors scoped to .dark — avoid loading github-dark.css globally (it wins over light theme). */
+.dark .markdown-body pre code.hljs {
+  color: #c9d1d9;
 }
-
-@layer hljs-dark {
-  :root:not(.dark) .hljs {
-    display: none;
-  }
+.dark .markdown-body pre code.hljs .hljs-doctag,
+.dark .markdown-body pre code.hljs .hljs-keyword,
+.dark .markdown-body pre code.hljs .hljs-meta .hljs-keyword,
+.dark .markdown-body pre code.hljs .hljs-template-tag,
+.dark .markdown-body pre code.hljs .hljs-template-variable,
+.dark .markdown-body pre code.hljs .hljs-type,
+.dark .markdown-body pre code.hljs .hljs-variable.language_ {
+  color: #ff7b72;
+}
+.dark .markdown-body pre code.hljs .hljs-title,
+.dark .markdown-body pre code.hljs .hljs-title.class_,
+.dark .markdown-body pre code.hljs .hljs-title.class_.inherited__,
+.dark .markdown-body pre code.hljs .hljs-title.function_ {
+  color: #d2a8ff;
+}
+.dark .markdown-body pre code.hljs .hljs-attr,
+.dark .markdown-body pre code.hljs .hljs-attribute,
+.dark .markdown-body pre code.hljs .hljs-literal,
+.dark .markdown-body pre code.hljs .hljs-meta,
+.dark .markdown-body pre code.hljs .hljs-number,
+.dark .markdown-body pre code.hljs .hljs-operator,
+.dark .markdown-body pre code.hljs .hljs-variable,
+.dark .markdown-body pre code.hljs .hljs-selector-attr,
+.dark .markdown-body pre code.hljs .hljs-selector-class,
+.dark .markdown-body pre code.hljs .hljs-selector-id {
+  color: #79c0ff;
+}
+.dark .markdown-body pre code.hljs .hljs-regexp,
+.dark .markdown-body pre code.hljs .hljs-string,
+.dark .markdown-body pre code.hljs .hljs-meta .hljs-string {
+  color: #a5d6ff;
+}
+.dark .markdown-body pre code.hljs .hljs-built_in,
+.dark .markdown-body pre code.hljs .hljs-symbol {
+  color: #ffa657;
+}
+.dark .markdown-body pre code.hljs .hljs-comment,
+.dark .markdown-body pre code.hljs .hljs-code,
+.dark .markdown-body pre code.hljs .hljs-formula {
+  color: #8b949e;
+}
+.dark .markdown-body pre code.hljs .hljs-name,
+.dark .markdown-body pre code.hljs .hljs-quote,
+.dark .markdown-body pre code.hljs .hljs-selector-tag,
+.dark .markdown-body pre code.hljs .hljs-selector-pseudo {
+  color: #7ee787;
+}
+.dark .markdown-body pre code.hljs .hljs-subst {
+  color: #c9d1d9;
+}
+.dark .markdown-body pre code.hljs .hljs-section {
+  color: #1f6feb;
+  font-weight: bold;
+}
+.dark .markdown-body pre code.hljs .hljs-bullet {
+  color: #f2cc60;
+}
+.dark .markdown-body pre code.hljs .hljs-emphasis {
+  color: #c9d1d9;
+  font-style: italic;
+}
+.dark .markdown-body pre code.hljs .hljs-strong {
+  color: #c9d1d9;
+  font-weight: bold;
+}
+.dark .markdown-body pre code.hljs .hljs-addition {
+  color: #aff5b4;
+  background-color: #033a16;
+}
+.dark .markdown-body pre code.hljs .hljs-deletion {
+  color: #ffdcd7;
+  background-color: #67060c;
 }
 
 .markdown-body > :first-child {
@@ -56,9 +121,9 @@
   overflow-x: auto;
   padding: 0;
   border-radius: 8px;
-  border: 1px solid rgba(128, 128, 128, 0.25);
+  border: 1px solid rgba(128, 128, 128, 0.35);
   margin: 0 0 0.85rem;
-  background: #0d1117;
+  background: #f6f8fa;
 }
 .markdown-body pre code,
 .markdown-body pre code.hljs {
@@ -73,17 +138,20 @@
 .markdown-body :not(pre) > code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.85em;
-  background: rgba(128, 128, 128, 0.15);
+  color: #24292e;
+  background: #e8eaed;
+  border: 1px solid rgba(27, 31, 36, 0.12);
   padding: 0.15rem 0.35rem;
   border-radius: 4px;
+}
+.dark .markdown-body :not(pre) > code {
+  color: #e6edf3;
+  background: rgba(110, 118, 129, 0.25);
+  border-color: rgba(240, 246, 252, 0.1);
 }
 .markdown-body pre code .hljs-comment,
 .markdown-body pre code .hljs-quote {
   font-style: italic;
-}
-:root:not(.dark) .markdown-body pre {
-  background: #f6f8fa;
-  border-color: rgba(128, 128, 128, 0.35);
 }
 .dark .markdown-body pre {
   background: #0d1117;
