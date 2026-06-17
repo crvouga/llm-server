@@ -62,12 +62,7 @@ async function loadBackendUrl(databaseUrl: string): Promise<string | null> {
     }
 
     const raw = String(rows[0].backend_url ?? '');
-    const backendUrl = normalizeBackendUrl(raw);
-    if (backendUrl && isLoopbackBackend(backendUrl)) {
-      console.error(`Ignoring loopback backend_url from database: ${backendUrl}`);
-      return null;
-    }
-    return backendUrl;
+    return normalizeBackendUrl(raw);
   } catch (error) {
     const code = error instanceof NeonDbError ? error.code : 'unknown';
     console.error(`Failed to load proxy state (code: ${code ?? 'unknown'})`);
