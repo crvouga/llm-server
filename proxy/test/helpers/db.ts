@@ -180,6 +180,25 @@ export async function cleanupTestRows(runId: string, extraIds: string[] = []): P
   }
 }
 
+export const DEFAULT_BACKEND_URL = 'https://llm.chrisvouga.dev';
+
+function isLoopbackBackend(url: string): boolean {
+  try {
+    const host = new URL(url).hostname;
+    return host === '127.0.0.1' || host === 'localhost' || host === '::1';
+  } catch {
+    return false;
+  }
+}
+
+export async function restoreBackendUrl(saved: string | null): Promise<void> {
+  if (saved && !isLoopbackBackend(saved)) {
+    await setBackendUrl(saved);
+    return;
+  }
+  await setBackendUrl(DEFAULT_BACKEND_URL);
+}
+
 export async function getBackendUrl(): Promise<string | null> {
   const sql = sqlClient();
   const rows = await sql`

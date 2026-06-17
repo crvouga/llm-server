@@ -11,6 +11,7 @@ import {
   getBackendUrl,
   requireDatabaseUrl,
   sentinelModel,
+  restoreBackendUrl,
   setBackendUrl,
   todayIsoDate,
 } from './helpers/db';
@@ -38,7 +39,7 @@ describe('proxy usage tracking e2e', () => {
   afterAll(async () => {
     mock.stop();
     if (originalBackendUrl) {
-      await setBackendUrl(originalBackendUrl);
+      await restoreBackendUrl(originalBackendUrl);
     }
     await cleanupTestRows(runId, extraLogIds);
   });
@@ -191,7 +192,7 @@ describe('proxy usage tracking e2e', () => {
     } finally {
       streamMock.stop();
       if (prevBackend) {
-        await setBackendUrl(prevBackend);
+        await restoreBackendUrl(prevBackend);
       }
     }
   });
@@ -236,7 +237,7 @@ describe('proxy usage tracking e2e', () => {
     } finally {
       timingMock.stop();
       if (prevBackend) {
-        await setBackendUrl(prevBackend);
+        await restoreBackendUrl(prevBackend);
       }
     }
   });
@@ -293,7 +294,7 @@ describe('proxy usage tracking e2e', () => {
     } finally {
       usageOnlyMock.stop();
       if (prevBackend) {
-        await setBackendUrl(prevBackend);
+        await restoreBackendUrl(prevBackend);
       }
     }
   });
@@ -348,7 +349,7 @@ describe('proxy usage tracking e2e', () => {
     } finally {
       timingMock.stop();
       if (prevBackend) {
-        await setBackendUrl(prevBackend);
+        await restoreBackendUrl(prevBackend);
       }
     }
   });
@@ -401,7 +402,7 @@ describe('proxy usage tracking e2e - multi request', () => {
   afterAll(async () => {
     mock.stop();
     if (originalBackendUrl) {
-      await setBackendUrl(originalBackendUrl);
+      await restoreBackendUrl(originalBackendUrl);
     }
     await cleanupTestRows(runId);
   });
@@ -440,7 +441,7 @@ describe('proxy usage tracking e2e - response edge cases', () => {
 
   afterAll(async () => {
     if (originalBackendUrl) {
-      await setBackendUrl(originalBackendUrl);
+      await restoreBackendUrl(originalBackendUrl);
     }
     await cleanupTestRows(runId, extraLogIds);
   });

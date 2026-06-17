@@ -33,7 +33,7 @@ Production runtime env is synced from Vault via infra deploy-pipeline.
 2. **Configure the backend URL** (required before the proxy will forward traffic):
    ```sql
    INSERT INTO llm_proxy.config (backend_url)
-   VALUES ('https://lm-studio.chrisvouga.dev');
+   VALUES ('https://llm.chrisvouga.dev');
    ```
 
 3. **Install dependencies**:

@@ -16,5 +16,6 @@ exec vault run --project personal --config dev -- sh -c '
     exit 1
   fi
   export PORT="${PORT:-8080}"
+  bun run scripts/ensure-backend-url.ts
   exec bun run src/server.ts "$@"
 ' sh "$@"
