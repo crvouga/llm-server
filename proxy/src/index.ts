@@ -6,7 +6,7 @@ import { serveStatic } from 'hono/bun';
 import { Hono } from 'hono';
 
 import { isBackendProxiedPath } from './proxy-paths';
-import { fetchBackendUrl } from './proxy-state';
+import { fetchBackendConfig } from './proxy-state';
 import { waitUntil } from './wait-until';
 import { parseSseStream } from './stream-logging';
 import { prepareProxyRequestBody } from './thinking-default';
@@ -126,6 +126,12 @@ function buildBackendRequestHeaders(request: Request, requestUrl: URL): Headers 
   return requestHeaders;
 }
 
+function applyBackendHeaders(requestHeaders: Headers, backendHeaders: Record<string, string>): void {
+  for (const [key, value] of Object.entries(backendHeaders)) {
+    requestHeaders.set(key, value);
+  }
+}
+
 async function readJsonResponseBody(response: Response): Promise<unknown | null> {
   const contentType = response.headers.get('content-type') || '';
   if (!contentType.includes('application/json')) {
@@ -174,8 +180,8 @@ export function createApp(): Hono<AppEnv> {
       return c.json({ error: 'Proxy not configured', details: 'DATABASE_URL is not set' }, 503);
     }
 
-    const backendUrl = await fetchBackendUrl(env.DATABASE_URL);
-    if (!backendUrl) {
+    const backendConfig = await fetchBackendConfig(env.DATABASE_URL);
+    if (!backendConfig.backendUrl) {
       return c.json(
         {
           error: 'Proxy not configured',
@@ -186,7 +192,7 @@ export function createApp(): Hono<AppEnv> {
     }
 
     const backendPath = requestUrl.pathname + requestUrl.search;
-    const targetUrl = `${backendUrl}${backendPath}`;
+    const targetUrl = `${backendConfig.backendUrl}${backendPath}`;
     console.log(`[${requestId}] -> ${targetUrl}`);
 
     const { body: requestBody, parsed: requestPayload } = await prepareProxyRequestBody(
@@ -194,6 +200,7 @@ export function createApp(): Hono<AppEnv> {
       path,
     );
     const requestHeaders = buildBackendRequestHeaders(request, requestUrl);
+    applyBackendHeaders(requestHeaders, backendConfig.backendHeaders);
     if (typeof requestBody === 'string') {
       requestHeaders.set('Content-Length', String(new TextEncoder().encode(requestBody).length));
     }

@@ -10,7 +10,7 @@ Client → llm-proxy.chrisvouga.dev → Docker/Bun on infra origin → backend (
                                          PostgreSQL (config + raw JSONB logs)
 ```
 
-The upstream backend URL is stored in `llm_proxy.config` — not in environment variables or app code. Until that row exists, proxied requests return **503 Proxy not configured**.
+The upstream backend URL and optional auth headers are stored in `llm_proxy.config` — not in environment variables or app code. Until that row exists, proxied requests return **503 Proxy not configured**.
 
 ## Prerequisites
 
@@ -30,11 +30,16 @@ Production runtime env is synced from Vault via infra deploy-pipeline.
    ./proxy/database/setup.sh
    ```
 
-2. **Configure the backend URL** (required before the proxy will forward traffic):
+2. **Configure the backend** (required before the proxy will forward traffic):
    ```sql
-   INSERT INTO llm_proxy.config (backend_url)
-   VALUES ('https://your-llm-api.example');
+   INSERT INTO llm_proxy.config (backend_url, backend_headers)
+   VALUES (
+     'https://your-llm-api.example',
+     '{"Authorization":"Bearer sk-..."}'::jsonb
+   );
    ```
+
+   Or use the **Backend** card in the UI at `/ui` to set the URL and upstream headers.
 
 3. **Install dependencies**:
    ```bash
@@ -63,8 +68,9 @@ docker run -e DATABASE_URL='...' -p 8080:8080 ghcr.io/crvouga/chrisvouga-llm-pro
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | SMALLINT | Always `1` (singleton row) |
-| `backend_url` | TEXT | Upstream origin, e.g. `https://lm-studio.example.com` |
-| `updated_at` | TIMESTAMPTZ | Last time the backend URL was changed |
+| `backend_url` | TEXT | Upstream origin, e.g. `https://api.openai.com` or `https://lm-studio.example.com` |
+| `backend_headers` | JSONB | Upstream request headers (API keys, bearer tokens, etc.) |
+| `updated_at` | TIMESTAMPTZ | Last time the backend config was changed |
 
 ## Development
 

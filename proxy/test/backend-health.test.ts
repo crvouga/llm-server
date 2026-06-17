@@ -95,4 +95,24 @@ describe('checkOpenAiBackendHealth', () => {
     expect(result.checks.reachable).toBe(false);
     expect(result.error).toContain('connection refused');
   });
+
+  test('forwards configured headers to /v1/models', async () => {
+    let capturedHeaders: HeadersInit | undefined;
+    const result = await checkOpenAiBackendHealth('https://llm.example', {
+      headers: { Authorization: 'Bearer sk-test' },
+      fetchImpl: async (_url, init) => {
+        capturedHeaders = init?.headers;
+        return new Response(
+          JSON.stringify({
+            object: 'list',
+            data: [{ id: 'model-a', object: 'model' }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(capturedHeaders).toEqual({ Authorization: 'Bearer sk-test' });
+  });
 });

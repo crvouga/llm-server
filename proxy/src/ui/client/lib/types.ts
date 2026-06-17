@@ -72,6 +72,7 @@ export interface InvestmentSaveBody {
 
 export interface BackendConfig {
   backendUrl: string | null;
+  backendHeaders: Record<string, string>;
 }
 
 export interface BackendHealthChecks {
@@ -93,6 +94,12 @@ export interface BackendHealthResult {
   checkedAt: string;
 }
 
+export interface BackendHeaderEntry {
+  name: string;
+  value: string;
+}
+
 export interface BackendConfigSaveBody {
   backendUrl: string;
+  backendHeaders?: BackendHeaderEntry[];
 }

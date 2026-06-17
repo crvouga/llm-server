@@ -1,3 +1,4 @@
+import type { BackendHeaders } from './backend-headers';
 import { parseBackendUrlInput } from './proxy-state';
 
 export interface BackendHealthChecks {
@@ -22,6 +23,7 @@ export interface BackendHealthResult {
 export interface CheckOpenAiBackendHealthOptions {
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
+  headers?: BackendHeaders;
 }
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -87,6 +89,7 @@ export async function checkOpenAiBackendHealth(
   try {
     const response = await fetchImpl(`${normalized}/v1/models`, {
       method: 'GET',
+      headers: options.headers,
       signal: AbortSignal.timeout(timeoutMs),
     });
     httpStatus = response.status;

@@ -14,7 +14,7 @@ import { parseFiltersFromQuery } from '../dashboard/lib/query-params';
 import { buildClientPayload } from '../dashboard/lib/summary';
 import type { DashboardEnv, DashboardFilters, ModelCostRates } from '../dashboard/types';
 import { checkOpenAiBackendHealth } from '../backend-health';
-import { fetchBackendUrl, getBackendConfig, saveBackendUrl } from '../proxy-state';
+import { fetchBackendConfig, getBackendConfig, saveBackendConfig } from '../proxy-state';
 import {
   COST_RATES_PATH,
   DASHBOARD_DATA_API_PATH,
@@ -46,6 +46,7 @@ interface InvestmentPostBody {
 
 interface BackendConfigPostBody {
   backendUrl?: string;
+  backendHeaders?: unknown;
 }
 
 function parsePostDefaultRates(body: CostRatesPostBody, fallback: ModelCostRates): ModelCostRates {
@@ -314,13 +315,15 @@ uiRoute.get(MODELS_API_PATH, async (c) => {
     return c.json({ error: 'DATABASE_URL not configured' }, 503);
   }
 
-  const backendUrl = await fetchBackendUrl(c.env.DATABASE_URL);
-  if (!backendUrl) {
+  const backendConfig = await fetchBackendConfig(c.env.DATABASE_URL);
+  if (!backendConfig.backendUrl) {
     return c.json({ error: 'Proxy not configured', data: [] }, 503);
   }
 
   try {
-    const response = await fetch(`${backendUrl}/v1/models`);
+    const response = await fetch(`${backendConfig.backendUrl}/v1/models`, {
+      headers: backendConfig.backendHeaders,
+    });
     const body = await response.text();
     return new Response(body, {
       status: response.status,
@@ -357,11 +360,20 @@ uiRoute.post(BACKEND_CONFIG_PATH, async (c) => {
   try {
     const body = (await c.req.json()) as BackendConfigPostBody;
     const rawUrl = typeof body.backendUrl === 'string' ? body.backendUrl : '';
-    await saveBackendUrl(c.env.DATABASE_URL, rawUrl);
+    await saveBackendConfig(c.env.DATABASE_URL, {
+      backendUrl: rawUrl,
+      backendHeaders: body.backendHeaders,
+    });
     const config = await getBackendConfig(c.env.DATABASE_URL);
     return c.json({ ok: true, ...config });
   } catch (error) {
     if (error instanceof Error && error.message === 'Invalid backend URL') {
+      return c.json({ error: error.message }, 400);
+    }
+    if (error instanceof Error && error.message.startsWith('Invalid header')) {
+      return c.json({ error: error.message }, 400);
+    }
+    if (error instanceof Error && error.message.startsWith('Header not allowed')) {
       return c.json({ error: error.message }, 400);
     }
     const code = error instanceof NeonDbError ? error.code : 'unknown';
@@ -399,7 +411,9 @@ uiRoute.post(BACKEND_HEALTH_PATH, async (c) => {
       );
     }
 
-    const result = await checkOpenAiBackendHealth(config.backendUrl);
+    const result = await checkOpenAiBackendHealth(config.backendUrl, {
+      headers: config.backendHeaders,
+    });
     return c.json(result, result.ok ? 200 : 503);
   } catch (error) {
     const code = error instanceof NeonDbError ? error.code : 'unknown';
