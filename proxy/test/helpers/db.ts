@@ -1,5 +1,5 @@
 import { neon } from '@neondatabase/serverless';
-import { resetBackendUrlCache } from '../../src/proxy-state';
+import { DEFAULT_BACKEND_URL, resetBackendUrlCache } from '../../src/proxy-state';
 import type { DailyUsageRow, RawModelUsageRow } from '../../src/dashboard/types';
 
 export function requireDatabaseUrl(): string {
@@ -179,8 +179,6 @@ export async function cleanupTestRows(runId: string, extraIds: string[] = []): P
     `;
   }
 }
-
-export const DEFAULT_BACKEND_URL = 'https://llm.chrisvouga.dev';
 
 function isLoopbackBackend(url: string): boolean {
   try {

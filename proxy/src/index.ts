@@ -180,6 +180,7 @@ export function createApp(): Hono<AppEnv> {
 
     const backendPath = requestUrl.pathname + requestUrl.search;
     const targetUrl = `${backendUrl}${backendPath}`;
+    console.log(`[${requestId}] -> ${targetUrl}`);
 
     const { body: requestBody, parsed: requestPayload } = await prepareProxyRequestBody(
       request,

@@ -18,6 +18,8 @@ import {
 import { startMockBackend } from './helpers/mock-backend';
 import { proxyRequest } from './helpers/proxy';
 
+delete process.env.LLM_PROXY_BACKEND_URL;
+
 const runId = createRunId();
 let databaseUrl = '';
 const model = sentinelModel(runId, 'e2e');

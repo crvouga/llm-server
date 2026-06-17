@@ -3,6 +3,7 @@
 import { neon, NeonDbError } from '@neondatabase/serverless';
 
 const CACHE_TTL_MS = 30_000;
+export const DEFAULT_BACKEND_URL = 'https://llm.chrisvouga.dev';
 
 let cachedBackendUrl: string | null | undefined;
 let cacheExpiresAt = 0;
@@ -27,15 +28,6 @@ function normalizeBackendUrl(raw: string): string | null {
   } catch {
     console.error(`Invalid proxy backend_url: ${trimmed}`);
     return null;
-  }
-}
-
-function isLoopbackBackend(url: string): boolean {
-  try {
-    const host = new URL(url).hostname;
-    return host === '127.0.0.1' || host === 'localhost' || host === '::1';
-  } catch {
-    return false;
   }
 }
 

@@ -1,8 +1,7 @@
 /** Ensure llm_proxy.config.backend_url points at the public LLM API. */
 
 import { neon } from '@neondatabase/serverless';
-
-const DEFAULT_BACKEND_URL = 'https://llm.chrisvouga.dev';
+import { DEFAULT_BACKEND_URL } from '../src/proxy-state';
 
 function isLoopbackBackend(url: string): boolean {
   try {
