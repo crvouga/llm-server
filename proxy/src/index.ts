@@ -139,6 +139,13 @@ async function readJsonResponseBody(response: Response): Promise<unknown | null>
   }
 }
 
+function sanitizeProxyResponseHeaders(headers: Headers): Headers {
+  const sanitized = new Headers(headers);
+  sanitized.delete('content-encoding');
+  sanitized.delete('content-length');
+  return sanitized;
+}
+
 export function createApp(): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
 
@@ -233,12 +240,13 @@ export function createApp(): Hono<AppEnv> {
         return new Response(clientStream, {
           status: response.status,
           statusText: response.statusText,
-          headers: response.headers,
+          headers: sanitizeProxyResponseHeaders(response.headers),
         });
       }
 
       const responseBody = await readJsonResponseBody(response);
       const durationMs = Math.max(1, Date.now() - startedAt);
+      const forwardHeaders = sanitizeProxyResponseHeaders(response.headers);
 
       waitUntil(
         c.executionCtx,
@@ -263,7 +271,7 @@ export function createApp(): Hono<AppEnv> {
       return new Response(response.body, {
         status: response.status,
         statusText: response.statusText,
-        headers: response.headers,
+        headers: forwardHeaders,
       });
     } catch (error) {
       waitUntil(
