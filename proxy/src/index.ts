@@ -5,6 +5,7 @@ import { neon, NeonDbError } from '@neondatabase/serverless';
 import { serveStatic } from 'hono/bun';
 import { Hono } from 'hono';
 
+import { isBackendProxiedPath } from './proxy-paths';
 import { fetchBackendUrl } from './proxy-state';
 import { waitUntil } from './wait-until';
 import { parseSseStream } from './stream-logging';
@@ -150,14 +151,17 @@ export function createApp(): Hono<AppEnv> {
 
   app.route('/', uiRoute);
 
-  app.use('*', serveStatic({ root: './public' }));
+  app.all('*', async (c, next) => {
+    const path = c.req.path || '/';
+    if (!isBackendProxiedPath(path)) {
+      await next();
+      return;
+    }
 
-  app.all('*', async (c) => {
-    const env = c.env;
+    const env = c.env ?? { DATABASE_URL: '' };
     const request = c.req.raw;
     const requestId = c.get('requestId');
     const requestUrl = new URL(request.url);
-    const path = c.req.path || '/';
 
     if (!env.DATABASE_URL) {
       return c.json({ error: 'Proxy not configured', details: 'DATABASE_URL is not set' }, 503);
@@ -279,6 +283,8 @@ export function createApp(): Hono<AppEnv> {
       return c.json({ error: 'Backend unavailable', details: String(error) }, 503);
     }
   });
+
+  app.use('*', serveStatic({ root: './public' }));
 
   return app;
 }

@@ -72,4 +72,22 @@ describe('ui route', () => {
     expect(response.status).toBe(301);
     expect(response.headers.get('location')).toBe('/ui?tab=chat');
   });
+
+  test('GET /v1/models is routed to backend proxy, not static or UI', async () => {
+    const app = createApp();
+    const response = await app.fetch(new Request('http://proxy.test/v1/models'));
+
+    expect(response.status).toBe(503);
+    const json = (await response.json()) as { error?: string };
+    expect(json.error).toBe('Proxy not configured');
+  });
+
+  test('GET /.well-known paths are not forwarded to backend proxy', async () => {
+    const app = createApp();
+    const response = await app.fetch(
+      new Request('http://proxy.test/.well-known/appspecific/com.chrome.devtools.json'),
+    );
+
+    expect(response.status).toBe(404);
+  });
 });
