@@ -66,11 +66,11 @@ export function SortableTable({
     <div className="min-w-0 w-full max-w-full overflow-x-auto -mx-2 px-2">
       <table className="w-full min-w-[640px] text-xs md:text-sm">
         <thead>
-          <tr className="border-b border-slate-200 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:border-slate-700">
+          <tr className="border-b border-separator text-left text-xs font-semibold uppercase tracking-wide text-muted">
             {TABLE_COLUMNS.map((col) => (
               <th
                 key={col.key}
-                className={`cursor-pointer px-3 py-2 hover:text-slate-900 dark:hover:text-slate-200 ${col.numeric ? 'text-right' : ''}`}
+                className={`cursor-pointer px-3 py-2 hover:text-foreground ${col.numeric ? 'text-right' : ''}`}
                 onClick={() => onHeaderClick(col.key)}
               >
                 {col.label}
@@ -81,11 +81,11 @@ export function SortableTable({
         </thead>
         <tbody>
           {sortedRows.map((row) => (
-            <tr key={String(row.model)} className="border-b border-slate-100 dark:border-slate-800">
+            <tr key={String(row.model)} className="border-b border-separator/60">
               {TABLE_COLUMNS.map((col) => (
                 <td key={col.key} className={`px-3 py-2 ${col.numeric ? 'text-right tabular-nums' : ''}`}>
                   {col.key === 'model' ? (
-                    <code className="rounded bg-blue-50 px-1.5 py-0.5 text-xs dark:bg-blue-950">
+                    <code className="rounded bg-accent-soft px-1.5 py-0.5 text-xs text-accent-soft-foreground">
                       {row.model}
                     </code>
                   ) : (
@@ -95,7 +95,7 @@ export function SortableTable({
               ))}
             </tr>
           ))}
-          <tr className="border-t-2 border-slate-300 font-semibold dark:border-slate-600">
+          <tr className="border-t-2 border-separator font-semibold">
             <td className="px-3 py-2">Total</td>
             <td className="px-3 py-2 text-right tabular-nums">{formatInt(totals.requestCount as number)}</td>
             <td className="px-3 py-2 text-right tabular-nums">{formatInt(totals.promptTokens as number)}</td>

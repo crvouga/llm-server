@@ -103,7 +103,7 @@ export function InvestmentSection({ investmentState }: InvestmentSectionProps) {
   const savingOnly = saveInvestment.isPending && !calculating;
 
   return (
-    <Card className="mb-6 min-w-0 w-full max-w-full border-emerald-200 bg-linear-to-br from-emerald-50 to-white dark:border-emerald-900 dark:from-emerald-950 dark:to-slate-900">
+    <Card className="mb-6 min-w-0 w-full max-w-full border-emerald-200 bg-linear-to-br from-emerald-50 to-background dark:border-emerald-900 dark:from-emerald-950">
       <Card.Header>
         <Card.Title>Investment &amp; break-even</Card.Title>
         <Card.Description>
@@ -120,12 +120,12 @@ export function InvestmentSection({ investmentState }: InvestmentSectionProps) {
               <div className="mt-1 text-2xl font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
                 {metrics ? formatUsd(metrics.totalSavingsToDateUsd ?? 0) : '—'}
               </div>
-              <div className="mt-1 text-sm text-slate-500">Estimated cloud cost avoided so far</div>
+              <div className="mt-1 text-sm text-muted">Estimated cloud cost avoided so far</div>
             </Card.Content>
           </Card>
           <Card variant="secondary">
             <Card.Content className="p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted">
                 Remaining to break even
               </div>
               <div className="mt-1 text-2xl font-bold tabular-nums">
@@ -135,11 +135,11 @@ export function InvestmentSection({ investmentState }: InvestmentSectionProps) {
           </Card>
           <Card variant="secondary" className="md:col-span-2">
             <Card.Content className="p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted">
                 {preview?.hasBrokenEven ? 'Break-even reached' : 'Projected break-even date'}
               </div>
               <div className="mt-1 text-2xl font-bold tabular-nums">{breakEvenLabel}</div>
-              <div className="mt-1 text-sm text-slate-500">
+              <div className="mt-1 text-sm text-muted">
                 {preview?.hasBrokenEven
                   ? 'Cumulative estimated cloud savings have covered the investment.'
                   : preview?.effectiveDailySpendUsd
@@ -152,9 +152,9 @@ export function InvestmentSection({ investmentState }: InvestmentSectionProps) {
 
         <div className="mt-5 grid gap-4 md:grid-cols-2">
           <label className="block text-sm">
-            <span className="mb-1 block font-semibold text-slate-500">Investment (USD)</span>
+            <span className="mb-1 block font-semibold text-muted">Investment (USD)</span>
             <div className="flex items-center gap-1">
-              <span className="text-sm font-semibold text-slate-500">$</span>
+              <span className="text-sm font-semibold text-muted">$</span>
               <Input
                 type="number"
                 value={investmentInput}
@@ -167,7 +167,7 @@ export function InvestmentSection({ investmentState }: InvestmentSectionProps) {
             </div>
           </label>
           <label className="block text-sm">
-            <span className="mb-1 block font-semibold text-slate-500">Projected daily spend (USD)</span>
+            <span className="mb-1 block font-semibold text-muted">Projected daily spend (USD)</span>
             <Input
               type="number"
               value={projectedDailyInput}
@@ -181,7 +181,7 @@ export function InvestmentSection({ investmentState }: InvestmentSectionProps) {
               onChange={(event) => setProjectedDailyInput(event.currentTarget.value)}
               fullWidth
             />
-            <p className="mt-1 text-xs text-slate-500">
+            <p className="mt-1 text-xs text-muted">
               Leave blank to use the historical average (
               {metrics?.historicalAverageDailySpendUsd == null
                 ? '—'

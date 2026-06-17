@@ -1,4 +1,5 @@
 import { useDashboardQuery, useInvestmentQuery } from '../hooks/queries';
+import { PAGE_CONTENT_CLASS, PAGE_PADDING_CLASS } from '../lib/layout';
 import { Alert, Card, Spinner } from '@heroui/react';
 import { Charts } from './Charts';
 import { FilterForm } from './FilterForm';
@@ -34,7 +35,7 @@ export function DashboardView({ search }: DashboardViewProps) {
   const isInitialLoad = isPending && data === undefined;
 
   return (
-    <div className="dashboard-shell mx-auto w-full max-w-7xl flex-1 overflow-y-auto px-4 py-6 md:px-6">
+    <div className={`dashboard-shell ${PAGE_CONTENT_CLASS} ${PAGE_PADDING_CLASS} flex-1 overflow-y-auto py-6`}>
       {isInitialLoad ? (
         <div className="flex min-h-64 items-center justify-center py-12" aria-busy="true">
           <Spinner size="lg" />
@@ -93,7 +94,7 @@ export function DashboardView({ search }: DashboardViewProps) {
               </Card>
             </>
           ) : (
-            <p className="text-sm text-slate-500">No chat completion usage found for this date range.</p>
+            <p className="text-sm text-muted">No chat completion usage found for this date range.</p>
           )}
         </>
       ) : null}

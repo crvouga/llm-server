@@ -29,19 +29,21 @@ export function App() {
         onRefresh={tab === TAB_DASHBOARD ? refreshDashboard : undefined}
         onClearChat={tab === TAB_CHAT ? () => clearChatRef.current?.() : undefined}
       />
-      {tab === TAB_DASHBOARD ? (
-        <ErrorBoundary>
-          <DashboardView search={search} />
-        </ErrorBoundary>
-      ) : (
-        <ErrorBoundary>
-          <ChatView
-            onRegisterClear={(clear) => {
-              clearChatRef.current = clear;
-            }}
-          />
-        </ErrorBoundary>
-      )}
+      <main className="flex min-h-0 flex-1 flex-col">
+        {tab === TAB_DASHBOARD ? (
+          <ErrorBoundary>
+            <DashboardView search={search} />
+          </ErrorBoundary>
+        ) : (
+          <ErrorBoundary>
+            <ChatView
+              onRegisterClear={(clear) => {
+                clearChatRef.current = clear;
+              }}
+            />
+          </ErrorBoundary>
+        )}
+      </main>
     </div>
   );
 }

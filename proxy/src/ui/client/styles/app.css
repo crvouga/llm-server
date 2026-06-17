@@ -1,24 +1,20 @@
 @import 'tailwindcss';
 @import '@heroui/styles';
 
-@custom-variant dark (&:where(@media (prefers-color-scheme: dark), *));
+@custom-variant dark (&:where(.dark, .dark *));
 
 @import 'highlight.js/styles/github.css' layer(hljs-light) supports(display: block);
 @import 'highlight.js/styles/github-dark.css' layer(hljs-dark) supports(display: block);
 
 @layer hljs-light {
-  @media (prefers-color-scheme: dark) {
-    .hljs {
-      display: none;
-    }
+  .dark .hljs {
+    display: none;
   }
 }
 
 @layer hljs-dark {
-  @media (prefers-color-scheme: light) {
-    .hljs {
-      display: none;
-    }
+  :root:not(.dark) .hljs {
+    display: none;
   }
 }
 
@@ -85,16 +81,18 @@
 .markdown-body pre code .hljs-quote {
   font-style: italic;
 }
-@media (prefers-color-scheme: light) {
-  .markdown-body pre {
-    background: #f6f8fa;
-    border-color: rgba(128, 128, 128, 0.35);
-  }
+:root:not(.dark) .markdown-body pre {
+  background: #f6f8fa;
+  border-color: rgba(128, 128, 128, 0.35);
+}
+.dark .markdown-body pre {
+  background: #0d1117;
+  border-color: rgba(128, 128, 128, 0.25);
 }
 .markdown-body blockquote {
   border-left: 3px solid rgba(128, 128, 128, 0.35);
   padding-left: 0.85rem;
-  color: #64748b;
+  color: var(--muted);
 }
 .markdown-body table {
   width: 100%;
@@ -108,39 +106,21 @@
   padding: 0.45rem 0.65rem;
   text-align: left;
 }
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-.spinner {
-  display: inline-block;
-  border: 2px solid currentColor;
-  border-right-color: transparent;
-  border-radius: 50%;
-  animation: spin 0.65s linear infinite;
-  flex-shrink: 0;
-}
-.spinner-sm {
-  width: 0.9rem;
-  height: 0.9rem;
-}
-.spinner-lg {
-  width: 2.25rem;
-  height: 2.25rem;
-  border-width: 3px;
-}
 html {
   overflow-y: scroll;
+  color-scheme: light;
+}
+html.dark {
+  color-scheme: dark;
 }
 body,
 #root {
   width: 100%;
   max-width: 100%;
+  background-color: var(--background);
+  color: var(--foreground);
 }
 .dashboard-shell {
-  width: 100%;
-  max-width: 100%;
   min-width: 0;
   box-sizing: border-box;
 }

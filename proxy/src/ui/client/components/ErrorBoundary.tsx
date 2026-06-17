@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { PAGE_CONTENT_NARROW_CLASS, PAGE_PADDING_CLASS } from '../lib/layout';
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -26,7 +27,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   render() {
     if (this.state.hasError) {
       return (
-        <div className="mx-auto max-w-3xl px-4 py-8">
+        <div className={`${PAGE_CONTENT_NARROW_CLASS} ${PAGE_PADDING_CLASS} py-8`}>
           <div className="rounded-xl border border-red-200 bg-red-50 p-6 dark:border-red-900 dark:bg-red-950">
             <h2 className="text-lg font-semibold text-red-600 dark:text-red-400">Something went wrong</h2>
             {this.state.error != null && (

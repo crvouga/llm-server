@@ -5,8 +5,29 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
     <title>LLM Proxy</title>
     <link rel="icon" href="/favicon.ico" />
+    <script>
+      (function () {
+        var KEY = 'llm-proxy-theme';
+        var mode = 'system';
+        try {
+          var stored = localStorage.getItem(KEY);
+          if (stored === 'light' || stored === 'dark' || stored === 'system') mode = stored;
+        } catch (e) {}
+        var dark =
+          mode === 'dark' ||
+          (mode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        var root = document.documentElement;
+        if (dark) {
+          root.classList.add('dark');
+          root.dataset.theme = 'dark';
+        } else {
+          root.dataset.theme = 'light';
+        }
+        root.dataset.themeMode = mode;
+      })();
+    </script>
   </head>
-  <body class="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+  <body class="min-h-screen antialiased">
     <div id="root"></div>
     <script type="module" src="/main.tsx"></script>
   </body>

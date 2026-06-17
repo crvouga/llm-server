@@ -1,6 +1,9 @@
 import Chart from 'chart.js/auto';
 import { useEffect, useRef } from 'react';
 
+const chartPanelClass =
+  'min-w-0 w-full max-w-full rounded-xl border border-separator bg-surface p-5 shadow-sm';
+
 interface ChartData {
   labels: string[];
   totalTokens: number[];
@@ -20,8 +23,9 @@ export function Charts({ data }: { data: ChartData | null }) {
   useEffect(() => {
     if (!data || (data.labels.length === 0 && data.dailyLabels.length === 0)) return;
 
-    const textColor = '#64748b';
-    const gridColor = 'rgba(128,128,128,0.15)';
+    const isDark = document.documentElement.classList.contains('dark');
+    const textColor = isDark ? '#94a3b8' : '#64748b';
+    const gridColor = isDark ? 'rgba(148,163,184,0.15)' : 'rgba(128,128,128,0.15)';
     const isMobile = window.innerWidth < 768;
     const charts: Chart[] = [];
     let resizeObserver: ResizeObserver | null = null;
@@ -249,25 +253,25 @@ export function Charts({ data }: { data: ChartData | null }) {
     >
       {data.labels.length > 0 ? (
         <>
-          <div className="min-w-0 w-full max-w-full rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className={chartPanelClass}>
             <h3 className="mb-4 text-sm font-semibold">Total tokens per model</h3>
             <div className="chart-wrap tall">
               <canvas id="chart-tokens-per-model" />
             </div>
           </div>
-          <div className="min-w-0 w-full max-w-full rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className={chartPanelClass}>
             <h3 className="mb-4 text-sm font-semibold">Token share by model</h3>
             <div className="chart-wrap tall">
               <canvas id="chart-share" />
             </div>
           </div>
-          <div className="min-w-0 w-full max-w-full rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 md:col-span-2">
+          <div className={`${chartPanelClass} md:col-span-2`}>
             <h3 className="mb-4 text-sm font-semibold">Prompt vs completion tokens per model</h3>
             <div className="chart-wrap">
               <canvas id="chart-stacked-tokens" />
             </div>
           </div>
-          <div className="min-w-0 w-full max-w-full rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 md:col-span-2">
+          <div className={`${chartPanelClass} md:col-span-2`}>
             <h3 className="mb-4 text-sm font-semibold">Estimated cloud cost per model</h3>
             <div className="chart-wrap">
               <canvas id="chart-cost" />
@@ -276,7 +280,7 @@ export function Charts({ data }: { data: ChartData | null }) {
         </>
       ) : null}
       {data.dailyLabels.length > 0 ? (
-        <div className="min-w-0 w-full max-w-full rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 md:col-span-2">
+        <div className={`${chartPanelClass} md:col-span-2`}>
           <h3 className="mb-4 text-sm font-semibold">Daily token usage over time</h3>
           <div className="chart-wrap">
             <canvas id="chart-daily" />

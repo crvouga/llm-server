@@ -9,6 +9,7 @@ import {
   TextArea,
 } from '@heroui/react';
 import { useChatCompletionMutation, useModelsQuery } from '../hooks/queries';
+import { PAGE_CONTENT_NARROW_CLASS, PAGE_PADDING_CLASS } from '../lib/layout';
 import { computeTokensPerSecond, formatDurationMs, formatInt, formatTps } from '../lib/format';
 import { MarkdownContent } from './MarkdownContent';
 
@@ -38,10 +39,10 @@ export function MessageMetrics({ message }: MessageMetricsProps) {
   const tokensPerSecond = computeTokensPerSecond(totalTokens, durationMs);
 
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-slate-200/70 pt-3 text-xs text-slate-500 dark:border-slate-700/70 dark:text-slate-400">
+    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-separator/70 pt-3 text-xs text-muted">
       {model ? (
         <>
-          <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[0.8rem] text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+          <code className="rounded bg-default px-1.5 py-0.5 font-mono text-[0.8rem] text-foreground">
             {model}
           </code>
           <span aria-hidden="true">·</span>
@@ -53,7 +54,7 @@ export function MessageMetrics({ message }: MessageMetricsProps) {
       <span aria-hidden="true">·</span>
       <span className="tabular-nums">{formatDurationMs(durationMs)}</span>
       <span aria-hidden="true">·</span>
-      <span className="tabular-nums font-medium text-slate-600 dark:text-slate-300">
+      <span className="tabular-nums font-medium text-foreground">
         {formatTps(tokensPerSecond)} tok/s
       </span>
     </div>
@@ -214,9 +215,9 @@ export function ChatView({ onRegisterClear }: ChatViewProps) {
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div ref={messagesRef} className="flex-1 overflow-y-auto pb-40" aria-live="polite">
         {messages.length === 0 ? (
-          <p className="flex min-h-full items-center justify-center p-8 text-center text-slate-500">
-            How can I help you today?
-          </p>
+          <div className={`${PAGE_CONTENT_NARROW_CLASS} ${PAGE_PADDING_CLASS} flex min-h-full items-center justify-center py-8`}>
+            <p className="text-center text-muted">How can I help you today?</p>
+          </div>
         ) : (
           messages.map((message, index) => {
             const isAssistant = message.role === 'assistant';
@@ -225,12 +226,12 @@ export function ChatView({ onRegisterClear }: ChatViewProps) {
             return (
               <div
                 key={`${message.role}-${index}`}
-                className={`border-b border-slate-200/60 ${isAssistant ? 'bg-transparent' : 'bg-slate-100 dark:bg-slate-900'}`}
+                className={`border-b border-separator/60 ${isAssistant ? 'bg-transparent' : 'bg-default'}`}
               >
-                <div className="mx-auto max-w-3xl px-4 py-5 md:px-6">
+                <div className={`${PAGE_CONTENT_NARROW_CLASS} ${PAGE_PADDING_CLASS} py-5`}>
                   {isAssistant ? (
                     isStreaming ? (
-                      <p className="italic text-slate-500">Thinking…</p>
+                      <p className="italic text-muted">Thinking…</p>
                     ) : (
                       <>
                         <MarkdownContent content={message.content} />
@@ -249,8 +250,8 @@ export function ChatView({ onRegisterClear }: ChatViewProps) {
         )}
       </div>
 
-      <div className="fixed bottom-0 left-0 right-0 z-50 bg-linear-to-t from-slate-50 via-slate-50/95 to-transparent px-4 pb-4 pt-3 dark:from-slate-950 dark:via-slate-950/95">
-        <div className="mx-auto flex max-w-3xl flex-col gap-2">
+      <div className={`fixed bottom-0 left-0 right-0 z-50 bg-linear-to-t from-background via-background/95 to-transparent ${PAGE_PADDING_CLASS} pb-4 pt-3`}>
+        <div className={`${PAGE_CONTENT_NARROW_CLASS} flex flex-col gap-2`}>
           {error ? (
             <Alert status="danger">
               <Alert.Indicator />
@@ -259,7 +260,7 @@ export function ChatView({ onRegisterClear }: ChatViewProps) {
               </Alert.Content>
             </Alert>
           ) : null}
-          <div className="flex items-end gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-lg dark:border-slate-700 dark:bg-slate-900">
+          <div className="flex items-end gap-2 rounded-2xl border border-separator bg-surface p-2 shadow-lg">
             <TextArea
               ref={textareaRef}
               className="min-h-6 max-h-40 flex-1 resize-none border-0 bg-transparent px-2 py-1 text-base touch-manipulation"
@@ -301,7 +302,7 @@ export function ChatView({ onRegisterClear }: ChatViewProps) {
           </div>
           <div className="flex flex-wrap items-center justify-between gap-2 px-1">
             <label className="flex min-w-0 flex-1 items-center gap-2 text-sm">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Model</span>
+              <span className="text-xs font-semibold uppercase tracking-wide text-muted">Model</span>
               {models.length > 0 ? (
                 <Select
                   className="min-w-0 flex-1"
@@ -337,7 +338,7 @@ export function ChatView({ onRegisterClear }: ChatViewProps) {
               )}
             </label>
             {loadingModels ? (
-              <span className="inline-flex items-center gap-2 text-xs text-slate-500">
+              <span className="inline-flex items-center gap-2 text-xs text-muted">
                 <Spinner size="sm" />
                 Loading models…
               </span>
