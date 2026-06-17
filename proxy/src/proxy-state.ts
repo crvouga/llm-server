@@ -30,6 +30,23 @@ function normalizeBackendUrl(raw: string): string | null {
   }
 }
 
+function isLoopbackBackend(url: string): boolean {
+  try {
+    const host = new URL(url).hostname;
+    return host === '127.0.0.1' || host === 'localhost' || host === '::1';
+  } catch {
+    return false;
+  }
+}
+
+function readEnvBackendUrl(): string | null {
+  const raw = process.env.LLM_PROXY_BACKEND_URL?.trim();
+  if (!raw) {
+    return null;
+  }
+  return normalizeBackendUrl(raw);
+}
+
 async function loadBackendUrl(databaseUrl: string): Promise<string | null> {
   try {
     const sql = neon(databaseUrl);
@@ -45,7 +62,12 @@ async function loadBackendUrl(databaseUrl: string): Promise<string | null> {
     }
 
     const raw = String(rows[0].backend_url ?? '');
-    return normalizeBackendUrl(raw);
+    const backendUrl = normalizeBackendUrl(raw);
+    if (backendUrl && isLoopbackBackend(backendUrl)) {
+      console.error(`Ignoring loopback backend_url from database: ${backendUrl}`);
+      return null;
+    }
+    return backendUrl;
   } catch (error) {
     const code = error instanceof NeonDbError ? error.code : 'unknown';
     console.error(`Failed to load proxy state (code: ${code ?? 'unknown'})`);
@@ -54,6 +76,11 @@ async function loadBackendUrl(databaseUrl: string): Promise<string | null> {
 }
 
 export async function fetchBackendUrl(databaseUrl: string): Promise<string | null> {
+  const envUrl = readEnvBackendUrl();
+  if (envUrl) {
+    return envUrl;
+  }
+
   if (!databaseUrl) {
     return null;
   }

@@ -193,8 +193,10 @@ export function createApp(): Hono<AppEnv> {
     const init: RequestInit = {
       method: request.method,
       headers: requestHeaders,
-      body: requestBody,
     };
+    if (requestBody != null && request.method !== 'GET' && request.method !== 'HEAD') {
+      init.body = requestBody;
+    }
 
     try {
       const startedAt = Date.now();
@@ -280,7 +282,10 @@ export function createApp(): Hono<AppEnv> {
         ),
       );
 
-      return c.json({ error: 'Backend unavailable', details: String(error) }, 503);
+      return c.json(
+        { error: 'Backend unavailable', details: String(error), target: targetUrl },
+        503,
+      );
     }
   });
 

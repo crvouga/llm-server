@@ -119,6 +119,10 @@ export async function prepareProxyRequestBody(
   request: Request,
   path: string,
 ): Promise<{ body: BodyInit | null; parsed: unknown | null }> {
+  if (request.method === 'GET' || request.method === 'HEAD') {
+    return { body: null, parsed: null };
+  }
+
   if (request.method !== 'POST' || !isChatCompletionPath(path)) {
     return { body: request.body, parsed: null };
   }
