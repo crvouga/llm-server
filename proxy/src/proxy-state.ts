@@ -3,12 +3,15 @@
 import { neon, NeonDbError } from '@neondatabase/serverless';
 
 const CACHE_TTL_MS = 30_000;
-export const DEFAULT_BACKEND_URL = 'https://llm.chrisvouga.dev';
+
+export interface BackendConfig {
+  backendUrl: string | null;
+}
 
 let cachedBackendUrl: string | null | undefined;
 let cacheExpiresAt = 0;
 
-function normalizeBackendUrl(raw: string): string | null {
+export function parseBackendUrlInput(raw: string): string | null {
   const trimmed = raw.trim();
   if (!trimmed) {
     return null;
@@ -31,14 +34,6 @@ function normalizeBackendUrl(raw: string): string | null {
   }
 }
 
-function readEnvBackendUrl(): string | null {
-  const raw = process.env.LLM_PROXY_BACKEND_URL?.trim();
-  if (!raw) {
-    return null;
-  }
-  return normalizeBackendUrl(raw);
-}
-
 async function loadBackendUrl(databaseUrl: string): Promise<string | null> {
   try {
     const sql = neon(databaseUrl);
@@ -54,7 +49,7 @@ async function loadBackendUrl(databaseUrl: string): Promise<string | null> {
     }
 
     const raw = String(rows[0].backend_url ?? '');
-    return normalizeBackendUrl(raw);
+    return parseBackendUrlInput(raw);
   } catch (error) {
     const code = error instanceof NeonDbError ? error.code : 'unknown';
     console.error(`Failed to load proxy state (code: ${code ?? 'unknown'})`);
@@ -62,12 +57,31 @@ async function loadBackendUrl(databaseUrl: string): Promise<string | null> {
   }
 }
 
-export async function fetchBackendUrl(databaseUrl: string): Promise<string | null> {
-  const envUrl = readEnvBackendUrl();
-  if (envUrl) {
-    return envUrl;
+export async function getBackendConfig(databaseUrl: string): Promise<BackendConfig> {
+  const backendUrl = databaseUrl ? await loadBackendUrl(databaseUrl) : null;
+  return { backendUrl };
+}
+
+export async function saveBackendUrl(databaseUrl: string, rawUrl: string): Promise<string> {
+  const backendUrl = parseBackendUrlInput(rawUrl);
+  if (!backendUrl) {
+    throw new Error('Invalid backend URL');
   }
 
+  const sql = neon(databaseUrl);
+  await sql`
+    INSERT INTO llm_proxy.config (id, backend_url, updated_at)
+    VALUES (1, ${backendUrl}, NOW())
+    ON CONFLICT (id) DO UPDATE SET
+      backend_url = EXCLUDED.backend_url,
+      updated_at = EXCLUDED.updated_at
+  `;
+
+  resetBackendUrlCache();
+  return backendUrl;
+}
+
+export async function fetchBackendUrl(databaseUrl: string): Promise<string | null> {
   if (!databaseUrl) {
     return null;
   }

@@ -30,6 +30,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': { target: apiTarget, changeOrigin: true },
+      '/ui/backend-config': { target: apiTarget, changeOrigin: true },
       '/ui/cost-rates': { target: apiTarget, changeOrigin: true },
       '/ui/investment-data': { target: apiTarget, changeOrigin: true },
       '/v1': { target: apiTarget, changeOrigin: true },

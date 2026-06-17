@@ -13,11 +13,14 @@ import { parseCostPerMillion } from '../dashboard/lib/format';
 import { parseFiltersFromQuery } from '../dashboard/lib/query-params';
 import { buildClientPayload } from '../dashboard/lib/summary';
 import type { DashboardEnv, DashboardFilters, ModelCostRates } from '../dashboard/types';
-import { fetchBackendUrl } from '../proxy-state';
+import { checkOpenAiBackendHealth } from '../backend-health';
+import { fetchBackendUrl, getBackendConfig, saveBackendUrl } from '../proxy-state';
 import {
   COST_RATES_PATH,
   DASHBOARD_DATA_API_PATH,
   INVESTMENT_DATA_PATH,
+  BACKEND_CONFIG_PATH,
+  BACKEND_HEALTH_PATH,
   LEGACY_CHAT_PATH,
   LEGACY_DASHBOARD_ALIAS_PATH,
   LEGACY_DASHBOARD_PATH,
@@ -39,6 +42,10 @@ interface InvestmentPostBody {
   investmentUsd?: number | string | null;
   projectedDailySpendUsd?: number | string | null;
   calculateFromHistory?: boolean;
+}
+
+interface BackendConfigPostBody {
+  backendUrl?: string;
 }
 
 function parsePostDefaultRates(body: CostRatesPostBody, fallback: ModelCostRates): ModelCostRates {
@@ -324,5 +331,79 @@ uiRoute.get(MODELS_API_PATH, async (c) => {
       { error: 'Backend unavailable', details: String(error), data: [] },
       503,
     );
+  }
+});
+
+uiRoute.get(BACKEND_CONFIG_PATH, async (c) => {
+  if (!c.env?.DATABASE_URL) {
+    return c.json({ error: 'DATABASE_URL not configured' }, 503);
+  }
+
+  try {
+    const config = await getBackendConfig(c.env.DATABASE_URL);
+    return c.json(config);
+  } catch (error) {
+    const code = error instanceof NeonDbError ? error.code : 'unknown';
+    console.error(`Backend config fetch failed (code: ${code ?? 'unknown'})`);
+    return c.json({ error: 'Failed to load backend config' }, 500);
+  }
+});
+
+uiRoute.post(BACKEND_CONFIG_PATH, async (c) => {
+  if (!c.env?.DATABASE_URL) {
+    return c.json({ error: 'DATABASE_URL not configured' }, 503);
+  }
+
+  try {
+    const body = (await c.req.json()) as BackendConfigPostBody;
+    const rawUrl = typeof body.backendUrl === 'string' ? body.backendUrl : '';
+    await saveBackendUrl(c.env.DATABASE_URL, rawUrl);
+    const config = await getBackendConfig(c.env.DATABASE_URL);
+    return c.json({ ok: true, ...config });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'Invalid backend URL') {
+      return c.json({ error: error.message }, 400);
+    }
+    const code = error instanceof NeonDbError ? error.code : 'unknown';
+    console.error(`Backend config save failed (code: ${code ?? 'unknown'})`);
+    return c.json({ error: 'Failed to save backend config' }, 500);
+  }
+});
+
+uiRoute.post(BACKEND_HEALTH_PATH, async (c) => {
+  if (!c.env?.DATABASE_URL) {
+    return c.json({ error: 'DATABASE_URL not configured' }, 503);
+  }
+
+  try {
+    const config = await getBackendConfig(c.env.DATABASE_URL);
+    if (!config.backendUrl) {
+      return c.json(
+        {
+          ok: false,
+          backendUrl: '',
+          latencyMs: 0,
+          httpStatus: null,
+          modelCount: 0,
+          sampleModelIds: [],
+          checks: {
+            configured: false,
+            reachable: false,
+            httpOk: false,
+            openAiModels: false,
+          },
+          error: 'Backend URL is not configured',
+          checkedAt: new Date().toISOString(),
+        },
+        503,
+      );
+    }
+
+    const result = await checkOpenAiBackendHealth(config.backendUrl);
+    return c.json(result, result.ok ? 200 : 503);
+  } catch (error) {
+    const code = error instanceof NeonDbError ? error.code : 'unknown';
+    console.error(`Backend health check failed (code: ${code ?? 'unknown'})`);
+    return c.json({ error: 'Failed to check backend health' }, 500);
   }
 });

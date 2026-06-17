@@ -1,5 +1,5 @@
 import { neon } from '@neondatabase/serverless';
-import { DEFAULT_BACKEND_URL, resetBackendUrlCache } from '../../src/proxy-state';
+import { resetBackendUrlCache } from '../../src/proxy-state';
 import type { DailyUsageRow, RawModelUsageRow } from '../../src/dashboard/types';
 
 export function requireDatabaseUrl(): string {
@@ -180,21 +180,10 @@ export async function cleanupTestRows(runId: string, extraIds: string[] = []): P
   }
 }
 
-function isLoopbackBackend(url: string): boolean {
-  try {
-    const host = new URL(url).hostname;
-    return host === '127.0.0.1' || host === 'localhost' || host === '::1';
-  } catch {
-    return false;
-  }
-}
-
 export async function restoreBackendUrl(saved: string | null): Promise<void> {
-  if (saved && !isLoopbackBackend(saved)) {
+  if (saved) {
     await setBackendUrl(saved);
-    return;
   }
-  await setBackendUrl(DEFAULT_BACKEND_URL);
 }
 
 export async function getBackendUrl(): Promise<string | null> {

@@ -69,3 +69,30 @@ export interface InvestmentSaveBody {
   projectedDailySpendUsd?: number | null;
   calculateFromHistory?: boolean;
 }
+
+export interface BackendConfig {
+  backendUrl: string | null;
+}
+
+export interface BackendHealthChecks {
+  configured: boolean;
+  reachable: boolean;
+  httpOk: boolean;
+  openAiModels: boolean;
+}
+
+export interface BackendHealthResult {
+  ok: boolean;
+  backendUrl: string;
+  latencyMs: number;
+  httpStatus: number | null;
+  modelCount: number;
+  sampleModelIds: string[];
+  checks: BackendHealthChecks;
+  error: string | null;
+  checkedAt: string;
+}
+
+export interface BackendConfigSaveBody {
+  backendUrl: string;
+}

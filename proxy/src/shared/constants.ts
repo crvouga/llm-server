@@ -12,3 +12,5 @@ export const COST_RATES_PATH = '/ui/cost-rates';
 export const INVESTMENT_DATA_PATH = '/ui/investment-data';
 export const DASHBOARD_DATA_API_PATH = '/api/dashboard-data';
 export const MODELS_API_PATH = '/api/models';
+export const BACKEND_CONFIG_PATH = '/ui/backend-config';
+export const BACKEND_HEALTH_PATH = '/api/backend-health';

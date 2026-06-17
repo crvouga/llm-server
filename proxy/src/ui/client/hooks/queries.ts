@@ -1,14 +1,24 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  checkBackendHealth,
   fetchAvailableModels,
+  fetchBackendConfig,
   fetchDashboardData,
   fetchInvestmentData,
+  saveBackendConfig,
   saveCostRates,
   saveInvestmentData,
 } from '../lib/api';
 import { TAB_DASHBOARD, TAB_QUERY_PARAM } from '../lib/constants';
 import { queryKeys } from '../lib/query-keys';
-import type { CostRatesBody, DashboardData, InvestmentData, InvestmentSaveBody } from '../lib/types';
+import type {
+  BackendConfigSaveBody,
+  BackendHealthResult,
+  CostRatesBody,
+  DashboardData,
+  InvestmentData,
+  InvestmentSaveBody,
+} from '../lib/types';
 import { navigateToSearch } from '../lib/routing';
 import { streamChatCompletion } from '../lib/chat';
 
@@ -34,6 +44,31 @@ export function useModelsQuery(enabled = true) {
     queryFn: fetchAvailableModels,
     enabled,
     staleTime: 60_000,
+  });
+}
+
+export function useBackendConfigQuery(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.backendConfig,
+    queryFn: fetchBackendConfig,
+    enabled,
+  });
+}
+
+export function useSaveBackendConfigMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (body: BackendConfigSaveBody) => saveBackendConfig(body),
+    onSuccess: (data) => {
+      queryClient.setQueryData(queryKeys.backendConfig, data);
+    },
+  });
+}
+
+export function useCheckBackendHealthMutation() {
+  return useMutation({
+    mutationFn: () => checkBackendHealth() as Promise<BackendHealthResult>,
   });
 }
 

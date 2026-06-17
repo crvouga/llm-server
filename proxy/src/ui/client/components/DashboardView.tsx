@@ -1,6 +1,7 @@
 import { useDashboardQuery, useInvestmentQuery } from '../hooks/queries';
 import { PAGE_CONTENT_CLASS, PAGE_PADDING_CLASS } from '../lib/layout';
 import { Alert, Card, Spinner } from '@heroui/react';
+import { BackendHealthCard } from './BackendHealthCard';
 import { Charts } from './Charts';
 import { FilterForm } from './FilterForm';
 import { InvestmentSection } from './InvestmentSection';
@@ -36,6 +37,8 @@ export function DashboardView({ search }: DashboardViewProps) {
 
   return (
     <div className={`dashboard-shell ${PAGE_CONTENT_CLASS} ${PAGE_PADDING_CLASS} flex-1 overflow-y-auto py-6`}>
+      <BackendHealthCard />
+
       {isInitialLoad ? (
         <div className="flex min-h-64 items-center justify-center py-12" aria-busy="true">
           <Spinner size="lg" />

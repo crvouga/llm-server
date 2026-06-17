@@ -90,4 +90,39 @@ describe('ui route', () => {
 
     expect(response.status).toBe(404);
   });
+
+  test('GET /ui/backend-config requires database', async () => {
+    const app = createApp();
+    const response = await app.fetch(new Request('http://proxy.test/ui/backend-config'));
+
+    expect(response.status).toBe(503);
+    const json = (await response.json()) as { error?: string };
+    expect(json.error).toContain('DATABASE_URL');
+  });
+
+  test('POST /ui/backend-config requires database', async () => {
+    const app = createApp();
+    const response = await app.fetch(
+      new Request('http://proxy.test/ui/backend-config', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ backendUrl: 'https://llm.example' }),
+      }),
+    );
+
+    expect(response.status).toBe(503);
+    const json = (await response.json()) as { error?: string };
+    expect(json.error).toContain('DATABASE_URL');
+  });
+
+  test('POST /api/backend-health requires database', async () => {
+    const app = createApp();
+    const response = await app.fetch(
+      new Request('http://proxy.test/api/backend-health', { method: 'POST' }),
+    );
+
+    expect(response.status).toBe(503);
+    const json = (await response.json()) as { error?: string };
+    expect(json.error).toContain('DATABASE_URL');
+  });
 });

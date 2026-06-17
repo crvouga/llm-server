@@ -3,4 +3,5 @@ export const queryKeys = {
   dashboardAll: ['dashboard'] as const,
   investment: ['investment'] as const,
   models: ['models'] as const,
+  backendConfig: ['backendConfig'] as const,
 };

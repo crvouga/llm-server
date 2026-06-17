@@ -18,8 +18,6 @@ import {
 import { startMockBackend } from './helpers/mock-backend';
 import { proxyRequest } from './helpers/proxy';
 
-delete process.env.LLM_PROXY_BACKEND_URL;
-
 const runId = createRunId();
 let databaseUrl = '';
 const model = sentinelModel(runId, 'e2e');
@@ -378,6 +376,26 @@ describe('proxy usage tracking e2e', () => {
     const usageRows = await fetchUsageRows(databaseUrl, today, today);
     const modelRow = usageRows.find((row) => row.model === model);
     expect(modelRow?.requestCount ?? 0).toBe(1);
+  });
+
+  test('POST /api/backend-health reports healthy mock backend', async () => {
+    const app = createApp();
+    const response = await app.fetch(
+      new Request('http://proxy.test/api/backend-health', { method: 'POST' }),
+      { DATABASE_URL: databaseUrl },
+    );
+
+    expect(response.status).toBe(200);
+    const json = (await response.json()) as {
+      ok: boolean;
+      modelCount: number;
+      checks: { reachable: boolean; httpOk: boolean; openAiModels: boolean };
+    };
+    expect(json.ok).toBe(true);
+    expect(json.modelCount).toBeGreaterThan(0);
+    expect(json.checks.reachable).toBe(true);
+    expect(json.checks.httpOk).toBe(true);
+    expect(json.checks.openAiModels).toBe(true);
   });
 });
 
