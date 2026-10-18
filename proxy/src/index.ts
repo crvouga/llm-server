@@ -1,7 +1,7 @@
 // Transparent LLM Proxy with Raw Request Logging
 // Forwards all requests to LM Studio and logs raw request/response data to PostgreSQL
 
-import { neon, NeonDbError } from '@neondatabase/serverless';
+import { dbErrorCode, sqlClient } from './db';
 import { serveStatic } from 'hono/bun';
 import { Hono } from 'hono';
 
@@ -69,7 +69,7 @@ async function logRequest(
   }
 
   try {
-    const sql = neon(env.DATABASE_URL);
+    const sql = sqlClient(env.DATABASE_URL);
 
     const queryParamsObj: Record<string, string> = {};
     query.forEach((value, key) => {
@@ -90,20 +90,20 @@ async function logRequest(
         ${new Date().toISOString()},
         ${method},
         ${path},
-        ${JSON.stringify(queryParamsObj)}::jsonb,
-        ${JSON.stringify(headersToObject(requestHeaders))}::jsonb,
-        ${requestBody}::jsonb,
+        ${JSON.stringify(queryParamsObj)}::text::jsonb,
+        ${JSON.stringify(headersToObject(requestHeaders))}::text::jsonb,
+        ${requestBody}::text::jsonb,
         ${statusCode},
-        ${JSON.stringify(headersToObject(responseHeaders))}::jsonb,
-        ${responseBodyJson}::jsonb,
+        ${JSON.stringify(headersToObject(responseHeaders))}::text::jsonb,
+        ${responseBodyJson}::text::jsonb,
         ${errorMessage || null},
         ${timing?.durationMs ?? null},
         ${timing?.ttftMs ?? null}
       )
     `;
   } catch (error) {
-    const code = error instanceof NeonDbError ? error.code : 'unknown';
-    console.error(`Request logging failed (code: ${code ?? 'unknown'})`);
+    const code = dbErrorCode(error);
+    console.error(`Request logging failed (code: ${code})`);
   }
 }
 

@@ -1,6 +1,6 @@
 // Reads proxy configuration from PostgreSQL with a short in-isolate cache.
 
-import { neon, NeonDbError } from '@neondatabase/serverless';
+import { dbErrorCode, sqlClient } from './db';
 import {
   type BackendHeaderEntry,
   type BackendHeaders,
@@ -49,7 +49,7 @@ export function parseBackendUrlInput(raw: string): string | null {
 
 async function loadBackendConfig(databaseUrl: string): Promise<BackendConfig> {
   try {
-    const sql = neon(databaseUrl);
+    const sql = sqlClient(databaseUrl);
     const rows = await sql`
       SELECT backend_url, backend_headers
       FROM llm_proxy.config
@@ -67,8 +67,8 @@ async function loadBackendConfig(databaseUrl: string): Promise<BackendConfig> {
       backendHeaders: parseBackendHeadersFromDb(rows[0].backend_headers),
     };
   } catch (error) {
-    const code = error instanceof NeonDbError ? error.code : 'unknown';
-    console.error(`Failed to load proxy state (code: ${code ?? 'unknown'})`);
+    const code = dbErrorCode(error);
+    console.error(`Failed to load proxy state (code: ${code})`);
     return EMPTY_BACKEND_CONFIG;
   }
 }
@@ -101,10 +101,10 @@ export async function saveBackendConfig(
     throw error instanceof Error ? error : new Error('Invalid backend headers');
   }
 
-  const sql = neon(databaseUrl);
+  const sql = sqlClient(databaseUrl);
   await sql`
     INSERT INTO llm_proxy.config (id, backend_url, backend_headers, updated_at)
-    VALUES (1, ${backendUrl}, ${JSON.stringify(backendHeaders)}::jsonb, NOW())
+    VALUES (1, ${backendUrl}, ${JSON.stringify(backendHeaders)}::text::jsonb, NOW())
     ON CONFLICT (id) DO UPDATE SET
       backend_url = EXCLUDED.backend_url,
       backend_headers = EXCLUDED.backend_headers,

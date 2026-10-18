@@ -18,7 +18,7 @@ Vault secrets at `secret/personal/dev` (used by CI on push to `main`):
 
 | Secret | Purpose |
 |--------|---------|
-| `DATABASE_URL` | PostgreSQL connection string (Neon HTTP API format) |
+| `DATABASE_URL` | PostgreSQL connection string (standard `postgres://` URL; any Postgres, e.g. PlanetScale) |
 
 Production runtime env is synced from Vault via infra deploy-pipeline.
 

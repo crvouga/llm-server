@@ -1,9 +1,9 @@
-import { neon } from '@neondatabase/serverless';
+import { sqlClient } from '../../db';
 import type { DailyUsageRow, RawModelUsageRow } from '../types';
 import { todayIsoDate } from '../lib/format';
 
 export async function fetchEarliestUsageDate(databaseUrl: string): Promise<string> {
-  const sql = neon(databaseUrl);
+  const sql = sqlClient(databaseUrl);
   const rows = await sql`
     SELECT COALESCE(MIN(created_at)::date, CURRENT_DATE)::text AS earliest
     FROM llm_proxy.http_log
@@ -16,7 +16,7 @@ export async function fetchEarliestUsageDate(databaseUrl: string): Promise<strin
 }
 
 export async function fetchKnownModels(databaseUrl: string): Promise<string[]> {
-  const sql = neon(databaseUrl);
+  const sql = sqlClient(databaseUrl);
   const rows = await sql`
     SELECT DISTINCT COALESCE(request_body->>'model', 'unknown') AS model
     FROM llm_proxy.http_log
@@ -24,7 +24,7 @@ export async function fetchKnownModels(databaseUrl: string): Promise<string[]> {
     ORDER BY model ASC
   `;
 
-  return rows.map((row) => String(row.model));
+  return rows.map((row: Record<string, unknown>) => String(row.model));
 }
 
 export async function fetchUsageRows(
@@ -32,7 +32,7 @@ export async function fetchUsageRows(
   startDate: string,
   endDate: string,
 ): Promise<RawModelUsageRow[]> {
-  const sql = neon(databaseUrl);
+  const sql = sqlClient(databaseUrl);
 
   const rows = await sql`
     SELECT
@@ -71,7 +71,7 @@ export async function fetchUsageRows(
     ) DESC
   `;
 
-  return rows.map((row) => ({
+  return rows.map((row: Record<string, unknown>) => ({
     model: String(row.model),
     requestCount: Number(row.request_count),
     promptTokens: Number(row.prompt_tokens),
@@ -88,7 +88,7 @@ export async function fetchDailyUsageRows(
   startDate: string,
   endDate: string,
 ): Promise<DailyUsageRow[]> {
-  const sql = neon(databaseUrl);
+  const sql = sqlClient(databaseUrl);
 
   const rows = await sql`
     SELECT
@@ -106,7 +106,7 @@ export async function fetchDailyUsageRows(
     ORDER BY 1 ASC
   `;
 
-  return rows.map((row) => {
+  return rows.map((row: Record<string, unknown>) => {
     const promptTokens = Number(row.prompt_tokens);
     const completionTokens = Number(row.completion_tokens);
     return {

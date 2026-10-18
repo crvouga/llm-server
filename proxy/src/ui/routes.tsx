@@ -1,4 +1,4 @@
-import { NeonDbError } from '@neondatabase/serverless';
+import { dbErrorCode } from '../db';
 import { Hono } from 'hono';
 import { defaultSavedCostRates, fetchCostRates, upsertCostRates } from '../dashboard/db/cost-rates';
 import {
@@ -175,8 +175,8 @@ uiRoute.get(COST_RATES_PATH, async (c) => {
       updatedAt: saved.updatedAt,
     });
   } catch (error) {
-    const code = error instanceof NeonDbError ? error.code : 'unknown';
-    console.error(`Cost rates fetch failed (code: ${code ?? 'unknown'})`);
+    const code = dbErrorCode(error);
+    console.error(`Cost rates fetch failed (code: ${code})`);
     return c.json({ error: 'Failed to load cost rates' }, 500);
   }
 });
@@ -203,8 +203,8 @@ uiRoute.post(COST_RATES_PATH, async (c) => {
       updatedAt: saved.updatedAt,
     });
   } catch (error) {
-    const code = error instanceof NeonDbError ? error.code : 'unknown';
-    console.error(`Cost rates save failed (code: ${code ?? 'unknown'})`);
+    const code = dbErrorCode(error);
+    console.error(`Cost rates save failed (code: ${code})`);
     return c.json({ error: 'Failed to save cost rates' }, 500);
   }
 });
@@ -226,8 +226,8 @@ uiRoute.get(INVESTMENT_DATA_PATH, async (c) => {
       metrics,
     });
   } catch (error) {
-    const code = error instanceof NeonDbError ? error.code : 'unknown';
-    console.error(`Investment data fetch failed (code: ${code ?? 'unknown'})`);
+    const code = dbErrorCode(error);
+    console.error(`Investment data fetch failed (code: ${code})`);
     return c.json({ error: 'Failed to load investment data' }, 500);
   }
 });
@@ -268,8 +268,8 @@ uiRoute.post(INVESTMENT_DATA_PATH, async (c) => {
       metrics,
     });
   } catch (error) {
-    const code = error instanceof NeonDbError ? error.code : 'unknown';
-    console.error(`Investment data save failed (code: ${code ?? 'unknown'})`);
+    const code = dbErrorCode(error);
+    console.error(`Investment data save failed (code: ${code})`);
     return c.json({ error: 'Failed to save investment data' }, 500);
   }
 });
@@ -304,8 +304,8 @@ uiRoute.get(DASHBOARD_DATA_API_PATH, async (c) => {
       payload: hasData ? buildClientPayload(summary, dailyRows, filters) : null,
     });
   } catch (error) {
-    const code = error instanceof NeonDbError ? error.code : 'unknown';
-    console.error(`Dashboard data API failed (code: ${code ?? 'unknown'})`);
+    const code = dbErrorCode(error);
+    console.error(`Dashboard data API failed (code: ${code})`);
     return c.json({ error: 'Failed to load dashboard data' }, 500);
   }
 });
@@ -346,8 +346,8 @@ uiRoute.get(BACKEND_CONFIG_PATH, async (c) => {
     const config = await getBackendConfig(c.env.DATABASE_URL);
     return c.json(config);
   } catch (error) {
-    const code = error instanceof NeonDbError ? error.code : 'unknown';
-    console.error(`Backend config fetch failed (code: ${code ?? 'unknown'})`);
+    const code = dbErrorCode(error);
+    console.error(`Backend config fetch failed (code: ${code})`);
     return c.json({ error: 'Failed to load backend config' }, 500);
   }
 });
@@ -376,8 +376,8 @@ uiRoute.post(BACKEND_CONFIG_PATH, async (c) => {
     if (error instanceof Error && error.message.startsWith('Header not allowed')) {
       return c.json({ error: error.message }, 400);
     }
-    const code = error instanceof NeonDbError ? error.code : 'unknown';
-    console.error(`Backend config save failed (code: ${code ?? 'unknown'})`);
+    const code = dbErrorCode(error);
+    console.error(`Backend config save failed (code: ${code})`);
     return c.json({ error: 'Failed to save backend config' }, 500);
   }
 });
@@ -416,8 +416,8 @@ uiRoute.post(BACKEND_HEALTH_PATH, async (c) => {
     });
     return c.json(result, result.ok ? 200 : 503);
   } catch (error) {
-    const code = error instanceof NeonDbError ? error.code : 'unknown';
-    console.error(`Backend health check failed (code: ${code ?? 'unknown'})`);
+    const code = dbErrorCode(error);
+    console.error(`Backend health check failed (code: ${code})`);
     return c.json({ error: 'Failed to check backend health' }, 500);
   }
 });
