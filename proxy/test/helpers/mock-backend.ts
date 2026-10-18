@@ -16,6 +16,8 @@ export interface MockBackendOptions {
   streamChatCompletions?: boolean;
   responseDelayMs?: number;
   streamChunkDelayMs?: number;
+  /** Delay before the first content chunk so TTFT is measurable (default 10ms). */
+  streamFirstChunkDelayMs?: number;
   usageOnlyStream?: boolean;
   routes?: MockRouteOverride[];
 }
@@ -79,6 +81,9 @@ async function defaultChatResponse(
     const stream = new ReadableStream({
       async start(controller) {
         if (!options.usageOnlyStream) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, options.streamFirstChunkDelayMs ?? 10),
+          );
           controller.enqueue(
             encoder.encode(
               `data: ${JSON.stringify({
