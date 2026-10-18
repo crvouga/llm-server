@@ -1,4 +1,4 @@
-import { neon } from '@neondatabase/serverless';
+import { sqlClient } from '../../db';
 
 export interface SavedInvestmentConfig {
   investmentUsd: number | null;
@@ -29,7 +29,7 @@ export function parseInvestmentUsd(value: unknown): number | null {
 }
 
 export async function fetchInvestmentConfig(databaseUrl: string): Promise<SavedInvestmentConfig> {
-  const sql = neon(databaseUrl);
+  const sql = sqlClient(databaseUrl);
   const rows = await sql`
     SELECT
       investment_usd,
@@ -61,7 +61,7 @@ export async function upsertInvestmentConfig(
   investmentUsd: number | null,
   projectedDailySpendUsd: number | null,
 ): Promise<SavedInvestmentConfig> {
-  const sql = neon(databaseUrl);
+  const sql = sqlClient(databaseUrl);
   const rows = await sql`
     UPDATE llm_proxy.config
     SET

@@ -1,4 +1,4 @@
-import { neon } from '@neondatabase/serverless';
+import { sqlClient as createSqlClient } from '../../src/db';
 import { resetBackendUrlCache } from '../../src/proxy-state';
 import type { DailyUsageRow, RawModelUsageRow } from '../../src/dashboard/types';
 
@@ -21,7 +21,7 @@ export function sentinelModel(runId: string, name: string): string {
 }
 
 export function sqlClient(databaseUrl: string = requireDatabaseUrl()) {
-  return neon(databaseUrl);
+  return createSqlClient(databaseUrl);
 }
 
 export interface InsertLogRowOptions {
@@ -96,10 +96,10 @@ export async function insertLogRow(options: InsertLogRowOptions): Promise<string
       ${path},
       '{}'::jsonb,
       '{}'::jsonb,
-      ${requestBody}::jsonb,
+      ${requestBody}::text::jsonb,
       ${statusCode},
       '{}'::jsonb,
-      ${responseBody}::jsonb,
+      ${responseBody}::text::jsonb,
       NULL,
       ${options.durationMs ?? null},
       ${options.ttftMs ?? null}

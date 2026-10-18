@@ -1,4 +1,4 @@
-import { neon } from '@neondatabase/serverless';
+import { sqlClient } from '../../db';
 import { DEFAULT_INPUT_COST_PER_MILLION, DEFAULT_OUTPUT_COST_PER_MILLION } from '../constants';
 import type { ModelCostRates } from '../types';
 
@@ -46,7 +46,7 @@ function modelOverridesToJson(
 }
 
 export async function fetchCostRates(databaseUrl: string): Promise<SavedCostRates | null> {
-  const sql = neon(databaseUrl);
+  const sql = sqlClient(databaseUrl);
   const rows = await sql`
     SELECT
       input_per_million,
@@ -89,7 +89,7 @@ export async function upsertCostRates(
   defaultRates: ModelCostRates,
   modelCosts: Map<string, ModelCostRates>,
 ): Promise<SavedCostRates> {
-  const sql = neon(databaseUrl);
+  const sql = sqlClient(databaseUrl);
   const modelOverrides = modelOverridesToJson(defaultRates, modelCosts);
 
   const rows = await sql`
@@ -104,7 +104,7 @@ export async function upsertCostRates(
       1,
       ${defaultRates.inputPerMillion},
       ${defaultRates.outputPerMillion},
-      ${JSON.stringify(modelOverrides)}::jsonb,
+      ${JSON.stringify(modelOverrides)}::text::jsonb,
       NOW()
     )
     ON CONFLICT (id) DO UPDATE
